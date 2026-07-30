@@ -1,0 +1,3554 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <title>{{ title or 'Asset Review Dashboard - Backflow Devices' }}</title>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <link rel="icon" type="image/jpeg" href="{{ url_for('static', filename='ubc-facilities_logo.jpg') }}">
+
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdn.datatables.net/1.13.6/css/dataTables.bootstrap5.min.css">
+    <link rel="stylesheet" href="https://cdn.datatables.net/responsive/2.5.0/css/responsive.bootstrap5.min.css">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/noUiSlider/15.8.1/nouislider.min.css">
+    <link rel="stylesheet" href="{{ url_for('static', filename='building-multiselect.css') }}?v=20260714-2">
+
+    <style>
+        :root {
+            --ubc-blue: #002145;
+            --ubc-blue-hover: #0055b7;
+            --stitch-bg: #ffffff;
+            --stitch-border: #e2e8f0;
+            --stitch-text-muted: #64748b;
+            --stitch-primary-bg: #eff6ff;
+            --stitch-primary-text: #3b82f6;
+            --stitch-danger-bg: #fef2f2;
+            --stitch-danger-text: #ef4444;
+            --v2-radius-sm: 6px;
+            --v2-radius-pill: 999px;
+            --stitch-warning-bg: #fffbeb;
+            --stitch-warning-text: #f59e0b;
+            --stitch-gray-bg: #f1f5f9;
+            --stitch-gray-text: #475569;
+        }
+
+        body {
+            background-color: #f8fafc;
+            font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+            color: #334155;
+        }
+
+        /* --- STITCH FILTER STYLING START --- */
+        .dashboard-card {
+            background: transparent;
+            border: none;
+            box-shadow: none;
+        }
+
+        .filter-card {
+            background: var(--stitch-bg);
+            border: 1px solid var(--stitch-border);
+            border-radius: 12px;
+            padding: 20px 24px;
+            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+            margin-bottom: 24px;
+        }
+
+        .view-label {
+            font-size: 0.75rem;
+            font-weight: 700;
+            color: #94a3b8;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            margin-right: 12px;
+        }
+
+        .view-pill {
+            display: inline-flex;
+            align-items: center;
+            padding: 6px 16px;
+            border-radius: 20px;
+            font-size: 0.85rem;
+            font-weight: 600;
+            text-decoration: none;
+            transition: all 0.2s ease;
+            border: 1px solid transparent;
+            margin-right: 8px;
+        }
+
+        .view-pill:hover {
+            text-decoration: none;
+            transform: translateY(-1px);
+        }
+
+        .view-pill .badge-count {
+            margin-left: 8px;
+            font-size: 0.75em;
+            padding: 2px 6px;
+            border-radius: 10px;
+            background-color: rgba(255, 255, 255, 0.5);
+        }
+
+        /* All Assets Pill */
+        .view-pill.pill-all {
+            color: var(--stitch-gray-text);
+            background-color: transparent;
+        }
+
+        .view-pill.pill-all.active {
+            background-color: var(--stitch-primary-bg);
+            color: var(--stitch-primary-text);
+            border-color: rgba(59, 130, 246, 0.2);
+        }
+
+        /* Missing Photo Pill */
+        .view-pill.pill-missed {
+            color: var(--stitch-gray-text);
+            background-color: transparent;
+        }
+
+        .view-pill.pill-missed.active {
+            background-color: var(--stitch-gray-bg);
+            color: var(--stitch-gray-text);
+            border-color: rgba(71, 85, 105, 0.2);
+        }
+
+        .confidence-slicer {
+            --confidence-progress: 0;
+            display: flex;
+            flex-wrap: wrap;
+            align-items: flex-start;
+            gap: 0.85rem 1rem;
+            padding: 1.2rem 1.15rem 1.05rem;
+            margin-left: 0;
+            border-radius: 12px;
+            border: 1px solid #f3f4f6;
+            background: #ffffff;
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05), 0 2px 4px -1px rgba(0, 0, 0, 0.03);
+            box-sizing: border-box;
+            flex: 0 1 420px;
+            width: min(420px, 100%);
+            min-width: 320px;
+        }
+
+        .confidence-slicer__title {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.35rem;
+            flex: 1 1 auto;
+            font-size: 13px;
+            font-weight: 700;
+            color: #4b5563;
+            white-space: nowrap;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+
+        .confidence-slicer__title i {
+            display: none;
+        }
+
+        .confidence-slicer__all {
+            margin-left: auto;
+            border: 1px solid #e5e7eb;
+            border-radius: 999px;
+            padding: 0.38rem 0.92rem;
+            background: #ffffff;
+            color: #6b7280;
+            font-size: 12px;
+            font-weight: 600;
+            line-height: 1;
+            box-shadow: none;
+            transition: all 0.2s ease;
+        }
+
+        .confidence-slicer__all:hover {
+            color: #4f3cf0;
+            border-color: #c7d2fe;
+            background: #f5f3ff;
+            box-shadow: none;
+        }
+
+        .confidence-slicer__all.is-active {
+            background: #4f3cf0;
+            color: #ffffff;
+            border-color: #4f3cf0;
+            box-shadow: 0 6px 14px rgba(79, 60, 240, 0.18);
+        }
+
+        .confidence-slicer__rail {
+            position: relative;
+            order: 3;
+            flex: 1 0 100%;
+            min-width: 100%;
+            height: 54px;
+            padding: 0;
+        }
+
+        .confidence-slicer__rail::before,
+        .confidence-slicer__rail::after {
+            content: "";
+            position: absolute;
+            left: 0;
+            top: 6px;
+            height: 6px;
+            border-radius: 999px;
+            transition: width 0.2s ease-in-out, opacity 0.2s ease;
+        }
+
+        .confidence-slicer__rail::before {
+            right: 0;
+            background:
+                linear-gradient(#e5e7eb, #e5e7eb) left center / 100% 6px no-repeat,
+                linear-gradient(#ffffff, #ffffff) 25% center / 2px 6px no-repeat,
+                linear-gradient(#ffffff, #ffffff) 50% center / 2px 6px no-repeat,
+                linear-gradient(#ffffff, #ffffff) 75% center / 2px 6px no-repeat;
+        }
+
+        .confidence-slicer__rail::after {
+            width: calc(var(--confidence-progress) * 1%);
+            background: #4f3cf0;
+        }
+
+        .confidence-slicer.is-all .confidence-slicer__rail::after {
+            opacity: 0;
+        }
+
+        .confidence-slicer__stop {
+            position: absolute;
+            top: 0;
+            z-index: 2;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: flex-start;
+            width: 25%;
+            height: 54px;
+            border: 0;
+            background: transparent;
+            padding: 0;
+            color: #9ca3af;
+            cursor: pointer;
+            transition: color 0.2s ease;
+        }
+
+        .confidence-slicer__stop[data-value="25"] {
+            left: 0;
+        }
+
+        .confidence-slicer__stop[data-value="50"] {
+            left: 25%;
+        }
+
+        .confidence-slicer__stop[data-value="75"] {
+            left: 50%;
+        }
+
+        .confidence-slicer__stop[data-value="100"] {
+            left: 75%;
+        }
+
+        .confidence-slicer__stop::before {
+            content: "";
+            position: absolute;
+            top: 6px;
+            left: 0;
+            width: 2px;
+            height: 6px;
+            background: #ffffff;
+            z-index: 3;
+            opacity: 0;
+        }
+
+        .confidence-slicer__stop:not([data-value="25"])::before {
+            opacity: 1;
+        }
+
+        .confidence-slicer__dot {
+            position: absolute;
+            top: 9px;
+            right: 0;
+            width: 20px;
+            height: 20px;
+            border-radius: 999px;
+            border: 3px solid #4f3cf0;
+            background: #ffffff;
+            box-shadow: 0 2px 5px rgba(79, 60, 240, 0.2), 0 1px 2px rgba(0, 0, 0, 0.1);
+            opacity: 0;
+            pointer-events: none;
+            transform: translate(50%, -50%) scale(0.95);
+            transition: transform 0.15s ease, box-shadow 0.15s ease, opacity 0.15s ease;
+        }
+
+        .confidence-slicer__stop.is-active .confidence-slicer__dot {
+            opacity: 1;
+            transform: translate(50%, -50%) scale(1);
+            box-shadow: 0 4px 8px rgba(79, 60, 240, 0.3), 0 2px 4px rgba(0, 0, 0, 0.1);
+        }
+
+        .confidence-slicer__stop.is-active:hover .confidence-slicer__dot {
+            box-shadow: 0 4px 8px rgba(79, 60, 240, 0.3), 0 2px 4px rgba(0, 0, 0, 0.1);
+        }
+
+        .confidence-slicer__label {
+            width: 100%;
+            margin-top: 26px;
+            text-align: center;
+            font-size: 13px;
+            font-weight: 500;
+            color: #9ca3af;
+            transition: color 0.2s ease;
+        }
+
+        .confidence-slicer__stop.is-active .confidence-slicer__label {
+            color: #4f3cf0;
+            font-weight: 700;
+        }
+
+        .confidence-slicer__badge {
+            display: none;
+        }
+
+        @media (max-width: 991.98px) {
+            .confidence-slicer {
+                min-width: 100%;
+                margin-left: 0;
+            }
+
+            .confidence-slicer__rail {
+                min-width: 100%;
+            }
+        }
+
+        @media (max-width: 575.98px) {
+            .confidence-slicer {
+                padding: 0.8rem;
+                gap: 0.7rem;
+            }
+
+            .confidence-slicer__title {
+                font-size: 12px;
+            }
+
+            .confidence-slicer__label {
+                font-size: 11px;
+                margin-top: 28px;
+            }
+
+            .confidence-slicer__all {
+                padding: 0.34rem 0.72rem;
+            }
+
+            .confidence-slicer__stop {
+                height: 58px;
+            }
+
+            .confidence-slicer__rail {
+                height: 58px;
+            }
+        }
+
+        /* AI Confidence range slider */
+        .filter-col-conf .search-label { margin-bottom: 16px; }
+        .conf-range-wrap { padding: 1.8rem 0.6rem 1.5rem; width: 85%; margin-left: 1rem; }
+        .conf-range-slider.noUi-target {
+            border-radius: 999px;
+            border: none;
+            background: #e5e7eb;
+            box-shadow: none;
+            height: 4px;
+        }
+        .conf-range-slider .noUi-connect { background: #dc3545; }
+        .conf-range-slider .noUi-handle {
+            width: 14px !important;
+            height: 14px !important;
+            top: -5px !important;
+            right: -7px !important;
+            border-radius: 50%;
+            border: none;
+            background: #dc3545;
+            box-shadow: 0 0 0 8px rgba(220, 53, 69, 0.20);
+            cursor: pointer;
+            transition: box-shadow 0.15s ease;
+        }
+        .conf-range-slider .noUi-handle:hover,
+        .conf-range-slider .noUi-handle.noUi-active {
+            box-shadow: 0 0 0 11px rgba(220, 53, 69, 0.32);
+        }
+        .conf-range-slider .noUi-handle::before,
+        .conf-range-slider .noUi-handle::after { display: none; }
+        .conf-range-slider .noUi-tooltip {
+            font-size: 0.72rem;
+            font-weight: 700;
+            padding: 3px 9px;
+            background: #dc3545;
+            color: #fff;
+            border: none;
+            border-radius: 6px;
+            bottom: 150%;
+        }
+        .conf-range-slider .noUi-tooltip::after {
+            content: '';
+            position: absolute;
+            left: 50%;
+            bottom: -4px;
+            transform: translateX(-50%);
+            border: 4px solid transparent;
+            border-top-color: #dc3545;
+            border-bottom: 0;
+        }
+        .conf-range-slider .noUi-pips-horizontal {
+            height: 30px;
+            padding: 6px 0 0;
+            color: #6b7280;
+        }
+        .conf-range-slider .noUi-marker-horizontal.noUi-marker {
+            width: 1px;
+            height: 5px;
+            background: #cbd5e1;
+            margin-left: 0;
+        }
+        .conf-range-slider .noUi-marker-horizontal.noUi-marker-large {
+            height: 7px;
+            background: #94a3b8;
+        }
+        .conf-range-slider .noUi-value {
+            font-size: 0.65rem;
+            font-weight: 500;
+            color: #6b7280;
+            margin-top: 2px;
+        }
+
+        .table td.avg-ai-conf-cell {
+            font-weight: 700;
+            font-variant-numeric: tabular-nums;
+            color: #0f172a;
+        }
+
+        .table td.avg-ai-conf-low {
+            background-color: #fa8282 !important;
+        }
+
+        .table td.avg-ai-conf-medium {
+            background-color: #fcfc9d !important;
+        }
+
+        .table td.avg-ai-conf-high {
+            background-color: #84f58f !important;
+        }
+
+        .table thead th {
+            vertical-align: middle !important;
+        }
+
+        .review-bulk-header {
+            display: flex;
+            min-height: 34px;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            gap: 3px;
+            line-height: 1;
+        }
+
+        .review-bulk-header .form-check-input {
+            margin: 0 !important;
+        }
+
+        /* ---------- Review button — navy with eye icon ---------- */
+        .v2-btn-review {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 5px 14px;
+            border-radius: var(--v2-radius-sm);
+            background: var(--ubc-blue);
+            color: #ffffff;
+            font-size: 0.78rem;
+            font-weight: 600;
+            text-decoration: none;
+            line-height: 1.4;
+            transition: background 0.15s, transform 0.1s, box-shadow 0.15s;
+            box-shadow: 0 1px 2px rgba(0, 0, 0, 0.10);
+            border: none;
+            white-space: nowrap;
+        }
+        .v2-btn-review:hover {
+            background: var(--ubc-blue-hover);
+            color: #ffffff;
+            transform: translateY(-1px);
+            box-shadow: 0 3px 6px rgba(0, 33, 69, 0.25);
+        }
+        .v2-btn-review:active {
+            transform: translateY(0);
+        }
+        .v2-btn-review i {
+            font-size: 0.85rem;
+        }
+
+        /* ---------- Photo column — soft pastel pills ---------- */
+        .v2-photo-pill {
+            display: inline-flex;
+            align-items: center;
+            gap: 5px;
+            padding: 3px 10px;
+            border-radius: var(--v2-radius-pill);
+            font-size: 0.78rem;
+            font-weight: 700;
+            font-variant-numeric: tabular-nums;
+            line-height: 1.4;
+        }
+        .v2-photo-pill--ok {
+            background: #dcfce7;
+            color: #166534;
+        }
+        .v2-photo-pill--miss {
+            background: #fee2e2;
+            color: #991b1b;
+        }
+        .v2-photo-pill i {
+            font-size: 0.9rem;
+        }
+        .v2-photo-extra-chip {
+            display: inline-flex;
+            align-items: center;
+            margin-left: 4px;
+            padding: 2px 7px;
+            border-radius: var(--v2-radius-pill);
+            font-size: 0.72rem;
+            font-weight: 600;
+            font-variant-numeric: tabular-nums;
+            line-height: 1.3;
+            background: #e5e7eb;
+            color: #4b5563;
+            cursor: default;
+        }
+        .capture-note-icon {
+            font-size: 1.05rem;
+            cursor: default;
+        }
+        .capture-note-icon--has {
+            color: #198754;
+            font-weight: 700;
+            -webkit-text-stroke: 0.35px currentColor;
+            text-shadow: 0 0 0 currentColor;
+        }
+        .capture-note-icon--empty {
+            color: #94a3b8;
+            opacity: 0.45;
+        }
+
+        /* ---------- Avg AI Conf / Comp Score - compact semantic score capsules ---------- */
+        table.dataTable td.avg-ai-conf-cell,
+        .table td.avg-ai-conf-cell {
+            background-color: transparent !important;
+            background: transparent !important;
+        }
+        .score-header-label {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 5px;
+            white-space: nowrap;
+        }
+        .score-header-label .bi {
+            font-size: 0.78rem;
+            opacity: 0.82;
+        }
+        .score-meter {
+            --score-color: #64748b;
+            --score-tint: rgba(100, 116, 139, 0.08);
+            display: inline-flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            min-width: 86px;
+            padding: 3px 6px;
+            gap: 5px;
+            border-radius: 8px;
+            line-height: 1;
+            transition: background-color 120ms ease, box-shadow 120ms ease;
+        }
+        .score-meter:hover {
+            background-color: var(--score-tint);
+            box-shadow: 0 1px 2px rgba(15, 23, 42, 0.06);
+        }
+        .score-meter--low {
+            --score-color: #dc2626;
+            --score-tint: rgba(220, 38, 38, 0.07);
+        }
+        .score-meter--medium {
+            --score-color: #d97706;
+            --score-tint: rgba(217, 119, 6, 0.08);
+        }
+        .score-meter--high {
+            --score-color: #059669;
+            --score-tint: rgba(5, 150, 105, 0.08);
+        }
+        .score-value-row {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 5px;
+        }
+        .score-status-dot {
+            width: 7px;
+            height: 7px;
+            flex: 0 0 7px;
+            border-radius: 50%;
+            background-color: var(--score-color);
+            box-shadow: 0 0 0 2px var(--score-tint);
+        }
+        .score-value {
+            color: #0f172a;
+            font-size: 0.76rem;
+            font-weight: 700;
+            font-variant-numeric: tabular-nums;
+            letter-spacing: -0.01em;
+        }
+        .score-segments {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 3px;
+        }
+        .score-segment {
+            width: 13px;
+            height: 4px;
+            border-radius: 999px;
+            background-color: #e2e8f0;
+        }
+        .score-segment.is-active {
+            background-color: var(--score-color);
+        }
+
+        .btn-reset {
+            color: var(--stitch-text-muted);
+            font-size: 0.85rem;
+            font-weight: 500;
+            background: none;
+            border: none;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            padding: 6px 12px;
+            border-radius: 6px;
+        }
+
+        .btn-reset:hover {
+            background-color: #f1f5f9;
+            color: #0f172a;
+        }
+
+        .search-label {
+            font-size: 0.75rem;
+            font-weight: 600;
+            color: #64748b;
+            margin-bottom: 6px;
+            display: block;
+        }
+
+        .stitch-input {
+            background-color: #f8fafc;
+            border: 1px solid #e2e8f0;
+            border-radius: 6px;
+            color: #334155;
+            font-size: 0.9rem;
+            padding: 8px 12px;
+            transition: all 0.2s;
+        }
+
+        .stitch-input:focus {
+            background-color: #fff;
+            border-color: #3b82f6;
+            box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+        }
+
+        /* Compact inline pill variant for the filter-row AI Confidence column.
+           Reuses the existing .confidence-slicer JS — --pills replaces
+           rail/dot visuals with simple pill buttons. */
+        .confidence-slicer--pills {
+            display: flex !important;
+            flex-wrap: wrap !important;
+            align-items: center !important;
+            gap: 4px !important;
+            padding: 0 !important;
+            margin: 0 !important;
+            border: none !important;
+            background: transparent !important;
+            box-shadow: none !important;
+            flex: 1 1 auto !important;
+            width: 100% !important;
+            min-width: 0 !important;
+            max-width: none !important;
+        }
+        .confidence-slicer--pills .confidence-slicer__title,
+        .confidence-slicer--pills .confidence-slicer__badge { display: none !important; }
+        .confidence-slicer--pills .confidence-slicer__rail {
+            position: static !important;
+            display: contents !important;
+            flex: none !important;
+            min-width: 0 !important;
+            height: auto !important;
+            padding: 0 !important;
+        }
+        .confidence-slicer--pills .confidence-slicer__rail::before,
+        .confidence-slicer--pills .confidence-slicer__rail::after { display: none !important; content: none !important; }
+        .confidence-slicer--pills .confidence-slicer__all,
+        .confidence-slicer--pills .confidence-slicer__stop {
+            position: static !important;
+            width: auto !important;
+            height: auto !important;
+            display: inline-flex !important;
+            align-items: center !important;
+            justify-content: center !important;
+            padding: 6px 11px !important;
+            margin: 0 !important;
+            border-radius: 20px !important;
+            font-size: 0.75rem !important;
+            font-weight: 600 !important;
+            line-height: 1 !important;
+            border: 1px solid #e2e8f0 !important;
+            color: #64748b !important;
+            background: #ffffff !important;
+            cursor: pointer !important;
+            transition: all 0.15s !important;
+            white-space: nowrap !important;
+            flex: 0 1 auto !important;
+            box-shadow: none !important;
+        }
+        .confidence-slicer--pills .confidence-slicer__all::before,
+        .confidence-slicer--pills .confidence-slicer__stop::before,
+        .confidence-slicer--pills .confidence-slicer__stop::after { display: none !important; content: none !important; }
+        .confidence-slicer--pills .confidence-slicer__all:hover,
+        .confidence-slicer--pills .confidence-slicer__stop:hover {
+            border-color: var(--ubc-blue-hover) !important;
+            color: var(--ubc-blue) !important;
+        }
+        .confidence-slicer--pills .confidence-slicer__all.is-active,
+        .confidence-slicer--pills .confidence-slicer__stop.is-active {
+            background: var(--ubc-blue) !important;
+            color: #ffffff !important;
+            border-color: var(--ubc-blue) !important;
+            box-shadow: 0 1px 4px rgba(0, 33, 69, 0.18) !important;
+        }
+        .confidence-slicer--pills .confidence-slicer__dot { display: none !important; }
+        .confidence-slicer--pills .confidence-slicer__label {
+            position: static !important;
+            display: inline !important;
+            width: auto !important;
+            margin: 0 !important;
+            font-size: 0.75rem !important;
+            font-weight: 600 !important;
+            color: inherit !important;
+        }
+        .confidence-slicer--pills .confidence-slicer__stop.is-active .confidence-slicer__label { color: #ffffff !important; }
+
+        .filter-col-tag,
+        .filter-col-building {
+            flex: 0 0 auto;
+        }
+
+        @media (min-width: 768px) {
+            .filter-col-tag {
+                flex: 0 0 30%;
+                max-width: 30%;
+            }
+
+            .filter-col-building {
+                flex: 0 0 20%;
+                max-width: 20%;
+            }
+        }
+
+        @media (min-width: 1200px) {
+
+            .filter-col-tag,
+            .filter-col-building {
+                flex: 0 0 15%;
+                max-width: 15%;
+            }
+        }
+
+        /* --- STITCH FILTER STYLING END --- */
+
+        /* User Nav Styling */
+        .user-nav {
+            background-color: #ffffff;
+            border-bottom: 1px solid #e9ecef;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.03);
+        }
+
+        .page-header h1 {
+            color: var(--ubc-blue);
+            font-weight: 700;
+            font-size: 1.75rem;
+        }
+
+        .nav-tabs {
+            border-bottom: none;
+            margin-left: 1rem;
+        }
+
+        .nav-tabs .nav-link {
+            border: none;
+            color: #6c757d;
+            font-weight: 500;
+            padding: 0.75rem 1.5rem;
+            border-radius: 0.5rem 0.5rem 0 0;
+            transition: all 0.2s ease;
+        }
+
+        .nav-tabs .nav-link:hover {
+            color: var(--ubc-blue);
+            background-color: rgba(0, 33, 69, 0.05);
+        }
+
+        .nav-tabs .nav-link.active {
+            color: var(--ubc-blue);
+            background-color: #ffffff;
+            font-weight: 600;
+            border-bottom: 3px solid transparent;
+            box-shadow: 0 -3px 8px rgba(0, 0, 0, 0.05);
+            border-top: 3px solid var(--ubc-blue);
+        }
+
+        .notification-badge {
+            background-color: #dc3545;
+            color: white;
+            border-radius: 20px;
+            padding: 0.25em 0.6em;
+            font-size: 0.7rem;
+            margin-left: 5px;
+            box-shadow: 0 2px 2px rgba(220, 53, 69, 0.3);
+            vertical-align: text-top;
+        }
+
+        .type-badge {
+            display: inline-block;
+            padding: 0.35rem 0.6rem;
+            border-radius: 50px;
+            font-size: 0.75rem;
+            font-weight: 600;
+            line-height: 1;
+            background: #e7f3ff;
+            color: #084298;
+            border: 1px solid rgba(8, 66, 152, 0.1);
+        }
+
+        /* Table Styling Tweaks */
+        table.dataTable {
+            margin-top: 0 !important;
+            border-collapse: separate;
+            border-spacing: 0;
+            background: white;
+            border-radius: 12px;
+            overflow: hidden;
+            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+            border: 1px solid var(--stitch-border);
+        }
+
+        .dataTables_wrapper .dataTables_length,
+        .dataTables_wrapper .dataTables_filter {
+            padding: 1rem 1rem 0.5rem 1rem;
+        }
+
+        .table-dark th {
+            background-color: var(--ubc-blue) !important;
+            border-color: #0d3663;
+        }
+
+        td {
+            vertical-align: middle;
+        }
+
+        td.approved-cell,
+        td.sdi-cell {
+            cursor: pointer;
+            user-select: none;
+            transition: background-color 0.2s;
+            font-size: 1.2rem;
+            line-height: 1;
+        }
+
+        td.manual-entry-cell {
+            background-color: #fff8e1 !important;
+            color: #856404;
+        }
+
+        td.approved-cell:hover {
+            background-color: #e9ecef;
+            border-radius: 4px;
+        }
+
+        td.approved-cell:focus {
+            outline: 2px solid var(--ubc-blue-hover);
+            outline-offset: -2px;
+        }
+
+        tr[data-package-locked="1"] td.ai-status-cell,
+        tr[data-package-locked="1"] td.sdi-cell,
+        tr[data-package-locked="1"] td.approved-cell,
+        td.status-cell-locked {
+            cursor: not-allowed !important;
+            opacity: 0.62;
+            color: #64748b !important;
+            background-color: #f1f5f9 !important;
+        }
+
+        tr[data-package-locked="1"] td.ai-status-cell:hover,
+        tr[data-package-locked="1"] td.sdi-cell:hover,
+        tr[data-package-locked="1"] td.approved-cell:hover,
+        td.status-cell-locked:hover,
+        td.status-cell-locked:focus {
+            background-color: #f1f5f9 !important;
+            outline: none;
+        }
+
+        footer {
+            color: #adb5bd;
+        }
+
+        /* ─── Header action buttons (matching EL dashboard) ─── */
+        .v2-header-btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 6px 14px;
+            border-radius: var(--v2-radius-sm);
+            font-size: 0.82rem;
+            font-weight: 500;
+            cursor: pointer;
+            text-decoration: none;
+            transition: all 0.15s;
+            box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+            background: #ffffff;
+            line-height: 1.4;
+            white-space: nowrap;
+        }
+        .v2-header-btn--primary {
+            color: var(--ubc-blue-hover);
+            border: 1px solid var(--ubc-blue-hover);
+        }
+        .v2-header-btn--primary:hover {
+            background: var(--ubc-blue-hover);
+            color: #ffffff;
+        }
+        .v2-header-btn--secondary {
+            color: #6c757d;
+            border: 1px solid #6c757d;
+        }
+        .v2-header-btn--secondary:hover {
+            background: #6c757d;
+            color: #ffffff;
+        }
+        /* Archive toggle — pressed/active state (archived assets shown).
+           Cream (#fff8dc) fill + inset shadow so the button reads as "pressed".
+           Driven by server-side archive_filter_active (URL param), so it
+           survives reloads and clears only on un-press or filter Reset. */
+        .v2-header-btn--archive-on {
+            color: #6c757d;
+            background: #fff8dc;
+            border: 1px solid #e6d98f;
+            box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.12);
+        }
+        .v2-header-btn--archive-on:hover {
+            background: #fdf2c4;
+            border-color: #e0d083;
+            color: #4b5563;
+        }
+
+        /* ─── Embedded mode (iframe inside central dashboard) ─── */
+        body.embedded-mode .user-nav { display: none !important; }
+        body.embedded-mode .page-header { margin-bottom: 0.5rem !important; }
+    </style>
+    {% include "_shell.html" %}
+</head>
+
+<body class="py-2 {% if g.embedded %}embedded-mode{% endif %}">
+
+    {% if not g.embedded %}
+    <nav class="user-nav py-2 mb-4 sticky-top">
+        <div class="container-fluid px-4 d-flex justify-content-end align-items-center">
+            {% if username %}
+            <div class="dropdown">
+                <button class="btn btn-light dropdown-toggle border shadow-sm d-flex align-items-center gap-2"
+                    type="button" data-bs-toggle="dropdown" aria-expanded="false">
+                    <span
+                        class="bg-secondary rounded-circle text-white d-flex align-items-center justify-content-center"
+                        style="width: 24px; height: 24px;">
+                        <i class="bi bi-person-fill" style="font-size: 0.8rem;"></i>
+                    </span>
+                    <span>Welcome, <strong>{{ username }}</strong></span>
+                </button>
+                <ul class="dropdown-menu dropdown-menu-end shadow border-0 mt-2">
+                    <li><a class="dropdown-item text-danger" href="{{ url_for('logout') }}"><i
+                                class="bi bi-box-arrow-right me-2"></i>Logout</a></li>
+                </ul>
+            </div>
+            {% endif %}
+        </div>
+    </nav>
+    {% endif %}
+
+    <div id="main-dashboard-content" class="container-fluid px-4">
+
+        <div class="d-flex flex-column flex-md-row align-items-center align-items-md-start mb-4 page-header">
+            {% if not g.embedded %}
+            <a href="{{ url_for('index') }}" class="me-md-3 mb-3 mb-md-0">
+                <img src="{{ url_for('static', filename='ubc-facilities_logo.jpg') }}" alt="UBC Logo"
+                    class="rounded shadow-sm" style="height: 64px;">
+            </a>
+            <div class="text-center text-md-start flex-grow-1">
+                <a href="{{ url_for('index') }}" class="text-decoration-none">
+                    <h1 class="mb-1" id="main-title">{{ title or 'Asset Review Dashboard - Backflow Devices' }}</h1>
+                </a>
+                <p class="text-muted mb-0"><small>Maintenance Planning Department &bull; Backflow</small></p>
+            </div>
+            {% else %}
+            <div class="flex-grow-1"></div>
+            {% endif %}
+            <div class="d-flex gap-2 mt-3 mt-md-0">
+                {% if archive_filter_active %}
+                {# Archived assets hidden (default) — archive toggle OFF / not pressed #}
+                <a href="{{ url_for('index', archive='false', tab=active_tab, approved=approved_filter_raw) }}"
+                   class="v2-header-btn v2-header-btn--secondary" title="Show Archive">
+                    <i class="bi bi-archive"></i>
+                    <span class="d-none d-sm-inline">Show Archive</span>
+                </a>
+                {% else %}
+                {# Archived assets shown — archive toggle ON / pressed (shaded #fff8dc) #}
+                <a href="{{ url_for('index', archive='true', tab=active_tab, approved=approved_filter_raw) }}"
+                   class="v2-header-btn v2-header-btn--archive-on" title="Show Archive">
+                    <i class="bi bi-archive-fill"></i>
+                    <span class="d-none d-sm-inline">Show Archive</span>
+                </a>
+                {% endif %}
+
+                <button id="show-user-activity-btn" type="button" class="v2-header-btn v2-header-btn--secondary" title="Activity Log">
+                    <i class="bi bi-clock-history"></i>
+                    <span class="d-none d-md-inline">Activity Log</span>
+                </button>
+            </div>
+        </div>
+
+        {%- set total_assets   = card_total_assets | default(data_new|length + data_update|length + data_manual|length) -%}
+        {%- set pending_review = card_pending_review | default(count_unapproved_new + count_unapproved_update + count_unapproved_manual) -%}
+        {%- set total_missed   = card_missed | default(count_missed_new + count_missed_update + count_missed_manual) -%}
+        {%- set total_approved = card_approved | default(total_assets - pending_review) -%}
+
+        <div class="row g-3 mb-4">
+            <div class="col-6 col-md-3">
+                <div class="card border-0 shadow-sm h-100 border-start border-primary border-4">
+                    <div class="card-body d-flex align-items-center gap-3">
+                        <i class="bi bi-grid-3x3-gap-fill fs-2 text-primary"></i>
+                        <div>
+                            <div class="fs-4 fw-bold">{{ total_assets }}</div>
+                            <div class="text-muted small text-uppercase fw-semibold">Total Assets</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="col-6 col-md-3">
+                <div class="card border-0 shadow-sm h-100 border-start border-success border-4">
+                    <div class="card-body d-flex align-items-center gap-3">
+                        <i class="bi bi-check-circle-fill fs-2 text-success"></i>
+                        <div>
+                            <div class="fs-4 fw-bold">{{ total_approved }}</div>
+                            <div class="text-muted small text-uppercase fw-semibold">Approved</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="col-6 col-md-3">
+                <div class="card border-0 shadow-sm h-100 border-start border-warning border-4">
+                    <div class="card-body d-flex align-items-center gap-3">
+                        <i class="bi bi-hourglass-split fs-2 text-warning"></i>
+                        <div>
+                            <div class="fs-4 fw-bold">{{ pending_review }}</div>
+                            <div class="text-muted small text-uppercase fw-semibold">Pending Review</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="col-6 col-md-3">
+                <div class="card border-0 shadow-sm h-100 border-start border-danger border-4">
+                    <div class="card-body d-flex align-items-center gap-3">
+                        <i class="bi bi-image fs-2 text-danger"></i>
+                        <div>
+                            <div class="fs-4 fw-bold">{{ total_missed }}</div>
+                            <div class="text-muted small text-uppercase fw-semibold">Missing Photo</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <ul class="nav nav-tabs" id="dashboardTabs" role="tablist">
+            <li class="nav-item" role="presentation">
+                <button class="nav-link {% if active_tab == 'new' %}active{% endif %}" id="tab-new-btn"
+                    data-bs-toggle="tab" data-bs-target="#tab-new" type="button" role="tab" aria-controls="tab-new"
+                    aria-selected="{{ 'true' if active_tab == 'new' else 'false' }}" data-tab="new">
+                    <i class="bi bi-plus-circle me-1"></i> New Assets
+                    {% if count_unapproved_new > 0 %}
+                    <span class="notification-badge">{{ count_unapproved_new }}</span>
+                    {% endif %}
+                </button>
+            </li>
+            <li class="nav-item" role="presentation">
+                <button class="nav-link {% if active_tab == 'update' %}active{% endif %}" id="tab-update-btn"
+                    data-bs-toggle="tab" data-bs-target="#tab-update" type="button" role="tab"
+                    aria-controls="tab-update" aria-selected="{{ 'true' if active_tab == 'update' else 'false' }}"
+                    data-tab="update">
+                    <i class="bi bi-arrow-repeat me-1"></i> Update Existing
+                    {% if count_unapproved_update > 0 %}
+                    <span class="notification-badge">{{ count_unapproved_update }}</span>
+                    {% endif %}
+                </button>
+            </li>
+            <li class="nav-item" role="presentation">
+                <button class="nav-link {% if active_tab == 'manual' %}active{% endif %}" id="tab-manual-btn"
+                    data-bs-toggle="tab" data-bs-target="#tab-manual" type="button" role="tab"
+                    aria-controls="tab-manual" aria-selected="{{ 'true' if active_tab == 'manual' else 'false' }}"
+                    data-tab="manual">
+                    <i class="bi bi-pencil-square me-1"></i> Manual Entry
+                    {% if count_unapproved_manual > 0 %}
+                    <span class="notification-badge">{{ count_unapproved_manual }}</span>
+                    {% endif %}
+                </button>
+            </li>
+        </ul>
+
+        <div class="dashboard-card mb-5">
+            <div class="tab-content" id="dashboardTabContent">
+
+                <div class="tab-pane fade {% if active_tab == 'new' %}show active{% endif %}" id="tab-new"
+                    role="tabpanel" aria-labelledby="tab-new-btn">
+
+                    <div class="filter-card">
+                        <div
+                            class="d-flex flex-column flex-lg-row align-items-start align-items-lg-center justify-content-between mb-4 gap-3">
+                            <div class="d-flex flex-wrap flex-lg-nowrap align-items-center gap-2 flex-grow-1">
+                                <span class="view-label">VIEWS:</span>
+
+                                <a href="{{ url_for('index', tab='new', process='0') }}"
+                                    class="view-pill pill-all {% if not missed_filter and archive_filter_active %}active{% endif %}">
+                                    <i class="bi bi-grid-fill me-2"></i> All Assets
+                                </a>
+
+                                <a href="{{ url_for('index', missed='true', tab='new', process='0') }}"
+                                    class="view-pill pill-missed btn-missed {% if missed_filter == 'true' %}active{% endif %}">
+                                    <i class="bi bi-image me-2"></i> Missing Photo
+                                    <span class="badge-count quick-filter-badge">{{ count_missed_new }}</span>
+                                </a>
+
+                            </div>
+
+                            <div class="d-flex align-items-center gap-2">
+                                <button type="button" class="btn-reset ms-2" onclick="exportFilteredXlsx('new')"
+                                    data-bs-toggle="tooltip" title="Export filtered rows to Excel">
+                                    <i class="bi bi-file-earmark-excel-fill"></i> Excel
+                                </button>
+                                <button type="button" class="btn-reset ms-2" onclick="resetFilters('new')"
+                                    data-bs-toggle="tooltip" title="Reset All Filters">
+                                    <i class="bi bi-funnel-fill"></i> Reset
+                                </button>
+                            </div>
+                        </div>
+
+                        <div class="row g-3">
+                            <div class="col-12 col-md-3 col-xl-1">
+                                <label for="filter-qr-new" class="search-label">Search QR Code</label>
+                                <div class="input-group">
+                                    <span class="input-group-text bg-light border-end-0 text-muted"><i
+                                            class="bi bi-qr-code"></i></span>
+                                    <input type="text" id="filter-qr-new"
+                                        class="form-control stitch-input border-start-0 ps-0"
+                                        placeholder="Search QR...">
+                                </div>
+                            </div>
+                            <div class="col-12 col-md-3 col-xl-1">
+                                <label for="filter-date-new" class="search-label">Capture Date</label>
+                                <div class="input-group">
+                                    <span class="input-group-text bg-light border-end-0 text-muted"><i
+                                            class="bi bi-calendar-date"></i></span>
+                                    <input type="date" id="filter-date-new"
+                                        class="form-control stitch-input border-start-0 ps-0">
+                                </div>
+                            </div>
+                            <div class="col-12 col-md-4 col-xl-2">
+                                <label for="filter-captured-by-new" class="search-label">Captured By</label>
+                                <select id="filter-captured-by-new" class="form-select stitch-input">
+                                    <option value="">All</option>
+                                </select>
+                            </div>
+                            <div class="col-12 col-md-6 col-xl-2 filter-col-tag">
+                                <label for="filter-tag-new" class="search-label">UBC Asset Tag</label>
+                                <div class="input-group">
+                                    <span class="input-group-text bg-light border-end-0 text-muted"><i
+                                            class="bi bi-tag"></i></span>
+                                    <input type="text" id="filter-tag-new"
+                                        class="form-control stitch-input border-start-0 ps-0" placeholder="Tag ID...">
+                                </div>
+                            </div>
+                            <div class="col-12 col-md-4 col-xl-1">
+                                <label for="filter-notes-new" class="search-label">Notes</label>
+                                <select id="filter-notes-new" class="form-select stitch-input">
+                                    <option value="">All</option>
+                                    <option value="YES">YES</option>
+                                    <option value="NO">NO</option>
+                                </select>
+                            </div>
+                            <div class="col-12 col-md-4 col-xl-2">
+                                <span class="search-label" id="filter-group-label-new">Asset Group</span>
+                                <div id="filter-group-new" class="ms">
+                                    <button type="button" class="ms-toggle" aria-haspopup="listbox" aria-expanded="false"
+                                            aria-labelledby="filter-group-label-new">
+                                        <span class="ms-text">All Groups</span>
+                                        <span class="ms-caret" aria-hidden="true">&#9662;</span>
+                                    </button>
+                                    <div class="ms-panel" role="listbox" aria-multiselectable="true" hidden>
+                                        <input type="search" class="ms-search" placeholder="Filter asset groups&hellip;"
+                                               autocomplete="off" aria-label="Filter the asset group list">
+                                        <div class="ms-actions">
+                                            <button type="button" class="ms-action" data-act="all">Select all</button>
+                                            <button type="button" class="ms-action" data-act="none">Clear</button>
+                                        </div>
+                                        <div class="ms-options"><!-- checkbox rows injected by building-multiselect.js --></div>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="col-12 col-md-4 col-xl-2 filter-col-building">
+                                <span class="search-label" id="filter-building-label-new">Building</span>
+                                <div id="filter-building-new" class="ms">
+                                    <button type="button" class="ms-toggle" aria-haspopup="listbox" aria-expanded="false"
+                                            aria-labelledby="filter-building-label-new">
+                                        <span class="ms-text">All Buildings</span>
+                                        <span class="ms-caret" aria-hidden="true">&#9662;</span>
+                                    </button>
+                                    <div class="ms-panel" role="listbox" aria-multiselectable="true" hidden>
+                                        <input type="search" class="ms-search" placeholder="Filter buildings&hellip;"
+                                               autocomplete="off" aria-label="Filter the building list">
+                                        <div class="ms-actions">
+                                            <button type="button" class="ms-action" data-act="all">Select all</button>
+                                            <button type="button" class="ms-action" data-act="none">Clear</button>
+                                        </div>
+                                        <div class="ms-options"><!-- checkbox rows injected by building-multiselect.js --></div>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="col-12 col-md-4 col-xl-2">
+                                <label for="filter-approved-new" class="search-label">Review Status</label>
+                                <select id="filter-approved-new" class="form-select stitch-input">
+                                    <option value="" {% if approved_filter_raw=="all" %}selected{% endif %}>All Statuses
+                                    </option>
+                                    <option value="True" {% if approved_filter=="True" %}selected{% endif %}>Approved
+                                    </option>
+                                    <option value="False" {% if approved_filter=="False" and approved_filter_raw !="all"
+                                        %}selected{% endif %}>Pending</option>
+                                </select>
+                            </div>
+                            <div class="col-12 col-md-12 col-xl-2 filter-col-conf">
+                                <label class="search-label d-block">AI Confidence</label>
+                                <div class="conf-range-wrap">
+                                    <div id="confSlider-new" class="conf-range-slider"></div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <table id="assetTableNew_v2" class="table table-striped table-hover dt-responsive nowrap w-100">
+                        <thead class="table-dark">
+                            <tr>
+                                <th class="text-center">QR Code</th>
+                                <th class="text-center">Capture Date</th>
+                                <th class="text-center">Notes</th>
+                                <th class="text-center">Building</th>
+                                <th>Space</th>
+                                <th>Description</th>
+                                <th class="text-center">Type</th>
+                                <th>Manufacturer</th>
+                                <th>Model</th>
+                                <th>Serial</th>
+                                <th>UBC Tag</th>
+                                <th>Asset Group</th>
+                                <th>Attribute</th>
+                                <th>Diameter</th>
+                                <th class="text-center">Package Number</th>
+                                <th class="text-center">AI Status</th>
+                                <th class="text-center">
+                                    <span class="score-header-label"><i class="bi bi-stars" aria-hidden="true"></i>Avg AI Conf</span>
+                                </th>
+                                <th class="text-center">
+                                    <span class="score-header-label"><i class="bi bi-check-circle" aria-hidden="true"></i>Comp Score</span>
+                                </th>
+                                <th class="text-center align-middle" style="min-width: 80px;"><div class="review-bulk-header"><span>Manual</span>{% if can_edit %}<input class="form-check-input select-all-manual" type="checkbox" title="Toggle all filtered Manual states">{% endif %}</div></th>
+                                <th class="text-center align-middle" style="min-width: 90px;"><div class="review-bulk-header"><span>Approved</span>{% if can_edit %}<input class="form-check-input select-all-approved" type="checkbox" title="Toggle all filtered Approved states">{% endif %}</div></th>
+                                <th class="text-center">Photo</th>
+                                <th class="text-center" data-priority="1">Review</th>
+                                <th class="text-center">Captured By</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for item in data_new %}
+                            <tr data-missed-photo="{{ '1' if item['Missed Photo'] == 'YES' else '0' }}"
+                                data-avg-conf="{{ item['Avg_ai_conf'] if item['Avg_ai_conf'] is not none else '' }}"
+                                data-package-locked="{{ '1' if item.package_locked else '0' }}"
+                                data-package-source="{{ item.package_lock_source }}"
+                                data-package-id="{{ item.package_id }}"
+                                data-package-message="{{ item.package_lock_message }}">
+                                <td class="text-center"><small class="font-monospace text-muted">{{ item.qr_code
+                                        }}</small></td>
+                                <td class="text-center">{{ item['Capture Date'] }}</td>
+                                {% set capture_note = (item['Capture Notes'] or '')|trim %}
+                                <td class="text-center" data-order="{{ 1 if capture_note else 0 }}"
+                                    data-search="{{ 'YES' if capture_note else 'NO' }}">
+                                    {% if capture_note %}
+                                    <i class="bi bi-journal-text capture-note-icon capture-note-icon--has"
+                                        data-bs-toggle="tooltip" title="{{ capture_note }}"
+                                        aria-label="Capture note exists"></i>
+                                    {% else %}
+                                    <i class="bi bi-journal-text capture-note-icon capture-note-icon--empty"
+                                        data-bs-toggle="tooltip" title="No capture note"
+                                        aria-label="No capture note"></i>
+                                    {% endif %}
+                                </td>
+                                <td class="text-center">{% set bname = (building_name_map | default({})).get(item.building) %}<span class="badge bg-secondary"{% if bname %} data-bs-toggle="tooltip" title="{{ bname }} ({{ item.building }})"{% endif %}>{{ item.building }}</span></td>
+                                <td>{{ item.Location }}</td>
+                                <td><span class="d-inline-block text-truncate" style="max-width: 150px;"
+                                        title="{{ item['Description'] }}">{{ item['Description'] }}</span></td>
+                                <td class="text-center"><span class="type-badge">{{ (item.asset_type or '') | upper |
+                                        replace('-', '') | trim }}</span></td>
+                                <td>{{ item.Manufacturer }}</td>
+                                <td>{{ item.Model }}</td>
+                                <td>{{ item['Serial Number'] }}</td>
+                                <td class="fw-bold text-primary">{{ item['UBC Tag'] }}</td>
+                                <td>{{ item['Asset Group'] }}</td>
+                                <td>{{ item['Attribute'] }}</td>
+                                <td>{{ item['Diameter'] }}</td>
+                                <td class="text-center">{{ item.package_id }}</td>
+
+                                <td class="{% if can_edit %}ai-status-cell {% endif %}text-center" {% if can_edit %}style="cursor: pointer; user-select: none;"{% endif %}
+                                    data-docid="{{ item.doc_id }}" data-val="{{ item.ai_status }}" data-ai-cell="1"
+                                    title="Toggle AI Status">
+                                    {% if item.ai_status == '1' %}✅{% else %}☐{% endif %}
+                                </td>
+
+                                <td class="text-center avg-ai-conf-cell"
+                                    data-order="{{ item['Avg_ai_conf'] if item['Avg_ai_conf'] is not none else -1 }}">
+                                    {% set score_value = item['Avg_ai_conf'] %}
+                                    {% if score_value is not none %}
+                                    {% if score_value < 70 %}
+                                    {% set score_level = 'low' %}
+                                    {% set score_label = 'Low' %}
+                                    {% elif score_value < 80 %}
+                                    {% set score_level = 'medium' %}
+                                    {% set score_label = 'Medium' %}
+                                    {% else %}
+                                    {% set score_level = 'high' %}
+                                    {% set score_label = 'High' %}
+                                    {% endif %}
+                                    <div class="score-meter score-meter--{{ score_level }}"
+                                        title="AI confidence: {{ item['Avg_ai_conf_display'] }}"
+                                        role="meter" aria-label="AI confidence"
+                                        aria-valuemin="0" aria-valuemax="100" aria-valuenow="{{ score_value }}"
+                                        aria-valuetext="{{ item['Avg_ai_conf_display'] }}, {{ score_label }}">
+                                        <div class="score-value-row">
+                                            <span class="score-status-dot" aria-hidden="true"></span>
+                                            <span class="score-value">{{ item['Avg_ai_conf_display'] }}</span>
+                                        </div>
+                                        <div class="score-segments" aria-hidden="true">
+                                            {% for threshold in [1, 21, 41, 61, 81] %}
+                                            <span class="score-segment{% if score_value >= threshold %} is-active{% endif %}"></span>
+                                            {% endfor %}
+                                        </div>
+                                    </div>
+                                    <span class="visually-hidden">AI confidence level: {{ score_label }}</span>
+                                    {% else %}
+                                    <span class="text-muted">{{ item['Avg_ai_conf_display'] }}</span>
+                                    {% endif %}
+                                </td>
+                                <td class="text-center avg-ai-conf-cell"
+                                    data-order="{{ item['Comp_score'] if item['Comp_score'] is not none else -1 }}">
+                                    {% set score_value = item['Comp_score'] %}
+                                    {% if score_value is not none %}
+                                    {% if score_value < 70 %}
+                                    {% set score_level = 'low' %}
+                                    {% set score_label = 'Low' %}
+                                    {% elif score_value < 80 %}
+                                    {% set score_level = 'medium' %}
+                                    {% set score_label = 'Medium' %}
+                                    {% else %}
+                                    {% set score_level = 'high' %}
+                                    {% set score_label = 'High' %}
+                                    {% endif %}
+                                    <div class="score-meter score-meter--{{ score_level }}"
+                                        title="Completeness score: {{ item['Comp_score_display'] }}"
+                                        role="meter" aria-label="Completeness score"
+                                        aria-valuemin="0" aria-valuemax="100" aria-valuenow="{{ score_value }}"
+                                        aria-valuetext="{{ item['Comp_score_display'] }}, {{ score_label }}">
+                                        <div class="score-value-row">
+                                            <span class="score-status-dot" aria-hidden="true"></span>
+                                            <span class="score-value">{{ item['Comp_score_display'] }}</span>
+                                        </div>
+                                        <div class="score-segments" aria-hidden="true">
+                                            {% for threshold in [1, 21, 41, 61, 81] %}
+                                            <span class="score-segment{% if score_value >= threshold %} is-active{% endif %}"></span>
+                                            {% endfor %}
+                                        </div>
+                                    </div>
+                                    <span class="visually-hidden">Completeness level: {{ score_label }}</span>
+                                    {% else %}
+                                    <span class="text-muted">{{ item['Comp_score_display'] }}</span>
+                                    {% endif %}
+                                </td>
+                                <td class="{% if can_edit %}sdi-cell manual-entry-cell {% endif %}text-center" data-docid="{{ item.doc_id }}"
+                                    data-val="{{ item.ExcludeSDI }}" title="Toggle Manual Entry">
+                                    {% if item.ExcludeSDI == 1 %}✅{% else %}☐{% endif %}
+                                </td>
+
+                                {% set approved_bool = 'True' if item['Approved'] == 'True' else 'False' %}
+                                <td class="{% if can_edit %}approved-cell {% endif %}text-center fs-5" {% if can_edit %}tabindex="0" role="button"{% endif %}
+                                    data-docid="{{ item.doc_id }}" data-search="{{ approved_bool }}"
+                                    title="Toggle Approved">
+                                    <span class="d-none">{{ approved_bool }}</span>{% if item['Approved'] == 'True'
+                                    %}✅{% else %}☐{% endif %}
+                                </td>
+
+                                <td class="text-start">
+                                    {% if item['Missed Photo'] == 'YES' %}
+                                    <span class="v2-photo-pill v2-photo-pill--miss" data-bs-toggle="tooltip"
+                                        title="Missing: {{ item['Missing List'] }}">
+                                        <i class="bi bi-camera-video-off"></i>{{ item['Photos Summary'] }}
+                                    </span>
+                                    {% else %}
+                                    <span class="v2-photo-pill v2-photo-pill--ok"
+                                        data-bs-toggle="tooltip" title="All present">
+                                        <i class="bi bi-check-lg"></i>{{ item['Photos Summary'] }}
+                                    </span>
+                                    {% endif %}
+                                    {% if item['Extra Photo'] %}
+                                    <span class="v2-photo-extra-chip" data-bs-toggle="tooltip"
+                                        title="Extra Photo present">+1</span>
+                                    {% endif %}
+                                </td>
+                                <td class="text-center">
+                                    {% if can_edit %}<a class="v2-btn-review"
+                                        href="{{ url_for('review', doc_id=item.doc_id, tab='new', process='0', archive=('true' if archive_filter_active else 'false')) }}"><i class="bi bi-eye"></i>Review</a>{% endif %}
+                                </td>
+                                <td class="text-center">{{ item.captured_by }}</td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+
+                <div class="tab-pane fade {% if active_tab == 'update' %}show active{% endif %}" id="tab-update"
+                    role="tabpanel" aria-labelledby="tab-update-btn">
+                    <div class="filter-card">
+                        <div
+                            class="d-flex flex-column flex-lg-row align-items-start align-items-lg-center justify-content-between mb-4 gap-3">
+                            <div class="d-flex flex-wrap flex-lg-nowrap align-items-center gap-2 flex-grow-1">
+                                <span class="view-label">VIEWS:</span>
+
+                                <a href="{{ url_for('index', tab='update', process='1') }}"
+                                    class="view-pill pill-all {% if not missed_filter and archive_filter_active %}active{% endif %}">
+                                    <i class="bi bi-grid-fill me-2"></i> All Assets
+                                </a>
+
+                                <a href="{{ url_for('index', missed='true', tab='update', process='1') }}"
+                                    class="view-pill pill-missed btn-missed {% if missed_filter == 'true' %}active{% endif %}">
+                                    <i class="bi bi-image me-2"></i> Missing Photo
+                                    <span class="badge-count quick-filter-badge">{{ count_missed_update }}</span>
+                                </a>
+
+                            </div>
+
+                            <div class="d-flex align-items-center gap-2">
+                                <button type="button" class="btn-reset ms-2" onclick="exportFilteredXlsx('update')"
+                                    data-bs-toggle="tooltip" title="Export filtered rows to Excel">
+                                    <i class="bi bi-file-earmark-excel-fill"></i> Excel
+                                </button>
+                                <button type="button" class="btn-reset ms-2" onclick="resetFilters('update')"
+                                    data-bs-toggle="tooltip" title="Reset All Filters">
+                                    <i class="bi bi-funnel-fill"></i> Reset
+                                </button>
+                            </div>
+                        </div>
+
+                        <div class="row g-3">
+                            <div class="col-12 col-md-3 col-xl-1">
+                                <label for="filter-qr-update" class="search-label">Search QR Code</label>
+                                <div class="input-group">
+                                    <span class="input-group-text bg-light border-end-0 text-muted"><i
+                                            class="bi bi-qr-code"></i></span>
+                                    <input type="text" id="filter-qr-update"
+                                        class="form-control stitch-input border-start-0 ps-0"
+                                        placeholder="Search QR...">
+                                </div>
+                            </div>
+                            <div class="col-12 col-md-3 col-xl-1">
+                                <label for="filter-date-update" class="search-label">Capture Date</label>
+                                <div class="input-group">
+                                    <span class="input-group-text bg-light border-end-0 text-muted"><i
+                                            class="bi bi-calendar-date"></i></span>
+                                    <input type="date" id="filter-date-update"
+                                        class="form-control stitch-input border-start-0 ps-0">
+                                </div>
+                            </div>
+                            <div class="col-12 col-md-4 col-xl-2">
+                                <label for="filter-captured-by-update" class="search-label">Captured By</label>
+                                <select id="filter-captured-by-update" class="form-select stitch-input">
+                                    <option value="">All</option>
+                                </select>
+                            </div>
+                            <div class="col-12 col-md-6 col-xl-2 filter-col-tag">
+                                <label for="filter-tag-update" class="search-label">UBC Asset Tag</label>
+                                <div class="input-group">
+                                    <span class="input-group-text bg-light border-end-0 text-muted"><i
+                                            class="bi bi-tag"></i></span>
+                                    <input type="text" id="filter-tag-update"
+                                        class="form-control stitch-input border-start-0 ps-0" placeholder="Tag ID...">
+                                </div>
+                            </div>
+                            <div class="col-12 col-md-4 col-xl-1">
+                                <label for="filter-notes-update" class="search-label">Notes</label>
+                                <select id="filter-notes-update" class="form-select stitch-input">
+                                    <option value="">All</option>
+                                    <option value="YES">YES</option>
+                                    <option value="NO">NO</option>
+                                </select>
+                            </div>
+                            <div class="col-12 col-md-4 col-xl-2">
+                                <span class="search-label" id="filter-group-label-update">Asset Group</span>
+                                <div id="filter-group-update" class="ms">
+                                    <button type="button" class="ms-toggle" aria-haspopup="listbox" aria-expanded="false"
+                                            aria-labelledby="filter-group-label-update">
+                                        <span class="ms-text">All Groups</span>
+                                        <span class="ms-caret" aria-hidden="true">&#9662;</span>
+                                    </button>
+                                    <div class="ms-panel" role="listbox" aria-multiselectable="true" hidden>
+                                        <input type="search" class="ms-search" placeholder="Filter asset groups&hellip;"
+                                               autocomplete="off" aria-label="Filter the asset group list">
+                                        <div class="ms-actions">
+                                            <button type="button" class="ms-action" data-act="all">Select all</button>
+                                            <button type="button" class="ms-action" data-act="none">Clear</button>
+                                        </div>
+                                        <div class="ms-options"><!-- checkbox rows injected by building-multiselect.js --></div>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="col-12 col-md-4 col-xl-2 filter-col-building">
+                                <span class="search-label" id="filter-building-label-update">Building</span>
+                                <div id="filter-building-update" class="ms">
+                                    <button type="button" class="ms-toggle" aria-haspopup="listbox" aria-expanded="false"
+                                            aria-labelledby="filter-building-label-update">
+                                        <span class="ms-text">All Buildings</span>
+                                        <span class="ms-caret" aria-hidden="true">&#9662;</span>
+                                    </button>
+                                    <div class="ms-panel" role="listbox" aria-multiselectable="true" hidden>
+                                        <input type="search" class="ms-search" placeholder="Filter buildings&hellip;"
+                                               autocomplete="off" aria-label="Filter the building list">
+                                        <div class="ms-actions">
+                                            <button type="button" class="ms-action" data-act="all">Select all</button>
+                                            <button type="button" class="ms-action" data-act="none">Clear</button>
+                                        </div>
+                                        <div class="ms-options"><!-- checkbox rows injected by building-multiselect.js --></div>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="col-12 col-md-4 col-xl-2">
+                                <label for="filter-approved-update" class="search-label">Review Status</label>
+                                <select id="filter-approved-update" class="form-select stitch-input">
+                                    <option value="" {% if approved_filter_raw=="all" %}selected{% endif %}>All Statuses
+                                    </option>
+                                    <option value="True" {% if approved_filter=="True" %}selected{% endif %}>Approved
+                                    </option>
+                                    <option value="False" {% if approved_filter=="False" and approved_filter_raw !="all"
+                                        %}selected{% endif %}>Pending</option>
+                                </select>
+                            </div>
+                            <div class="col-12 col-md-12 col-xl-2 filter-col-conf">
+                                <label class="search-label d-block">AI Confidence</label>
+                                <div class="conf-range-wrap">
+                                    <div id="confSlider-update" class="conf-range-slider"></div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <table id="assetTableUpdate_v2" class="table table-striped table-hover dt-responsive nowrap w-100">
+                        <thead class="table-dark">
+                            <tr>
+                                <th class="text-center">QR Code</th>
+                                <th class="text-center">Capture Date</th>
+                                <th class="text-center">Notes</th>
+                                <th class="text-center">Building</th>
+                                <th>Space</th>
+                                <th>Description</th>
+                                <th class="text-center">Type</th>
+                                <th>Manufacturer</th>
+                                <th>Model</th>
+                                <th>Serial</th>
+                                <th>UBC Tag</th>
+                                <th>Asset Group</th>
+                                <th>Attribute</th>
+                                <th>Diameter</th>
+                                <th class="text-center">Package Number</th>
+                                <th class="text-center">AI Status</th>
+                                <th class="text-center">
+                                    <span class="score-header-label"><i class="bi bi-stars" aria-hidden="true"></i>Avg AI Conf</span>
+                                </th>
+                                <th class="text-center">
+                                    <span class="score-header-label"><i class="bi bi-check-circle" aria-hidden="true"></i>Comp Score</span>
+                                </th>
+                                <th class="text-center align-middle" style="min-width: 80px;"><div class="review-bulk-header"><span>Manual</span>{% if can_edit %}<input class="form-check-input select-all-manual" type="checkbox" title="Toggle all filtered Manual states">{% endif %}</div></th>
+                                <th class="text-center align-middle" style="min-width: 90px;"><div class="review-bulk-header"><span>Approved</span>{% if can_edit %}<input class="form-check-input select-all-approved" type="checkbox" title="Toggle all filtered Approved states">{% endif %}</div></th>
+                                <th class="text-center">Photo</th>
+                                <th class="text-center" data-priority="1">Review</th>
+                                <th class="text-center">Captured By</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for item in data_update %}
+                            <tr data-missed-photo="{{ '1' if item['Missed Photo'] == 'YES' else '0' }}"
+                                data-avg-conf="{{ item['Avg_ai_conf'] if item['Avg_ai_conf'] is not none else '' }}"
+                                data-package-locked="{{ '1' if item.package_locked else '0' }}"
+                                data-package-source="{{ item.package_lock_source }}"
+                                data-package-id="{{ item.package_id }}"
+                                data-package-message="{{ item.package_lock_message }}">
+                                <td class="text-center"><small class="font-monospace text-muted">{{ item.qr_code
+                                        }}</small></td>
+                                <td class="text-center">{{ item['Capture Date'] }}</td>
+                                {% set capture_note = (item['Capture Notes'] or '')|trim %}
+                                <td class="text-center" data-order="{{ 1 if capture_note else 0 }}"
+                                    data-search="{{ 'YES' if capture_note else 'NO' }}">
+                                    {% if capture_note %}
+                                    <i class="bi bi-journal-text capture-note-icon capture-note-icon--has"
+                                        data-bs-toggle="tooltip" title="{{ capture_note }}"
+                                        aria-label="Capture note exists"></i>
+                                    {% else %}
+                                    <i class="bi bi-journal-text capture-note-icon capture-note-icon--empty"
+                                        data-bs-toggle="tooltip" title="No capture note"
+                                        aria-label="No capture note"></i>
+                                    {% endif %}
+                                </td>
+                                <td class="text-center">{% set bname = (building_name_map | default({})).get(item.building) %}<span class="badge bg-secondary"{% if bname %} data-bs-toggle="tooltip" title="{{ bname }} ({{ item.building }})"{% endif %}>{{ item.building }}</span></td>
+                                <td>{{ item.Location }}</td>
+                                <td><span class="d-inline-block text-truncate" style="max-width: 150px;"
+                                        title="{{ item['Description'] }}">{{ item['Description'] }}</span></td>
+                                <td class="text-center"><span class="type-badge">{{ (item.asset_type or '') | upper |
+                                        replace('-', '') | trim }}</span></td>
+                                <td>{{ item.Manufacturer }}</td>
+                                <td>{{ item.Model }}</td>
+                                <td>{{ item['Serial Number'] }}</td>
+                                <td class="fw-bold text-primary">{{ item['UBC Tag'] }}</td>
+                                <td>{{ item['Asset Group'] }}</td>
+                                <td>{{ item['Attribute'] }}</td>
+                                <td>{{ item['Diameter'] }}</td>
+                                <td class="text-center">{{ item.package_id }}</td>
+
+                                <td class="{% if can_edit %}ai-status-cell {% endif %}text-center" {% if can_edit %}style="cursor: pointer; user-select: none;"{% endif %}
+                                    data-docid="{{ item.doc_id }}" data-val="{{ item.ai_status }}" data-ai-cell="1"
+                                    title="Toggle AI Status">
+                                    {% if item.ai_status == '1' %}✅{% else %}☐{% endif %}
+                                </td>
+
+                                <td class="text-center avg-ai-conf-cell"
+                                    data-order="{{ item['Avg_ai_conf'] if item['Avg_ai_conf'] is not none else -1 }}">
+                                    {% set score_value = item['Avg_ai_conf'] %}
+                                    {% if score_value is not none %}
+                                    {% if score_value < 70 %}
+                                    {% set score_level = 'low' %}
+                                    {% set score_label = 'Low' %}
+                                    {% elif score_value < 80 %}
+                                    {% set score_level = 'medium' %}
+                                    {% set score_label = 'Medium' %}
+                                    {% else %}
+                                    {% set score_level = 'high' %}
+                                    {% set score_label = 'High' %}
+                                    {% endif %}
+                                    <div class="score-meter score-meter--{{ score_level }}"
+                                        title="AI confidence: {{ item['Avg_ai_conf_display'] }}"
+                                        role="meter" aria-label="AI confidence"
+                                        aria-valuemin="0" aria-valuemax="100" aria-valuenow="{{ score_value }}"
+                                        aria-valuetext="{{ item['Avg_ai_conf_display'] }}, {{ score_label }}">
+                                        <div class="score-value-row">
+                                            <span class="score-status-dot" aria-hidden="true"></span>
+                                            <span class="score-value">{{ item['Avg_ai_conf_display'] }}</span>
+                                        </div>
+                                        <div class="score-segments" aria-hidden="true">
+                                            {% for threshold in [1, 21, 41, 61, 81] %}
+                                            <span class="score-segment{% if score_value >= threshold %} is-active{% endif %}"></span>
+                                            {% endfor %}
+                                        </div>
+                                    </div>
+                                    <span class="visually-hidden">AI confidence level: {{ score_label }}</span>
+                                    {% else %}
+                                    <span class="text-muted">{{ item['Avg_ai_conf_display'] }}</span>
+                                    {% endif %}
+                                </td>
+                                <td class="text-center avg-ai-conf-cell"
+                                    data-order="{{ item['Comp_score'] if item['Comp_score'] is not none else -1 }}">
+                                    {% set score_value = item['Comp_score'] %}
+                                    {% if score_value is not none %}
+                                    {% if score_value < 70 %}
+                                    {% set score_level = 'low' %}
+                                    {% set score_label = 'Low' %}
+                                    {% elif score_value < 80 %}
+                                    {% set score_level = 'medium' %}
+                                    {% set score_label = 'Medium' %}
+                                    {% else %}
+                                    {% set score_level = 'high' %}
+                                    {% set score_label = 'High' %}
+                                    {% endif %}
+                                    <div class="score-meter score-meter--{{ score_level }}"
+                                        title="Completeness score: {{ item['Comp_score_display'] }}"
+                                        role="meter" aria-label="Completeness score"
+                                        aria-valuemin="0" aria-valuemax="100" aria-valuenow="{{ score_value }}"
+                                        aria-valuetext="{{ item['Comp_score_display'] }}, {{ score_label }}">
+                                        <div class="score-value-row">
+                                            <span class="score-status-dot" aria-hidden="true"></span>
+                                            <span class="score-value">{{ item['Comp_score_display'] }}</span>
+                                        </div>
+                                        <div class="score-segments" aria-hidden="true">
+                                            {% for threshold in [1, 21, 41, 61, 81] %}
+                                            <span class="score-segment{% if score_value >= threshold %} is-active{% endif %}"></span>
+                                            {% endfor %}
+                                        </div>
+                                    </div>
+                                    <span class="visually-hidden">Completeness level: {{ score_label }}</span>
+                                    {% else %}
+                                    <span class="text-muted">{{ item['Comp_score_display'] }}</span>
+                                    {% endif %}
+                                </td>
+                                <td class="{% if can_edit %}sdi-cell manual-entry-cell {% endif %}text-center" data-docid="{{ item.doc_id }}"
+                                    data-val="{{ item.ExcludeSDI }}" title="Toggle Manual Entry">
+                                    {% if item.ExcludeSDI == 1 %}✅{% else %}☐{% endif %}
+                                </td>
+
+                                {% set approved_bool = 'True' if item['Approved'] == 'True' else 'False' %}
+                                <td class="{% if can_edit %}approved-cell {% endif %}text-center fs-5" {% if can_edit %}tabindex="0" role="button"{% endif %}
+                                    data-docid="{{ item.doc_id }}" data-search="{{ approved_bool }}"
+                                    title="Toggle Approved">
+                                    <span class="d-none">{{ approved_bool }}</span>{% if item['Approved'] == 'True'
+                                    %}✅{% else %}☐{% endif %}
+                                </td>
+
+                                <td class="text-start">
+                                    {% if item['Missed Photo'] == 'YES' %}
+                                    <span class="v2-photo-pill v2-photo-pill--miss" data-bs-toggle="tooltip"
+                                        title="Missing: {{ item['Missing List'] }}">
+                                        <i class="bi bi-camera-video-off"></i>{{ item['Photos Summary'] }}
+                                    </span>
+                                    {% else %}
+                                    <span class="v2-photo-pill v2-photo-pill--ok"
+                                        data-bs-toggle="tooltip" title="All present">
+                                        <i class="bi bi-check-lg"></i>{{ item['Photos Summary'] }}
+                                    </span>
+                                    {% endif %}
+                                    {% if item['Extra Photo'] %}
+                                    <span class="v2-photo-extra-chip" data-bs-toggle="tooltip"
+                                        title="Extra Photo present">+1</span>
+                                    {% endif %}
+                                </td>
+                                <td class="text-center">
+                                    {% if can_edit %}<a class="v2-btn-review"
+                                        href="{{ url_for('review', doc_id=item.doc_id, tab='update', process='1', archive=('true' if archive_filter_active else 'false')) }}"><i class="bi bi-eye"></i>Review</a>{% endif %}
+                                </td>
+                                <td class="text-center">{{ item.captured_by }}</td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+
+                <div class="tab-pane fade {% if active_tab == 'manual' %}show active{% endif %}" id="tab-manual"
+                    role="tabpanel" aria-labelledby="tab-manual-btn">
+                    <div class="filter-card">
+                        <div
+                            class="d-flex flex-column flex-lg-row align-items-start align-items-lg-center justify-content-between mb-4 gap-3">
+                            <div class="d-flex flex-wrap flex-lg-nowrap align-items-center gap-2 flex-grow-1">
+                                <span class="view-label">VIEWS:</span>
+
+                                <a href="{{ url_for('index', tab='manual', process='2') }}"
+                                    class="view-pill pill-all {% if not missed_filter and archive_filter_active %}active{% endif %}">
+                                    <i class="bi bi-grid-fill me-2"></i> All Assets
+                                </a>
+
+                                <a href="{{ url_for('index', missed='true', tab='manual', process='2') }}"
+                                    class="view-pill pill-missed btn-missed {% if missed_filter == 'true' %}active{% endif %}">
+                                    <i class="bi bi-image me-2"></i> Missing Photo
+                                    <span class="badge-count quick-filter-badge">{{ count_missed_manual }}</span>
+                                </a>
+
+                            </div>
+
+                            <div class="d-flex align-items-center gap-2">
+                                <button type="button" class="btn-reset ms-2" onclick="exportFilteredXlsx('manual')"
+                                    data-bs-toggle="tooltip" title="Export filtered rows to Excel">
+                                    <i class="bi bi-file-earmark-excel-fill"></i> Excel
+                                </button>
+                                <button type="button" class="btn-reset ms-2" onclick="resetFilters('manual')"
+                                    data-bs-toggle="tooltip" title="Reset All Filters">
+                                    <i class="bi bi-funnel-fill"></i> Reset
+                                </button>
+                            </div>
+                        </div>
+
+                        <div class="row g-3">
+                            <div class="col-12 col-md-3 col-xl-1">
+                                <label for="filter-qr-manual" class="search-label">Search QR Code</label>
+                                <div class="input-group">
+                                    <span class="input-group-text bg-light border-end-0 text-muted"><i
+                                            class="bi bi-qr-code"></i></span>
+                                    <input type="text" id="filter-qr-manual"
+                                        class="form-control stitch-input border-start-0 ps-0"
+                                        placeholder="Search QR...">
+                                </div>
+                            </div>
+                            <div class="col-12 col-md-3 col-xl-1">
+                                <label for="filter-date-manual" class="search-label">Capture Date</label>
+                                <div class="input-group">
+                                    <span class="input-group-text bg-light border-end-0 text-muted"><i
+                                            class="bi bi-calendar-date"></i></span>
+                                    <input type="date" id="filter-date-manual"
+                                        class="form-control stitch-input border-start-0 ps-0">
+                                </div>
+                            </div>
+                            <div class="col-12 col-md-4 col-xl-2">
+                                <label for="filter-captured-by-manual" class="search-label">Captured By</label>
+                                <select id="filter-captured-by-manual" class="form-select stitch-input">
+                                    <option value="">All</option>
+                                </select>
+                            </div>
+                            <div class="col-12 col-md-6 col-xl-2 filter-col-tag">
+                                <label for="filter-tag-manual" class="search-label">UBC Asset Tag</label>
+                                <div class="input-group">
+                                    <span class="input-group-text bg-light border-end-0 text-muted"><i
+                                            class="bi bi-tag"></i></span>
+                                    <input type="text" id="filter-tag-manual"
+                                        class="form-control stitch-input border-start-0 ps-0" placeholder="Tag ID...">
+                                </div>
+                            </div>
+                            <div class="col-12 col-md-4 col-xl-1">
+                                <label for="filter-notes-manual" class="search-label">Notes</label>
+                                <select id="filter-notes-manual" class="form-select stitch-input">
+                                    <option value="">All</option>
+                                    <option value="YES">YES</option>
+                                    <option value="NO">NO</option>
+                                </select>
+                            </div>
+                            <div class="col-12 col-md-4 col-xl-2">
+                                <span class="search-label" id="filter-group-label-manual">Asset Group</span>
+                                <div id="filter-group-manual" class="ms">
+                                    <button type="button" class="ms-toggle" aria-haspopup="listbox" aria-expanded="false"
+                                            aria-labelledby="filter-group-label-manual">
+                                        <span class="ms-text">All Groups</span>
+                                        <span class="ms-caret" aria-hidden="true">&#9662;</span>
+                                    </button>
+                                    <div class="ms-panel" role="listbox" aria-multiselectable="true" hidden>
+                                        <input type="search" class="ms-search" placeholder="Filter asset groups&hellip;"
+                                               autocomplete="off" aria-label="Filter the asset group list">
+                                        <div class="ms-actions">
+                                            <button type="button" class="ms-action" data-act="all">Select all</button>
+                                            <button type="button" class="ms-action" data-act="none">Clear</button>
+                                        </div>
+                                        <div class="ms-options"><!-- checkbox rows injected by building-multiselect.js --></div>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="col-12 col-md-4 col-xl-2 filter-col-building">
+                                <span class="search-label" id="filter-building-label-manual">Building</span>
+                                <div id="filter-building-manual" class="ms">
+                                    <button type="button" class="ms-toggle" aria-haspopup="listbox" aria-expanded="false"
+                                            aria-labelledby="filter-building-label-manual">
+                                        <span class="ms-text">All Buildings</span>
+                                        <span class="ms-caret" aria-hidden="true">&#9662;</span>
+                                    </button>
+                                    <div class="ms-panel" role="listbox" aria-multiselectable="true" hidden>
+                                        <input type="search" class="ms-search" placeholder="Filter buildings&hellip;"
+                                               autocomplete="off" aria-label="Filter the building list">
+                                        <div class="ms-actions">
+                                            <button type="button" class="ms-action" data-act="all">Select all</button>
+                                            <button type="button" class="ms-action" data-act="none">Clear</button>
+                                        </div>
+                                        <div class="ms-options"><!-- checkbox rows injected by building-multiselect.js --></div>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="col-12 col-md-4 col-xl-2">
+                                <label for="filter-approved-manual" class="search-label">Review Status</label>
+                                <select id="filter-approved-manual" class="form-select stitch-input">
+                                    <option value="" {% if approved_filter_raw=="all" or approved_filter_raw is none
+                                        %}selected{% endif %}>All Statuses
+                                    </option>
+                                    <option value="True" {% if approved_filter=="True" %}selected{% endif %}>Approved
+                                    </option>
+                                    <option value="False" {% if approved_filter=="False" and approved_filter_raw not in
+                                        ['all', None] %}selected{% endif %}>Pending</option>
+                                </select>
+                            </div>
+                            <div class="col-12 col-md-12 col-xl-2 filter-col-conf">
+                                <label class="search-label d-block">AI Confidence</label>
+                                <div class="conf-range-wrap">
+                                    <div id="confSlider-manual" class="conf-range-slider"></div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <table id="assetTableManual_v2" class="table table-striped table-hover dt-responsive nowrap w-100">
+                        <thead class="table-dark">
+                            <tr>
+                                <th class="text-center">QR Code</th>
+                                <th class="text-center">Capture Date</th>
+                                <th class="text-center">Notes</th>
+                                <th class="text-center">Building</th>
+                                <th>Space</th>
+                                <th>Description</th>
+                                <th class="text-center">Type</th>
+                                <th>Manufacturer</th>
+                                <th>Model</th>
+                                <th>Serial</th>
+                                <th>UBC Tag</th>
+                                <th>Asset Group</th>
+                                <th>Attribute</th>
+                                <th>Diameter</th>
+                                <th class="text-center">Package Number</th>
+                                <th class="text-center">AI Status</th>
+                                <th class="text-center">
+                                    <span class="score-header-label"><i class="bi bi-stars" aria-hidden="true"></i>Avg AI Conf</span>
+                                </th>
+                                <th class="text-center">
+                                    <span class="score-header-label"><i class="bi bi-check-circle" aria-hidden="true"></i>Comp Score</span>
+                                </th>
+                                <th class="text-center align-middle" style="min-width: 80px;"><div class="review-bulk-header"><span>Manual</span>{% if can_edit %}<input class="form-check-input select-all-manual" type="checkbox" title="Toggle all filtered Manual states">{% endif %}</div></th>
+                                <th class="text-center align-middle" style="min-width: 90px;"><div class="review-bulk-header"><span>Approved</span>{% if can_edit %}<input class="form-check-input select-all-approved" type="checkbox" title="Toggle all filtered Approved states">{% endif %}</div></th>
+                                <th class="text-center">Photo</th>
+                                <th class="text-center" data-priority="1">Review</th>
+                                <th class="text-center">Captured By</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for item in data_manual %}
+                            <tr data-missed-photo="{{ '1' if item['Missed Photo'] == 'YES' else '0' }}"
+                                data-avg-conf="{{ item['Avg_ai_conf'] if item['Avg_ai_conf'] is not none else '' }}"
+                                data-package-locked="{{ '1' if item.package_locked else '0' }}"
+                                data-package-source="{{ item.package_lock_source }}"
+                                data-package-id="{{ item.package_id }}"
+                                data-package-message="{{ item.package_lock_message }}">
+                                <td class="text-center"><small class="font-monospace text-muted">{{ item.qr_code
+                                        }}</small></td>
+                                <td class="text-center">{{ item['Capture Date'] }}</td>
+                                {% set capture_note = (item['Capture Notes'] or '')|trim %}
+                                <td class="text-center" data-order="{{ 1 if capture_note else 0 }}"
+                                    data-search="{{ 'YES' if capture_note else 'NO' }}">
+                                    {% if capture_note %}
+                                    <i class="bi bi-journal-text capture-note-icon capture-note-icon--has"
+                                        data-bs-toggle="tooltip" title="{{ capture_note }}"
+                                        aria-label="Capture note exists"></i>
+                                    {% else %}
+                                    <i class="bi bi-journal-text capture-note-icon capture-note-icon--empty"
+                                        data-bs-toggle="tooltip" title="No capture note"
+                                        aria-label="No capture note"></i>
+                                    {% endif %}
+                                </td>
+                                <td class="text-center">{% set bname = (building_name_map | default({})).get(item.building) %}<span class="badge bg-secondary"{% if bname %} data-bs-toggle="tooltip" title="{{ bname }} ({{ item.building }})"{% endif %}>{{ item.building }}</span></td>
+                                <td>{{ item.Location }}</td>
+                                <td><span class="d-inline-block text-truncate" style="max-width: 150px;"
+                                        title="{{ item['Description'] }}">{{ item['Description'] }}</span></td>
+                                <td class="text-center"><span class="type-badge">{{ (item.asset_type or '') | upper |
+                                        replace('-', '') | trim }}</span></td>
+                                <td>{{ item.Manufacturer }}</td>
+                                <td>{{ item.Model }}</td>
+                                <td>{{ item['Serial Number'] }}</td>
+                                <td class="fw-bold text-primary">{{ item['UBC Tag'] }}</td>
+                                <td>{{ item['Asset Group'] }}</td>
+                                <td>{{ item['Attribute'] }}</td>
+                                <td>{{ item['Diameter'] }}</td>
+                                <td class="text-center">{{ item.package_id }}</td>
+
+                                <td class="{% if can_edit %}ai-status-cell {% endif %}text-center" {% if can_edit %}style="cursor: pointer; user-select: none;"{% endif %}
+                                    data-docid="{{ item.doc_id }}" data-val="{{ item.ai_status }}" data-ai-cell="1"
+                                    title="Toggle AI Status">
+                                    {% if item.ai_status == '1' %}✅{% else %}☐{% endif %}
+                                </td>
+
+                                <td class="text-center avg-ai-conf-cell"
+                                    data-order="{{ item['Avg_ai_conf'] if item['Avg_ai_conf'] is not none else -1 }}">
+                                    {% set score_value = item['Avg_ai_conf'] %}
+                                    {% if score_value is not none %}
+                                    {% if score_value < 70 %}
+                                    {% set score_level = 'low' %}
+                                    {% set score_label = 'Low' %}
+                                    {% elif score_value < 80 %}
+                                    {% set score_level = 'medium' %}
+                                    {% set score_label = 'Medium' %}
+                                    {% else %}
+                                    {% set score_level = 'high' %}
+                                    {% set score_label = 'High' %}
+                                    {% endif %}
+                                    <div class="score-meter score-meter--{{ score_level }}"
+                                        title="AI confidence: {{ item['Avg_ai_conf_display'] }}"
+                                        role="meter" aria-label="AI confidence"
+                                        aria-valuemin="0" aria-valuemax="100" aria-valuenow="{{ score_value }}"
+                                        aria-valuetext="{{ item['Avg_ai_conf_display'] }}, {{ score_label }}">
+                                        <div class="score-value-row">
+                                            <span class="score-status-dot" aria-hidden="true"></span>
+                                            <span class="score-value">{{ item['Avg_ai_conf_display'] }}</span>
+                                        </div>
+                                        <div class="score-segments" aria-hidden="true">
+                                            {% for threshold in [1, 21, 41, 61, 81] %}
+                                            <span class="score-segment{% if score_value >= threshold %} is-active{% endif %}"></span>
+                                            {% endfor %}
+                                        </div>
+                                    </div>
+                                    <span class="visually-hidden">AI confidence level: {{ score_label }}</span>
+                                    {% else %}
+                                    <span class="text-muted">{{ item['Avg_ai_conf_display'] }}</span>
+                                    {% endif %}
+                                </td>
+                                <td class="text-center avg-ai-conf-cell"
+                                    data-order="{{ item['Comp_score'] if item['Comp_score'] is not none else -1 }}">
+                                    {% set score_value = item['Comp_score'] %}
+                                    {% if score_value is not none %}
+                                    {% if score_value < 70 %}
+                                    {% set score_level = 'low' %}
+                                    {% set score_label = 'Low' %}
+                                    {% elif score_value < 80 %}
+                                    {% set score_level = 'medium' %}
+                                    {% set score_label = 'Medium' %}
+                                    {% else %}
+                                    {% set score_level = 'high' %}
+                                    {% set score_label = 'High' %}
+                                    {% endif %}
+                                    <div class="score-meter score-meter--{{ score_level }}"
+                                        title="Completeness score: {{ item['Comp_score_display'] }}"
+                                        role="meter" aria-label="Completeness score"
+                                        aria-valuemin="0" aria-valuemax="100" aria-valuenow="{{ score_value }}"
+                                        aria-valuetext="{{ item['Comp_score_display'] }}, {{ score_label }}">
+                                        <div class="score-value-row">
+                                            <span class="score-status-dot" aria-hidden="true"></span>
+                                            <span class="score-value">{{ item['Comp_score_display'] }}</span>
+                                        </div>
+                                        <div class="score-segments" aria-hidden="true">
+                                            {% for threshold in [1, 21, 41, 61, 81] %}
+                                            <span class="score-segment{% if score_value >= threshold %} is-active{% endif %}"></span>
+                                            {% endfor %}
+                                        </div>
+                                    </div>
+                                    <span class="visually-hidden">Completeness level: {{ score_label }}</span>
+                                    {% else %}
+                                    <span class="text-muted">{{ item['Comp_score_display'] }}</span>
+                                    {% endif %}
+                                </td>
+                                <td class="{% if can_edit %}sdi-cell manual-entry-cell {% endif %}text-center" data-docid="{{ item.doc_id }}"
+                                    data-val="{{ item.ExcludeSDI }}" title="Toggle Manual Entry">
+                                    {% if item.ExcludeSDI == 1 %}✅{% else %}☐{% endif %}
+                                </td>
+
+                                {% set approved_bool = 'True' if item['Approved'] == 'True' else 'False' %}
+                                <td class="{% if can_edit %}approved-cell {% endif %}text-center fs-5" {% if can_edit %}tabindex="0" role="button"{% endif %}
+                                    data-docid="{{ item.doc_id }}" data-search="{{ approved_bool }}"
+                                    title="Toggle Approved">
+                                    <span class="d-none">{{ approved_bool }}</span>{% if item['Approved'] == 'True'
+                                    %}✅{% else %}☐{% endif %}
+                                </td>
+
+                                <td class="text-start">
+                                    {% if item['Missed Photo'] == 'YES' %}
+                                    <span class="v2-photo-pill v2-photo-pill--miss" data-bs-toggle="tooltip"
+                                        title="Missing: {{ item['Missing List'] }}">
+                                        <i class="bi bi-camera-video-off"></i>{{ item['Photos Summary'] }}
+                                    </span>
+                                    {% else %}
+                                    <span class="v2-photo-pill v2-photo-pill--ok"
+                                        data-bs-toggle="tooltip" title="All present">
+                                        <i class="bi bi-check-lg"></i>{{ item['Photos Summary'] }}
+                                    </span>
+                                    {% endif %}
+                                    {% if item['Extra Photo'] %}
+                                    <span class="v2-photo-extra-chip" data-bs-toggle="tooltip"
+                                        title="Extra Photo present">+1</span>
+                                    {% endif %}
+                                </td>
+                                <td class="text-center">
+                                    {% if can_edit %}<a class="v2-btn-review"
+                                        href="{{ url_for('review', doc_id=item.doc_id, tab='manual', process='2', archive=('true' if archive_filter_active else 'false')) }}"><i class="bi bi-eye"></i>Review</a>{% endif %}
+                                </td>
+                                <td class="text-center">{{ item.captured_by }}</td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+
+            </div>
+        </div>
+
+    </div><!-- /#main-dashboard-content -->
+
+    <!-- User Activity View (hidden by default, sibling of main-dashboard-content) -->
+    <div id="user-activity-view" class="container-fluid px-4" style="display: none;">
+            <div
+                class="d-flex flex-column flex-md-row align-items-center align-items-md-start justify-content-between mb-4 page-header">
+                <div class="d-flex align-items-center">
+                    <a href="{{ url_for('index') }}" class="me-md-3 mb-3 mb-md-0">
+                        <img src="{{ url_for('static', filename='ubc-facilities_logo.jpg') }}" alt="UBC Logo"
+                            class="rounded shadow-sm" style="height: 64px;">
+                    </a>
+                    <div class="text-center text-md-start">
+                        <h1 class="mb-1" style="color: var(--ubc-blue);">User Activity Log - Backflow</h1>
+                        <p class="text-muted mb-0"><small>Maintenance Planning Department &bull; Backflow</small></p>
+                    </div>
+                </div>
+                <button id="back-to-main-btn" class="btn btn-outline-secondary mt-3 mt-md-0">
+                    <i class="bi bi-arrow-left me-1"></i>Back to Dashboard
+                </button>
+            </div>
+
+            <div class="filter-card">
+                <div class="d-flex flex-wrap align-items-center gap-3">
+                    <div class="d-flex align-items-center gap-2">
+                        <label for="ua-user-filter" class="search-label mb-0" style="white-space: nowrap;">User:</label>
+                        <select id="ua-user-filter" class="form-select form-select-sm stitch-input"
+                            style="min-width: 150px;">
+                            <option value="">All Users</option>
+                        </select>
+                    </div>
+                    <div class="d-flex align-items-center gap-2">
+                        <label for="ua-qr-filter" class="search-label mb-0" style="white-space: nowrap;">QR
+                            Code:</label>
+                        <input type="text" id="ua-qr-filter" class="form-control form-control-sm stitch-input"
+                            placeholder="Search QR..." style="min-width: 150px;">
+                    </div>
+                    <div class="d-flex align-items-center gap-2">
+                        <label for="ua-date-filter" class="search-label mb-0" style="white-space: nowrap;">Date:</label>
+                        <input type="date" id="ua-date-filter" class="form-control form-control-sm stitch-input"
+                            style="min-width: 150px;">
+                    </div>
+                    <button id="ua-reset-filters" class="btn btn-sm btn-reset">
+                        <i class="bi bi-funnel-fill me-1"></i>Reset
+                    </button>
+                </div>
+            </div>
+
+            <div class="table-responsive">
+                <table class="table table-hover" id="ua-table"
+                    style="background: white; border-radius: 12px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.05); border: 1px solid var(--stitch-border);">
+                    <thead class="table-dark">
+                        <tr>
+                            <th>QR Code</th>
+                            <th>User</th>
+                            <th>Date</th>
+                            <th>Hour</th>
+                        </tr>
+                    </thead>
+                    <tbody id="ua-table-body">
+                        <tr>
+                            <td colspan="4" class="text-center text-muted py-4">Click "User Activity" to load data</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+        <footer class="text-center mt-5 mb-4 text-muted small">
+            &copy; 2025 University of British Columbia - Maintenance Planning Department.<br>All rights reserved.
+        </footer>
+
+        <div class="modal fade" id="planonModal" tabindex="-1" aria-labelledby="planonModalLabel" aria-hidden="true">
+            <div class="modal-dialog modal-dialog-centered">
+                <div class="modal-content">
+                    <div class="modal-header bg-warning-subtle">
+                        <h5 class="modal-title text-warning-emphasis" id="planonModalLabel"><i
+                                class="bi bi-exclamation-triangle-fill"></i> Action Not Allowed</h5>
+                        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                    </div>
+                    <div class="modal-body">
+                        This asset is already in an SDI package, so these status fields cannot be changed.
+                    </div>
+                    <div class="modal-footer">
+                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="modal fade" id="infoModal" tabindex="-1" aria-labelledby="infoModalLabel" aria-hidden="true">
+            <div class="modal-dialog modal-dialog-centered">
+                <div class="modal-content">
+                    <div class="modal-header">
+                        <h5 class="modal-title" id="infoModalLabel">Notification</h5>
+                        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                    </div>
+                    <div class="modal-body" id="infoModalBody"></div>
+                    <div class="modal-footer">
+                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="modal fade" id="confirmModal" tabindex="-1" aria-labelledby="confirmModalLabel" aria-hidden="true">
+            <div class="modal-dialog modal-dialog-centered">
+                <div class="modal-content">
+                    <div class="modal-header d-flex align-items-center justify-content-between">
+                        <h5 class="modal-title fw-semibold" id="confirmModalLabel">Confirm Action</h5>
+                        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                    </div>
+                    <div class="modal-body" id="confirmModalBody"></div>
+                    <div class="modal-footer">
+                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                        <button type="button" class="btn btn-primary" id="confirmModalOk">OK</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <script src="https://cdn.jsdelivr.net/npm/jquery@3.7.1/dist/jquery.min.js"></script>
+        <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+        <script src="https://cdn.datatables.net/1.13.6/js/jquery.dataTables.min.js"></script>
+        <script src="https://cdn.datatables.net/1.13.6/js/dataTables.bootstrap5.min.js"></script>
+        <script src="https://cdn.datatables.net/responsive/2.5.0/js/dataTables.responsive.min.js"></script>
+        <script src="https://cdn.datatables.net/responsive/2.5.0/js/responsive.bootstrap5.min.js"></script>
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/noUiSlider/15.8.1/nouislider.min.js"></script>
+        <script src="{{ url_for('static', filename='building-multiselect.js') }}?v=20260730-1"></script>
+
+        <script>
+            // Map of building Code -> Name from the Buildings table, used to render
+            // Building dropdown options as "Code - Name" while keeping <option value>
+            // as the bare code so column filtering keeps working.
+            window.BUILDING_NAME_MAP = {{ building_name_map | default ({}) | tojson | safe }};
+
+            // Building multi-select instances, one per tab (see building-multiselect.js).
+            // buildingFilterValue(tab) returns the comma-joined selected codes ('' = no
+            // filter), falling back to the URL params before the instances exist.
+            window.buildingFilters = {};
+            function buildingFilterValue(tab) {
+                var f = window.buildingFilters[tab];
+                if (f) return f.values().join(',');
+                var params = new URLSearchParams(window.location.search || "");
+                return params.get('filter_building') || params.get('building') || '';
+            }
+
+            // Asset Group multi-select instances, one per tab (see building-multiselect.js).
+            window.groupFilters = {};
+            function assetGroupFilterValue(tab) {
+                var f = window.groupFilters[tab];
+                if (f) return f.values().join(',');
+                var params = new URLSearchParams(window.location.search || "");
+                return params.get('filter_group') || '';
+            }
+
+            // Global function to reset all filters for a given tab
+            window.resetFilters = function (tabName) {
+                // Build a clean query string so the server returns an unfiltered dataset
+                var params = new URLSearchParams(window.location.search || "");
+                var tab = tabName || params.get('tab') || 'new';
+                params.set('tab', tab);
+                params.set('process', tab === 'update' ? '1' : (tab === 'manual' ? '2' : '0'));
+                ['flagged', 'modified', 'missed', 'archive', 'building', 'approved', 'filter_qr', 'filter_tag', 'filter_notes', 'filter_group', 'filter_building', 'filter_approved', 'filter_date', 'filter_captured_by', 'conf_min', 'conf_max']
+                    .forEach(function (key) { params.delete(key); });
+
+                // Clear persisted table state to drop any client-side searches (e.g., QR search)
+                if (window.$ && $.fn.dataTable) {
+                    try { $.fn.dataTable.tables({ api: true }).state.clear(); } catch (e) { }
+                }
+                try { localStorage.removeItem('dashboardQuery'); } catch (e) { }
+
+                var suffix = tab === 'update' ? '-update' : (tab === 'manual' ? '-manual' : '-new');
+                var tableId = 'assetTable' + (tab === 'new' ? 'New' : (tab === 'update' ? 'Update' : 'Manual')) + '_v2';
+                var tableMap = window.tables || tables || {};
+                var table = tableMap[tableId];
+
+                // Clear filter inputs for immediate UI feedback while the page reloads
+                $('#filter-qr' + suffix).val('');
+                $('#filter-date' + suffix).val('');
+                $('#filter-tag' + suffix).val('');
+                $('#filter-notes' + suffix).val('');
+                if (window.groupFilters[tab]) window.groupFilters[tab].clear();
+                if (window.buildingFilters[tab]) window.buildingFilters[tab].clear();
+                $('#filter-captured-by' + suffix).val('');
+                $('#filter-approved' + suffix).val('False'); // Default to "Pending" for all tabs
+
+                // Clear DataTable column searches and global search
+                if (table) {
+                    table.columns().search('');
+                    table.search('').draw();
+                }
+
+                window.confRangeMin = 0;
+                window.confRangeMax = 100;
+                ['new', 'update', 'manual'].forEach(function(t) {
+                    var el = document.getElementById('confSlider-' + t);
+                    if (el && el.noUiSlider) el.noUiSlider.set([0, 100]);
+                });
+
+                // Update review links (to clear filter params)
+                if (window.updateReviewLinks) updateReviewLinks(tableId);
+
+                // Reload dashboard without filter query params so server data is reset too
+                window.location.href = window.location.pathname + '?' + params.toString();
+            }
+
+            function updateDashboardQuery(tabName) {
+                var params = new URLSearchParams(window.location.search || "");
+                var tab = tabName || params.get('tab') || 'new';
+                params.set('tab', tab);
+                params.set('process', tab === 'update' ? '1' : (tab === 'manual' ? '2' : '0'));
+                params.delete('flagged');
+                params.delete('modified');
+                // archive intentionally preserved across filter/tab changes so a
+                // "Show Archive" view survives a Review Status / tab change.
+
+                var suffix = tab === 'update' ? '-update' : (tab === 'manual' ? '-manual' : '-new');
+                var qrVal = ($('#filter-qr' + suffix).val() || '').trim();
+                var dateVal = $('#filter-date' + suffix).val();
+                var tagVal = ($('#filter-tag' + suffix).val() || '').trim();
+                var notesVal = $('#filter-notes' + suffix).val() || '';
+                var groupVal = assetGroupFilterValue(tab);
+                var capturedByVal = $('#filter-captured-by' + suffix).val() || '';
+                if (dateVal) params.set('filter_date', dateVal); else params.delete('filter_date');
+                if (qrVal) params.set('filter_qr', qrVal); else params.delete('filter_qr');
+                if (tagVal) params.set('filter_tag', tagVal); else params.delete('filter_tag');
+                if (notesVal) params.set('filter_notes', notesVal); else params.delete('filter_notes');
+                if (groupVal) params.set('filter_group', groupVal); else params.delete('filter_group');
+                if (capturedByVal) params.set('filter_captured_by', capturedByVal); else params.delete('filter_captured_by');
+
+                var approvedSel = '#filter-approved' + suffix;
+
+                var building = buildingFilterValue(tab);
+                var approved = $(approvedSel).val();
+
+                if (building) {
+                    params.set('building', building);
+                    params.set('filter_building', building);
+                } else {
+                    params.delete('building');
+                    params.delete('filter_building');
+                }
+                if (approved === '') {
+                    params.set('approved', 'all');
+                    params.set('filter_approved', 'all');
+                } else if (approved) {
+                    params.set('approved', approved);
+                    params.set('filter_approved', approved);
+                } else {
+                    params.delete('approved');
+                    params.delete('filter_approved');
+                }
+                var rMin = Math.round(window.confRangeMin || 0);
+                var rMax = Math.round(window.confRangeMax !== undefined ? window.confRangeMax : 100);
+                if (rMin !== 0 || rMax !== 100) {
+                    params.set('conf_min', rMin);
+                    params.set('conf_max', rMax);
+                } else {
+                    params.delete('conf_min');
+                    params.delete('conf_max');
+                }
+
+                var q = '?' + params.toString();
+                try { localStorage.setItem('dashboardQuery', q); } catch (e) { }
+                return q;
+            }
+
+            function getDashboardQueryParam(params, primaryKey, fallbackKey) {
+                if (params.has(primaryKey)) return params.get(primaryKey) || '';
+                if (fallbackKey && params.has(fallbackKey)) return params.get(fallbackKey) || '';
+                return null;
+            }
+
+            window.confRangeMin = {{ conf_min if conf_min is not none else 0 }};
+            window.confRangeMax = {{ conf_max if conf_max is not none else 100 }};
+
+            function getActiveDashboardTab() {
+                return (document.querySelector('#dashboardTabs .nav-link.active')?.dataset.tab) || 'new';
+            }
+
+            function syncAllConfSliders(sourceTab) {
+                ['new', 'update', 'manual'].forEach(function(tab) {
+                    if (tab === sourceTab) return;
+                    var el = document.getElementById('confSlider-' + tab);
+                    if (el && el.noUiSlider) el.noUiSlider.set([window.confRangeMin, window.confRangeMax]);
+                });
+            }
+
+            function updateAllReviewLinks() {
+                Object.keys(window.tables || {}).forEach(function (tableId) {
+                    updateReviewLinks(tableId);
+                });
+            }
+
+            function updateDashboardNavLinks() {
+                var rMin = Math.round(window.confRangeMin || 0);
+                var rMax = Math.round(window.confRangeMax !== undefined ? window.confRangeMax : 100);
+                $('.filter-card a.view-pill[href]').each(function () {
+                    var $link = $(this);
+                    var href = $link.attr('href');
+                    if (!href) return;
+
+                    var baseUrl = href.split('?')[0];
+                    var params = new URLSearchParams(href.includes('?') ? href.split('?')[1] : '');
+                    if (rMin !== 0 || rMax !== 100) {
+                        params.set('conf_min', rMin);
+                        params.set('conf_max', rMax);
+                    } else {
+                        params.delete('conf_min');
+                        params.delete('conf_max');
+                    }
+
+                    var query = params.toString();
+                    $link.attr('href', query ? baseUrl + '?' + query : baseUrl);
+                });
+            }
+
+            function redrawAllAssetTables() {
+                Object.keys(window.tables || {}).forEach(function (tableId) {
+                    window.tables[tableId].draw();
+                });
+            }
+
+            function applyApprovedShadow($select) {
+                // Shadow removed in new design for cleaner look, but logic kept to prevent errors
+            }
+
+            (function () {
+                var initialTab = (document.querySelector('#dashboardTabs .nav-link.active')?.dataset.tab) || 'new';
+                updateDashboardQuery(initialTab);
+            })();
+
+            document.addEventListener('DOMContentLoaded', function () {
+                var tooltipTriggerList = [].slice.call(document.querySelectorAll('[data-bs-toggle="tooltip"]'))
+                tooltipTriggerList.map(function (el) { return new bootstrap.Tooltip(el) })
+
+                var tabLinks = document.querySelectorAll('#dashboardTabs .nav-link');
+                tabLinks.forEach(function (link) {
+                    link.addEventListener('shown.bs.tab', function (ev) {
+                        var tabName = ev.target.dataset.tab || 'new';
+                        var q = updateDashboardQuery(tabName);
+                        window.history.replaceState({}, '', window.location.pathname + q);
+
+                        try {
+                            $.fn.dataTable.tables({ visible: true, api: true }).columns.adjust().responsive.recalc();
+                        } catch (e) { }
+                    });
+                });
+            });
+
+            $(document).ready(function () {
+                // Indices
+                // Indices
+                var colQR = 0;
+                var colCaptureDate = 1;
+                var colNotes = 2;
+                var colBuilding = 3;
+                var colTag = 10;
+                var colAssetGroup = 11;
+                var colApproved = 19;
+                var colAction = 21;
+                var colCapturedBy = 22;
+                var tableStateVersion = 'capture-notes-v1';
+
+                $.fn.dataTable.ext.search.push(function (settings, data, dataIndex) {
+                    var tableId = settings.nTable && settings.nTable.id;
+                    if (!tableId || tableId.indexOf('assetTable') !== 0) return true;
+                    return [colNotes, colApproved].every(function (col) {
+                        var search = settings.aoPreSearchCols[col].sSearch;
+                        if (!search) return true;
+                        var td = settings.aoData[dataIndex].anCells[col];
+                        var val = $(td).attr('data-search') || '';
+                        var regex = settings.aoPreSearchCols[col].bRegex ? new RegExp(search) : null;
+                        if (regex) return regex.test(val);
+                        return (val.indexOf(search) !== -1);
+                    });
+                });
+
+                $.fn.dataTable.ext.search.push(function (settings, data, dataIndex) {
+                    var tableId = settings.nTable && settings.nTable.id;
+                    if (!tableId || tableId.indexOf('assetTable') !== 0) return true;
+                    var rMin = window.confRangeMin || 0;
+                    var rMax = window.confRangeMax !== undefined ? window.confRangeMax : 100;
+                    if (rMin === 0 && rMax === 100) return true;
+                    var row = settings.aoData[dataIndex] && settings.aoData[dataIndex].nTr;
+                    var rawScore = row ? (row.getAttribute('data-avg-conf') || '') : '';
+                    var numericScore = parseFloat(rawScore);
+                    if (!Number.isFinite(numericScore)) return false;
+                    return numericScore >= rMin && numericScore <= rMax;
+                });
+
+                function initAssetTable(tableId, buildingSelector, approvedSelector, tagSelector, groupSelector, qrSelector) {
+                    // Assuming dateSelector ID matches tableId suffix pattern: #filter-date-new, etc.
+                    var dateSelector = qrSelector.replace('qr', 'date');
+                    var capturedBySelector = qrSelector.replace('qr', 'captured-by');
+                    var tabName = tableId === 'assetTableUpdate_v2' ? 'update' : (tableId === 'assetTableManual_v2' ? 'manual' : 'new');
+
+                    var table = $('#' + tableId).DataTable({
+                        pageLength: 15,
+                        order: [[colCaptureDate, 'desc']],
+                        stateSave: true,
+                        stateDuration: -1,
+                        responsive: true,
+                        dom: '<"d-flex justify-content-between align-items-center"l>rt<"d-flex flex-column flex-md-row justify-content-between align-items-center p-3 border-top"ip>',
+                        columnDefs: [
+                            { orderable: false, targets: [colApproved, colAction] },
+                            { targets: colCapturedBy, visible: false, searchable: true }
+                        ],
+                        stateSaveParams: function (settings, data) {
+                            data.reviewDashboardStateVersion = tableStateVersion;
+                        },
+                        stateLoadParams: function (settings, data) {
+                            var expectedColumns = $('#' + tableId + ' thead th').length;
+                            if (!data || data.reviewDashboardStateVersion !== tableStateVersion) return false;
+                            if (!data.columns || data.columns.length !== expectedColumns) return false;
+                            if (!data.order || data.order.length === 0) { data.order = [[colCaptureDate, 'desc']]; }  // default sort: Capture Date (newest first)
+                        },
+                    });
+
+                    var buildingMs = BuildingMultiselect.create(document.querySelector(buildingSelector), { allLabel: 'All Buildings' });
+                    window.buildingFilters[tabName] = buildingMs;
+                    var groupMs = BuildingMultiselect.create(document.querySelector(groupSelector), { allLabel: 'All Groups', emptyLabel: 'No asset groups' });
+                    window.groupFilters[tabName] = groupMs;
+                    var $approved = $(approvedSelector);
+                    var $tag = $(tagSelector);
+                    var $notes = $(qrSelector.replace('qr', 'notes'));
+                    var $qr = $(qrSelector);
+                    var $date = $(dateSelector);
+                    var $capturedBy = $(capturedBySelector);
+                    applyApprovedShadow($approved);
+
+                    function syncDashboardHistory() {
+                        if (tabName !== getActiveDashboardTab()) return '';
+                        var q = updateDashboardQuery(tabName);
+                        window.history.replaceState({}, '', window.location.pathname + q);
+                        return q;
+                    }
+
+                    function applyTableFiltersFromInputs() {
+                        var approvedVal = $approved.val();
+                        var dateVal = $date.val();
+                        var qrVal = ($qr.val() || '').trim();
+                        var tagVal = ($tag.val() || '').trim();
+                        var notesVal = $notes.val();
+                        var capturedByVal = $capturedBy.val();
+
+                        table.column(colBuilding).search(BuildingMultiselect.buildColumnRegex(buildingMs.values()), true, false);
+                        table.column(colApproved).search(approvedVal ? '^' + $.fn.dataTable.util.escapeRegex(approvedVal) + '$' : '', true, false);
+                        table.column(colCaptureDate).search(dateVal || '');
+                        table.column(colQR).search(qrVal);
+                        table.column(colTag).search(tagVal);
+                        table.column(colNotes).search(notesVal ? '^' + $.fn.dataTable.util.escapeRegex(notesVal) + '$' : '', true, false);
+                        table.column(colAssetGroup).search(BuildingMultiselect.buildColumnRegex(groupMs.values()), true, false);
+                        table.column(colCapturedBy).search(capturedByVal ? '^' + $.fn.dataTable.util.escapeRegex(capturedByVal) + '$' : '', true, false);
+                    }
+
+                    function populateDropdowns() {
+                        // Building facet: list ALL buildings present in this tab
+                        // ({search:'none'}) — with checkboxes, the building column's own
+                        // filter would otherwise hide every unchecked building after the
+                        // first pick, making a second selection impossible.
+                        var uniquesB = {};
+                        table.column(colBuilding, { search: 'none' }).data().each(function (val) {
+                            var textVal = $(val).text() || val;
+                            textVal = (textVal || '').toString().trim();
+                            if (textVal) uniquesB[textVal] = true;
+                        });
+                        var buildingNames = window.BUILDING_NAME_MAP || {};
+                        var buildingChanged = buildingMs.setOptions(Object.keys(uniquesB).sort().map(function (v) {
+                            var name = buildingNames[v];
+                            return { value: v, label: name ? (v + ' - ' + name) : v };
+                        }));
+                        if (buildingChanged) {
+                            // Self-heal dropped a stale selection: re-apply the column
+                            // search once (converges — next pass reports no change).
+                            table.column(colBuilding).search(BuildingMultiselect.buildColumnRegex(buildingMs.values()), true, false).draw();
+                        }
+
+                        // Asset Group facet: list ALL groups present in this tab
+                        // ({search:'none'}) — with checkboxes, the group column's own
+                        // filter would otherwise hide every unchecked group after the
+                        // first pick, making a second selection impossible.
+                        var uniquesG = {};
+                        table.column(colAssetGroup, { search: 'none' }).data().each(function (val) {
+                            val = (val || '').toString().trim();
+                            if (val) uniquesG[val] = true;
+                        });
+                        var groupChanged = groupMs.setOptions(Object.keys(uniquesG).sort().map(function (v) {
+                            return { value: v, label: v };
+                        }));
+                        if (groupChanged) {
+                            // Self-heal dropped a stale selection: re-apply the column
+                            // search once (converges — next pass reports no change).
+                            table.column(colAssetGroup).search(BuildingMultiselect.buildColumnRegex(groupMs.values()), true, false).draw();
+                        }
+
+                        var currentCB = $capturedBy.val();
+                        $capturedBy.find('option:not(:first)').remove();
+                        var uniquesCB = {};
+                        table.column(colCapturedBy, { search: 'applied' }).data().each(function (val) {
+                            val = (val || '').toString().trim();
+                            if (val) uniquesCB[val] = true;
+                        });
+                        Object.keys(uniquesCB).sort().forEach(function (v) {
+                            $capturedBy.append(new Option(v, v));
+                        });
+                        if (currentCB && uniquesCB[currentCB]) $capturedBy.val(currentCB);
+                    }
+                    populateDropdowns();
+
+                    // Restore State
+                    var state = table.state.loaded();
+                    var approvedStateSearch = '';
+                    var params = new URLSearchParams(window.location.search || '');
+                    if (state && state.columns) {
+                        var bSearch = state.columns[colBuilding]?.search?.search || '';
+                        var stateBuildingCodes = BuildingMultiselect.parseColumnRegex(bSearch);
+                        if (stateBuildingCodes.length) buildingMs.setValues(stateBuildingCodes);
+
+                        var aSearch = state.columns[colApproved]?.search?.search || '';
+                        approvedStateSearch = aSearch;
+                        if (aSearch === '^True$') $approved.val('True');
+                        else if (aSearch === '^False$') $approved.val('False');
+
+                        var dSearch = state.columns[colCaptureDate]?.search?.search || '';
+                        if (dSearch) $date.val(dSearch);
+
+
+                        var qSearch = state.columns[colQR]?.search?.search || '';
+                        if (qSearch) $qr.val(qSearch);
+
+                        var tSearch = state.columns[colTag]?.search?.search || '';
+                        if (tSearch) $tag.val(tSearch);
+
+                        var nSearch = state.columns[colNotes]?.search?.search || '';
+                        if (nSearch === '^YES$') $notes.val('YES');
+                        else if (nSearch === '^NO$') $notes.val('NO');
+
+                        var gSearch = state.columns[colAssetGroup]?.search?.search || '';
+                        var stateGroupValues = BuildingMultiselect.parseColumnRegex(gSearch);
+                        if (stateGroupValues.length) groupMs.setValues(stateGroupValues);
+
+                        var cbSearch = state.columns[colCapturedBy]?.search?.search || '';
+                        if (cbSearch.startsWith('^') && cbSearch.endsWith('$')) {
+                            cbSearch = cbSearch.slice(1, -1);
+                            try { cbSearch = $.fn.dataTable.util.unescapeRegex(cbSearch); } catch (e) { }
+                        }
+                        if (cbSearch) $capturedBy.val(cbSearch);
+                    }
+
+                    var buildingParam = getDashboardQueryParam(params, 'filter_building', 'building');
+                    if (buildingParam !== null) buildingMs.setValues(buildingParam ? buildingParam.split(',') : []);
+
+                    var approvedParam = getDashboardQueryParam(params, 'filter_approved', 'approved');
+                    if (approvedParam !== null) {
+                        $approved.val(approvedParam === 'all' ? '' : approvedParam);
+                    }
+
+                    var dateParam = getDashboardQueryParam(params, 'filter_date');
+                    if (dateParam !== null) $date.val(dateParam);
+
+                    var qrParam = getDashboardQueryParam(params, 'filter_qr');
+                    if (qrParam !== null) $qr.val(qrParam);
+
+                    var tagParam = getDashboardQueryParam(params, 'filter_tag');
+                    if (tagParam !== null) $tag.val(tagParam);
+
+                    var notesParam = getDashboardQueryParam(params, 'filter_notes');
+                    if (notesParam !== null) $notes.val(notesParam === 'YES' || notesParam === 'NO' ? notesParam : '');
+
+                    var groupParam = getDashboardQueryParam(params, 'filter_group');
+                    if (groupParam !== null) groupMs.setValues(groupParam ? groupParam.split(',') : []);
+
+                    var capturedByParam = getDashboardQueryParam(params, 'filter_captured_by');
+                    if (capturedByParam !== null) $capturedBy.val(capturedByParam);
+
+                    var hasApprovedState = (approvedStateSearch === '^True$' || approvedStateSearch === '^False$');
+                    if (approvedParam === null) {  // default Review Status to Pending; ignore persisted status filter
+                        $approved.val('False');
+                    }
+                    applyTableFiltersFromInputs();
+                    table.draw();
+                    syncDashboardHistory();
+                    applyApprovedShadow($approved);
+
+                    table.on('draw', function () {
+                        populateDropdowns();
+                    });
+
+                    // Listeners
+                    buildingMs.onChange(function () {
+                        table.column(colBuilding).search(BuildingMultiselect.buildColumnRegex(buildingMs.values()), true, false).draw();
+                        syncDashboardHistory();
+                    });
+
+                    $approved.on('change', function () {
+                        var v = $(this).val();
+                        table.column(colApproved).search(v ? `^${v}$` : '', true, false).draw();
+                        var q = updateDashboardQuery(tabName);
+                        applyApprovedShadow($approved);
+                        window.location.href = window.location.pathname + q;
+                    });
+
+                    $tag.on('keyup change', function () {
+                        var val = $(this).val();
+                        table.column(colTag).search(val).draw();
+                        syncDashboardHistory();
+                    });
+
+                    $notes.on('change', function () {
+                        var val = $(this).val();
+                        table.column(colNotes).search(val ? '^' + $.fn.dataTable.util.escapeRegex(val) + '$' : '', true, false).draw();
+                        syncDashboardHistory();
+                    });
+
+                    $qr.on('keyup change', function () {
+                        var val = $(this).val();
+                        table.column(colQR).search(val).draw();
+                        syncDashboardHistory();
+                    });
+
+                    $date.on('change', function () {
+                        var val = $(this).val();
+                        table.column(colCaptureDate).search(val).draw();
+                        syncDashboardHistory();
+                    });
+
+                    groupMs.onChange(function () {
+                        table.column(colAssetGroup).search(BuildingMultiselect.buildColumnRegex(groupMs.values()), true, false).draw();
+                        syncDashboardHistory();
+                    });
+
+                    $capturedBy.on('change', function () {
+                        var val = $(this).val();
+                        table.column(colCapturedBy).search(val ? '^' + $.fn.dataTable.util.escapeRegex(val) + '$' : '', true, false).draw();
+                        syncDashboardHistory();
+                    });
+
+                    function updateQuickFilterCounts(dt) {
+                        var rows = dt.rows({ search: 'applied' }).nodes();
+                        var countMiss = 0;
+                        $(rows).each(function () {
+                            var $row = $(this);
+                            if ($row.attr('data-missed-photo') === '1') countMiss++;
+                        });
+
+                        var container = $(dt.table().container()).closest('.tab-pane');
+                        container.find('.btn-missed .badge-count').text(countMiss);
+                    }
+
+                    table.on('draw', function () {
+                        updateQuickFilterCounts(table);
+                    });
+
+                    updateQuickFilterCounts(table);
+
+                    // Update Review links with current filter values on draw
+                    table.on('draw', function () {
+                        updateReviewLinks(tableId);
+                    });
+                    // Initial update
+                    updateReviewLinks(tableId);
+
+                    return table;
+                }
+
+                // Function to update all Review links with current filter values
+                function updateReviewLinks(tableId) {
+                    var tabName = tableId === 'assetTableUpdate_v2' ? 'update' : (tableId === 'assetTableManual_v2' ? 'manual' : 'new');
+                    var suffix = tabName === 'update' ? '-update' : (tabName === 'manual' ? '-manual' : '-new');
+
+                    var filterQr = $('#filter-qr' + suffix).val() || '';
+                    var filterTag = $('#filter-tag' + suffix).val() || '';
+                    var filterNotes = $('#filter-notes' + suffix).val() || '';
+                    var filterGroup = assetGroupFilterValue(tabName);
+                    var filterBuilding = buildingFilterValue(tabName);
+                    var filterApproved = $('#filter-approved' + suffix).val() || '';
+                    var filterDate = $('#filter-date' + suffix).val() || '';
+                    var rMin = Math.round(window.confRangeMin || 0);
+                    var rMax = Math.round(window.confRangeMax !== undefined ? window.confRangeMax : 100);
+
+                    // Current "Show Archive" state from the page URL — carry it onto the
+                    // Review links so the toggle survives the round-trip through review.
+                    var pageParams = new URLSearchParams(window.location.search || '');
+                    var archiveVal = pageParams.get('archive'); // 'true' | 'false' | null
+                    if (!filterBuilding) filterBuilding = pageParams.get('filter_building') || pageParams.get('building') || '';
+                    if (!filterGroup) filterGroup = pageParams.get('filter_group') || '';
+
+                    // Capture the visible (filter + sort applied) doc_id order and stash it
+                    // per-tab in localStorage so the review prev/next sequence follows exactly
+                    // what the reviewer sees on this dashboard, including any column sort.
+                    function docIdFromHref(href) {
+                        if (!href) return '';
+                        var path = href.split('?')[0];
+                        var i = path.indexOf('/review/');
+                        return i >= 0 ? decodeURIComponent(path.substring(i + '/review/'.length)) : '';
+                    }
+                    try {
+                        var dt = $('#' + tableId).DataTable();
+                        var orderedIds = [];
+                        dt.rows({ search: 'applied', order: 'applied' }).every(function () {
+                            var node = this.node();
+                            var a = node ? node.querySelector('a.v2-btn-review') : null;
+                            var id = a ? docIdFromHref(a.getAttribute('href')) : '';
+                            if (id) orderedIds.push(id);
+                        });
+                        var store = {};
+                        try { store = JSON.parse(localStorage.getItem('reviewOrder') || '{}') || {}; } catch (e) { store = {}; }
+                        store[tabName] = orderedIds;
+                        try { localStorage.setItem('reviewOrder', JSON.stringify(store)); } catch (e) { }
+                    } catch (e) { /* DataTables not ready — order persistence is best-effort */ }
+
+                    $('#' + tableId + ' tbody a.v2-btn-review').each(function () {
+                        var $link = $(this);
+                        var href = $link.attr('href');
+                        if (!href) return;
+
+                        var baseUrl = href.split('?')[0];
+                        var params = new URLSearchParams(href.includes('?') ? href.split('?')[1] : '');
+
+                        if (filterQr) params.set('filter_qr', filterQr); else params.delete('filter_qr');
+                        if (filterTag) params.set('filter_tag', filterTag); else params.delete('filter_tag');
+                        if (filterNotes) params.set('filter_notes', filterNotes); else params.delete('filter_notes');
+                        if (filterGroup) params.set('filter_group', filterGroup); else params.delete('filter_group');
+                        if (filterBuilding) params.set('filter_building', filterBuilding); else params.delete('filter_building');
+                        if (filterApproved === '') params.set('filter_approved', 'all');
+                        else if (filterApproved) params.set('filter_approved', filterApproved);
+                        else params.delete('filter_approved');
+                        if (filterDate) params.set('filter_date', filterDate); else params.delete('filter_date');
+                        if (rMin !== 0 || rMax !== 100) {
+                            params.set('conf_min', rMin);
+                            params.set('conf_max', rMax);
+                        } else {
+                            params.delete('conf_min');
+                            params.delete('conf_max');
+                        }
+                        // Preserve the Show Archive state on the Review link.
+                        if (archiveVal !== null) params.set('archive', archiveVal); else params.delete('archive');
+
+                        var newHref = baseUrl + '?' + params.toString();
+                        $link.attr('href', newHref);
+                    });
+                }
+                window.updateReviewLinks = updateReviewLinks;
+
+                var tables = {
+                    assetTableNew_v2: initAssetTable('assetTableNew_v2', '#filter-building-new', '#filter-approved-new', '#filter-tag-new', '#filter-group-new', '#filter-qr-new'),
+                    assetTableUpdate_v2: initAssetTable('assetTableUpdate_v2', '#filter-building-update', '#filter-approved-update', '#filter-tag-update', '#filter-group-update', '#filter-qr-update'),
+                    assetTableManual_v2: initAssetTable('assetTableManual_v2', '#filter-building-manual', '#filter-approved-manual', '#filter-tag-manual', '#filter-group-manual', '#filter-qr-manual')
+                };
+                window.tables = tables;
+
+                // Initialise noUiSlider on all three tab containers
+                var confTooltipFormat = { to: function(v) { return Math.round(v) + '%'; }, from: function(v) { return parseFloat(v); } };
+                ['new', 'update', 'manual'].forEach(function(tab) {
+                    var el = document.getElementById('confSlider-' + tab);
+                    if (!el || typeof noUiSlider === 'undefined') return;
+                    noUiSlider.create(el, {
+                        start: [window.confRangeMin, window.confRangeMax],
+                        connect: true,
+                        range: { min: 0, max: 100 },
+                        step: 1,
+                        tooltips: [confTooltipFormat, confTooltipFormat],
+                        format: {
+                            to: function(v) { return Math.round(v); },
+                            from: function(v) { return parseFloat(v); }
+                        },
+                        pips: {
+                            mode: 'values',
+                            values: [0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100],
+                            density: 100,
+                            format: { to: function(v) { return Math.round(v); }, from: function(v) { return parseFloat(v); } }
+                        }
+                    });
+                    el.noUiSlider.on('change', function(values) {
+                        window.confRangeMin = Number(values[0]);
+                        window.confRangeMax = Number(values[1]);
+                        syncAllConfSliders(tab);
+                        redrawAllAssetTables();
+                        updateAllReviewLinks();
+                        updateDashboardNavLinks();
+                        var q = updateDashboardQuery(getActiveDashboardTab());
+                        window.history.replaceState({}, '', window.location.pathname + q);
+                    });
+                });
+                updateAllReviewLinks();
+                updateDashboardNavLinks();
+
+                var planonModal = new bootstrap.Modal(document.getElementById('planonModal'));
+                var infoModal = new bootstrap.Modal(document.getElementById('infoModal'));
+                var infoModalTitle = document.getElementById('infoModalLabel');
+                var infoModalBody = document.getElementById('infoModalBody');
+
+                function showModal(title, message) {
+                    infoModalTitle.textContent = title;
+                    infoModalBody.textContent = message;
+                    infoModal.show();
+                }
+
+                var _confirmCallback = null;
+                var _confirmModalEl = document.getElementById('confirmModal');
+                var _confirmModal = _confirmModalEl ? new bootstrap.Modal(_confirmModalEl) : null;
+
+                if (_confirmModalEl) {
+                    _confirmModalEl.querySelector('#confirmModalOk').addEventListener('click', function () {
+                        _confirmModal.hide();
+                        if (typeof _confirmCallback === 'function') _confirmCallback();
+                        _confirmCallback = null;
+                    });
+                    _confirmModalEl.addEventListener('hidden.bs.modal', function () {
+                        _confirmCallback = null;
+                    });
+                }
+
+                function showConfirm(title, message, onConfirm) {
+                    if (!_confirmModal) {
+                        if (confirm(message)) onConfirm();
+                        return;
+                    }
+                    _confirmCallback = onConfirm;
+                    document.getElementById('confirmModalLabel').textContent = title;
+                    document.getElementById('confirmModalBody').textContent = message;
+                    _confirmModal.show();
+                }
+
+                function getPackageDataRow(tr) {
+                    var row = $(tr);
+                    if (row.hasClass('child')) {
+                        row = row.prev('tr');
+                    }
+                    return row;
+                }
+
+                function isPackageLockedRow(tr) {
+                    return getPackageDataRow(tr).attr('data-package-locked') === '1';
+                }
+
+                function getPackageLockMessage(tr) {
+                    var row = getPackageDataRow(tr);
+                    var msg = (row.attr('data-package-message') || '').trim();
+                    if (msg) return msg;
+                    var pkg = (row.attr('data-package-id') || '').trim();
+                    if (pkg) return 'This asset is already in SDI package ' + pkg + ' and cannot be changed.';
+                    return 'This asset is already in an SDI package and cannot be changed.';
+                }
+
+                function showPackageLockedMessage(tr) {
+                    showModal('Action Not Allowed', getPackageLockMessage(tr));
+                }
+
+                function showPostFailure(xhr, fallbackMessage) {
+                    var body = xhr && xhr.responseJSON;
+                    if (xhr && xhr.status === 409 && body && body.package_locked) {
+                        showModal('Action Not Allowed', body.error || 'This asset is already in an SDI package and cannot be changed.');
+                        return;
+                    }
+                    if (xhr && xhr.status === 403) {
+                        showModal("Access Denied", "You do not have permission to perform this action. Contact your administrator.");
+                        return;
+                    }
+                    showModal('Server Error', fallbackMessage);
+                }
+
+                $('tr[data-package-locked="1"]').each(function () {
+                    var row = $(this);
+                    var msg = getPackageLockMessage(row);
+                    row.find('.ai-status-cell, .sdi-cell, .approved-cell')
+                        .addClass('status-cell-locked')
+                        .attr('title', msg)
+                        .attr('aria-disabled', 'true');
+                    row.find('.approved-cell').attr('tabindex', '-1');
+                });
+
+                // --- HELPER FUNCTION TO CHECK STATUS ---
+                function isApproved(tr, tableInstance) {
+                    tr = getPackageDataRow(tr);
+                    // 1. First attempt: Find DOM element directly in the row (easiest for visible rows)
+                    var $domCell = $(tr).find('.approved-cell');
+                    if ($domCell.length) {
+                        return $domCell.attr('data-search') === 'True';
+                    }
+
+                    // 2. Second attempt: Ask DataTables API (necessary for RESPONSIVE HIDDEN columns)
+                    if (!tableInstance) {
+                        return false;
+                    }
+                    var row = tableInstance.row(tr);
+                    // Use the configured approved column index so UI changes do not break the gate.
+                    // .nodes().to$() retrieves the jQuery object for that cell node, even if hidden.
+                    var cellNode = tableInstance.cell(row.index(), colApproved).node();
+                    if (cellNode) {
+                        return $(cellNode).attr('data-search') === 'True';
+                    }
+
+                    return false;
+                }
+
+                // Approved Toggle
+                $('#assetTableNew_v2, #assetTableUpdate_v2, #assetTableManual_v2').on('click keypress', '.approved-cell', function (ev) {
+                    if (ev.type === 'keypress' && ev.key !== ' ' && ev.key !== 'Enter') return;
+                    ev.preventDefault();
+
+                    var cell = $(this);
+                    var docId = cell.data('docid');
+                    var tr = cell.closest('tr');
+                    var qrCode = tr.find('td:first').text().trim();
+                    var reviewButton = tr.find('a.v2-btn-review');
+                    var isCurrentlyApproved = cell.attr('data-search') === 'True';
+                    var tableId = cell.closest('table').attr('id');
+                    var tableInstance = tables[tableId];
+
+                    if (isPackageLockedRow(tr)) {
+                        showPackageLockedMessage(tr);
+                        return;
+                    }
+
+                    if (isCurrentlyApproved) {
+                        $.get('/check_sdi/' + qrCode, function (response) {
+                            if (response.exists) {
+                                planonModal.show();
+                            } else {
+                                toggleApprovedStatus(docId, cell, reviewButton, tableInstance, tr);
+                            }
+                        }).fail(function (xhr) {
+                            if (xhr.status === 403) {
+                                showModal("Access Denied", "You do not have permission to perform this action. Contact your administrator.");
+                            } else {
+                                showModal('Server Error', "Could not check the asset's export status.");
+                            }
+                        });
+
+                    } else {
+                        toggleApprovedStatus(docId, cell, reviewButton, tableInstance, tr);
+                    }
+                });
+
+                function toggleApprovedStatus(docId, cell, reviewButton, tableInstance, tr) {
+                    $.post('/toggle_approved/' + docId, function (resp) {
+                        if (resp.success) {
+                            if (resp.new_value === "True") {
+                                cell.html('✅');
+                                cell.attr('data-search', 'True');
+                            } else {
+                                cell.html('☐');
+                                cell.attr('data-search', 'False');
+                            }
+                            if (tableInstance) {
+                                tableInstance.row(tr).invalidate().draw(false);
+                            }
+                        } else {
+                            showModal('Update Failed', resp.error || "Could not update status.");
+                        }
+                    }).fail(function (xhr) {
+                        showPostFailure(xhr, 'Failed to update Approved status.');
+                    });
+                }
+
+                // AI Status Toggle
+                $('#assetTableNew_v2, #assetTableUpdate_v2, #assetTableManual_v2').on('click', '.ai-status-cell', function (ev) {
+                    var cell = $(this);
+                    var tr = cell.closest('tr'); // The row that was clicked (could be child row in responsive mode)
+                    var tableId = cell.closest('table').attr('id');
+                    var tableInstance = tables[tableId];
+
+                    if (isPackageLockedRow(tr)) {
+                        ev.preventDefault();
+                        ev.stopPropagation();
+                        showPackageLockedMessage(tr);
+                        return;
+                    }
+
+                    if (isApproved(tr, tableInstance)) {
+                        ev.preventDefault();
+                        ev.stopPropagation();
+                        showModal('Action Not Allowed', 'This asset is already approved. You cannot change the AI Status.');
+                        return;
+                    }
+
+                    var docId = cell.data('docid');
+
+                    $.post('/toggle_ai_status/' + docId, function (resp) {
+                        if (resp.success) {
+                            if (resp.new_value == '1') {
+                                cell.html('✅');
+                                cell.attr('data-val', '1');
+                            } else {
+                                cell.html('☐');
+                                cell.attr('data-val', '0');
+                            }
+                            if (tableInstance) {
+                                tableInstance.row(tr).invalidate().draw(false);
+                            }
+                        } else if (resp.code === 'reprocess_blocked' && resp.forceable) {
+                            showConfirm(
+                                "Force re-run AI?",
+                                "This will DISCARD your manual edits to this asset and re-extract it with AI. The current values are backed up and recoverable. Continue?",
+                                function () {
+                                    $.post('/toggle_ai_status/' + docId, { force: 1 }, function (r2) {
+                                        if (r2.success) {
+                                            cell.html('☐');
+                                            cell.attr('data-val', '0');
+                                            if (tableInstance) { tableInstance.row(tr).invalidate().draw(false); }
+                                            showModal("Reprocessing requested", "Your edits were backed up. AI will re-extract this asset on the next cycle.");
+                                        } else {
+                                            showModal("Error", r2.error || "Could not force reprocess.");
+                                        }
+                                    }).fail(function (xhr) {
+                                        showPostFailure(xhr, "Failed to force reprocess.");
+                                    });
+                                }
+                            );
+                        } else {
+                            showModal("Error", resp.error || "Could not update AI Status.");
+                        }
+                    }).fail(function (xhr) {
+                        showPostFailure(xhr, "Failed to toggle AI Status.");
+                    });
+                });
+
+                // --- AI Status auto-refresh (read-only poller) ---
+                // Re-reads QR_codes.ai_status periodically so the ✅/☐ cells reflect
+                // extraction progress without a manual page reload. Must stay
+                // read-only: it never writes and never triggers extraction.
+                var AI_STATUS_POLL_MS = 60000;
+                var aiStatusPollBusy = false;
+                function refreshAiStatusCells() {
+                    if (aiStatusPollBusy || document.hidden) return;
+                    var cells = $('td[data-ai-cell]');
+                    if (!cells.length) return;
+                    aiStatusPollBusy = true;
+                    $.getJSON('/api/ai_status_map').done(function (resp) {
+                        if (!resp || !resp.success || !resp.statuses) return;
+                        var touched = {};
+                        cells.each(function () {
+                            var cell = $(this);
+                            var docId = String(cell.attr('data-docid') || '');
+                            var qr = docId.split('_')[0];
+                            if (!qr || !Object.prototype.hasOwnProperty.call(resp.statuses, qr)) return;
+                            var val = String(resp.statuses[qr]) === '1' ? '1' : '0';
+                            if (String(cell.attr('data-val')) === val) return;
+                            cell.attr('data-val', val);
+                            cell.html(val === '1' ? '✅' : '☐');
+                            var tableId = cell.closest('table').attr('id');
+                            var tableInstance = (window.tables || {})[tableId];
+                            if (tableInstance) {
+                                tableInstance.row(cell.closest('tr')).invalidate();
+                                touched[tableId] = tableInstance;
+                            }
+                        });
+                        Object.keys(touched).forEach(function (tableId) {
+                            touched[tableId].draw(false);
+                        });
+                    }).always(function () { aiStatusPollBusy = false; });
+                }
+                setInterval(refreshAiStatusCells, AI_STATUS_POLL_MS);
+
+                // Manual Entry Toggle
+                $('#assetTableNew_v2, #assetTableUpdate_v2, #assetTableManual_v2').on('click', '.sdi-cell', function (ev) {
+                    var cell = $(this);
+                    var tr = cell.closest('tr');
+                    var tableId = cell.closest('table').attr('id');
+                    var tableInstance = tables[tableId];
+
+                    if (isPackageLockedRow(tr)) {
+                        ev.preventDefault();
+                        ev.stopPropagation();
+                        showPackageLockedMessage(tr);
+                        return;
+                    }
+
+                    if (isApproved(tr, tableInstance)) {
+                        ev.preventDefault();
+                        ev.stopPropagation();
+                        showModal('Action Not Allowed', 'This asset is already approved. You cannot change the Manual Entry status.');
+                        return;
+                    }
+
+                    var docId = cell.data('docid');
+
+                    $.post('/toggle_sdi/' + docId, function (resp) {
+                        if (resp.success) {
+                            // Reload page to move item to correct tab
+                            location.reload();
+                        } else {
+                            showModal("Error", resp.error || "Could not update Manual Entry status.");
+                        }
+                    }).fail(function (xhr) {
+                        showPostFailure(xhr, "Failed to toggle Manual Entry status.");
+                    });
+                });
+
+                // Batch header toggles apply to the current filtered DataTables rows.
+                $(document).on('click', '.select-all-manual, .select-all-approved', function (ev) {
+                    ev.stopPropagation();
+                });
+
+                function setManualCellState(cell, newValue) {
+                    if (newValue == 1) {
+                        cell.html('&#x2705;');
+                        cell.attr('data-val', '1');
+                    } else {
+                        cell.html('&#x2610;');
+                        cell.attr('data-val', '0');
+                    }
+                }
+
+                function setApprovedCellState(cell, newValue) {
+                    if (newValue === "True") {
+                        cell.html('<span class="d-none">True</span>&#x2705;');
+                        cell.attr('data-search', 'True');
+                    } else {
+                        cell.html('<span class="d-none">False</span>&#x2610;');
+                        cell.attr('data-search', 'False');
+                    }
+                }
+
+                function getRowQrCode(tr) {
+                    return tr.find('td:first').text().trim();
+                }
+
+                $(document).on('change', '.select-all-manual', function () {
+                    var isChecked = $(this).is(':checked');
+                    var tableId = $(this).closest('table').attr('id');
+                    var tableInstance = tables[tableId];
+                    if (!tableInstance) return;
+
+                    var rows = tableInstance.rows({ search: 'applied' }).nodes();
+                    var updates = [];
+                    $(rows).each(function () {
+                        var tr = $(this);
+                        if (isPackageLockedRow(tr)) return;
+                        var cell = tr.find('.manual-entry-cell');
+                        if (!cell.length) return;
+                        var isManual = cell.attr('data-val') == '1';
+                        if (isApproved(tr, tableInstance)) return;
+
+                        if (isManual !== isChecked) {
+                            updates.push({ docId: cell.data('docid'), cell: cell, tr: tr });
+                        }
+                    });
+
+                    if (updates.length === 0) return;
+
+                    var $checkbox = $(this);
+                    $checkbox.prop('checked', !isChecked);
+                    showConfirm("Confirm Bulk Action", "Are you sure you want to " + (isChecked ? "Select" : "Unselect") + " Manual for " + updates.length + " filtered assets?", function () {
+                        $checkbox.prop('checked', isChecked);
+                        $checkbox.prop('disabled', true);
+
+                        var i = 0;
+                        function processNext() {
+                            if (i >= updates.length) {
+                                tableInstance.draw(false);
+                                $checkbox.prop('disabled', false);
+                                return;
+                            }
+
+                            var update = updates[i];
+                            $.post('/toggle_sdi/' + update.docId, function (resp) {
+                                if (resp.success) {
+                                    setManualCellState(update.cell, resp.new_value);
+                                    tableInstance.row(update.tr).invalidate();
+                                }
+                            }).always(function () {
+                                i++;
+                                processNext();
+                            });
+                        }
+
+                        processNext();
+                    });
+                });
+
+                $(document).on('change', '.select-all-approved', function () {
+                    var isChecked = $(this).is(':checked');
+                    var tableId = $(this).closest('table').attr('id');
+                    var tableInstance = tables[tableId];
+                    if (!tableInstance) return;
+
+                    var rows = tableInstance.rows({ search: 'applied' }).nodes();
+                    var updates = [];
+                    $(rows).each(function () {
+                        var tr = $(this);
+                        if (isPackageLockedRow(tr)) return;
+                        var cell = tr.find('.approved-cell');
+                        if (!cell.length) return;
+                        var isRowApproved = cell.attr('data-search') === 'True';
+                        if (isRowApproved !== isChecked) {
+                            updates.push({ docId: cell.data('docid'), cell: cell, tr: tr });
+                        }
+                    });
+
+                    if (updates.length === 0) return;
+
+                    var $checkbox = $(this);
+                    $checkbox.prop('checked', !isChecked);
+                    showConfirm("Confirm Bulk Action", "Are you sure you want to " + (isChecked ? "Select" : "Unselect") + " Approved for " + updates.length + " filtered assets?", function () {
+                        $checkbox.prop('checked', isChecked);
+                        $checkbox.prop('disabled', true);
+
+                        var i = 0;
+                        function processNext() {
+                            if (i >= updates.length) {
+                                tableInstance.draw(false);
+                                $checkbox.prop('disabled', false);
+                                return;
+                            }
+
+                            var update = updates[i];
+                            if (!isChecked) {
+                                $.get('/check_sdi/' + getRowQrCode(update.tr), function (response) {
+                                    if (response.exists) {
+                                        i++;
+                                        processNext();
+                                    } else {
+                                        executeToggleApproved(update);
+                                    }
+                                }).fail(function () {
+                                    i++;
+                                    processNext();
+                                });
+                            } else {
+                                executeToggleApproved(update);
+                            }
+                        }
+
+                        function executeToggleApproved(update) {
+                            $.post('/toggle_approved/' + update.docId, function (resp) {
+                                if (resp.success) {
+                                    setApprovedCellState(update.cell, resp.new_value);
+                                    tableInstance.row(update.tr).invalidate();
+                                }
+                            }).always(function () {
+                                i++;
+                                processNext();
+                            });
+                        }
+
+                        processNext();
+                    });
+                });
+            });
+
+            // ===== USER ACTIVITY VIEW FUNCTIONALITY =====
+            var userActivityData = [];
+            var userActivityUsers = [];
+            var visibleQRCodes = [];
+
+            function getVisibleQRCodes() {
+                // Get QR codes from the currently active tab's table only
+                var qrCodes = [];
+
+                // Find the active tab-pane
+                var activeTabPane = document.querySelector('.tab-pane.show.active');
+                if (!activeTabPane) {
+                    // Fallback: try to find any visible table
+                    activeTabPane = document.querySelector('.tab-pane:not([style*="display: none"])');
+                }
+
+                if (activeTabPane) {
+                    // Find the table within the active tab
+                    var table = activeTabPane.querySelector('table');
+                    if (table) {
+                        // Get all tbody rows and extract QR code from first cell
+                        var rows = table.querySelectorAll('tbody tr');
+                        rows.forEach(function (row) {
+                            var firstCell = row.querySelector('td:first-child');
+                            if (firstCell) {
+                                // Extract text content (QR code), removing any HTML tags
+                                var qr = firstCell.textContent.trim();
+                                if (qr && qrCodes.indexOf(qr) === -1) {
+                                    qrCodes.push(qr);
+                                }
+                            }
+                        });
+                    }
+                }
+
+                return qrCodes;
+            }
+
+
+            function loadUserActivityData() {
+                var tableBody = document.getElementById('ua-table-body');
+                if (!tableBody) return;
+
+                tableBody.innerHTML = '<tr><td colspan="4" class="text-center py-4"><div class="spinner-border spinner-border-sm text-primary me-2"></div>Loading...</td></tr>';
+
+                // Collect QR codes from currently visible dashboard rows
+                visibleQRCodes = getVisibleQRCodes();
+
+                $.ajax({
+                    url: '/api/user-activity',
+                    method: 'POST',
+                    contentType: 'application/json',
+                    data: JSON.stringify({ qr_codes: visibleQRCodes }),
+                    success: function (result) {
+                        userActivityData = result.data || [];
+                        userActivityUsers = result.users || [];
+
+                        // Populate user dropdown
+                        var userFilter = document.getElementById('ua-user-filter');
+                        if (userFilter) {
+                            userFilter.innerHTML = '<option value="">All Users</option>';
+                            userActivityUsers.forEach(function (u) {
+                                userFilter.innerHTML += '<option value="' + u + '">' + u + '</option>';
+                            });
+                        }
+
+                        renderUserActivityTable();
+                    },
+                    error: function (xhr) {
+                        var errMsg = 'Error loading data';
+                        try {
+                            var resp = xhr.responseJSON;
+                            if (resp && resp.error) errMsg = resp.error;
+                        } catch (e) { }
+                        tableBody.innerHTML = '<tr><td colspan="4" class="text-center text-danger py-4">' + errMsg + '</td></tr>';
+                    }
+                });
+            }
+
+            function renderUserActivityTable() {
+                var tableBody = document.getElementById('ua-table-body');
+                var userFilter = document.getElementById('ua-user-filter');
+                var qrFilter = document.getElementById('ua-qr-filter');
+                var dateFilter = document.getElementById('ua-date-filter');
+
+                if (!tableBody) return;
+
+                var selectedUser = userFilter ? userFilter.value : '';
+                var qrSearch = qrFilter ? qrFilter.value.toLowerCase().trim() : '';
+                var dateSearch = dateFilter ? (dateFilter.value || '').trim() : '';
+
+                var filtered = userActivityData.filter(function (row) {
+                    if (selectedUser && row.user !== selectedUser) return false;
+                    if (qrSearch && row.qr_code.toLowerCase().indexOf(qrSearch) === -1) return false;
+                    if (dateSearch && row.date !== dateSearch) return false;
+                    return true;
+                });
+
+                if (filtered.length === 0) {
+                    tableBody.innerHTML = '<tr><td colspan="4" class="text-center text-muted py-4">No data found</td></tr>';
+                    return;
+                }
+
+                var html = '';
+                filtered.forEach(function (row) {
+                    html += '<tr>' +
+                        '<td class="fw-medium">' + (row.qr_code || '') + '</td>' +
+                        '<td>' + (row.user || '') + '</td>' +
+                        '<td>' + (row.date || '') + '</td>' +
+                        '<td>' + (row.hour || '') + '</td>' +
+                        '</tr>';
+                });
+                tableBody.innerHTML = html;
+            }
+
+            // Event listeners for User Activity view
+            var userFilter = document.getElementById('ua-user-filter');
+            var qrFilter = document.getElementById('ua-qr-filter');
+            var dateFilter = document.getElementById('ua-date-filter');
+            var resetBtn = document.getElementById('ua-reset-filters');
+            var showBtn = document.getElementById('show-user-activity-btn');
+            var backBtn = document.getElementById('back-to-main-btn');
+            var mainContainer = document.getElementById('main-dashboard-content');
+            var userActivityView = document.getElementById('user-activity-view');
+
+            if (userFilter) userFilter.addEventListener('change', renderUserActivityTable);
+            if (qrFilter) qrFilter.addEventListener('input', renderUserActivityTable);
+            if (dateFilter) dateFilter.addEventListener('change', renderUserActivityTable);
+
+            if (resetBtn) {
+                resetBtn.addEventListener('click', function () {
+                    if (userFilter) userFilter.value = '';
+                    if (qrFilter) qrFilter.value = '';
+                    if (dateFilter) dateFilter.value = '';
+                    renderUserActivityTable();
+                });
+            }
+
+            if (showBtn) {
+                showBtn.addEventListener('click', function () {
+                    if (mainContainer) mainContainer.style.display = 'none';
+                    if (userActivityView) userActivityView.style.display = 'block';
+                    loadUserActivityData();
+                });
+            }
+
+            if (backBtn) {
+                backBtn.addEventListener('click', function () {
+                    if (userActivityView) userActivityView.style.display = 'none';
+                    if (mainContainer) mainContainer.style.display = 'block';
+                });
+            }
+
+            window.exportFilteredXlsx = async function (tab) {
+                var tableId = ({ new: 'assetTableNew_v2', update: 'assetTableUpdate_v2', manual: 'assetTableManual_v2' })[tab];
+                var dt = window.tables && window.tables[tableId];
+                if (!dt) { alert('Table not initialised yet.'); return; }
+                var qrCodes = [];
+                dt.rows({ search: 'applied' }).nodes().each(function (tr) {
+                    var qr = ((tr.cells[0] && tr.cells[0].textContent) || '').trim();
+                    if (qr) qrCodes.push(qr);
+                });
+                if (!qrCodes.length) { alert('No rows match the current filter.'); return; }
+                var building = buildingFilterValue(tab);
+                var btn = document.querySelector('button[onclick="exportFilteredXlsx(\'' + tab + '\')"]');
+                var prevHtml = btn ? btn.innerHTML : null;
+                if (btn) { btn.disabled = true; btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Exporting...'; }
+                try {
+                    var resp = await fetch('/export/review-xlsx', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ tab: tab, building: building, qr_codes: qrCodes })
+                    });
+                    if (!resp.ok) { alert('Export failed: HTTP ' + resp.status); return; }
+                    var blob = await resp.blob();
+                    var cd = resp.headers.get('Content-Disposition') || '';
+                    var match = cd.match(/filename="?([^";]+)"?/);
+                    var fname = match ? match[1] : 'Review_BF.xlsx';
+                    var url = URL.createObjectURL(blob);
+                    var a = document.createElement('a');
+                    a.href = url; a.download = fname;
+                    document.body.appendChild(a); a.click(); a.remove();
+                    URL.revokeObjectURL(url);
+                } catch (err) {
+                    alert('Export failed: ' + err);
+                } finally {
+                    if (btn) { btn.disabled = false; btn.innerHTML = prevHtml; }
+                }
+            };
+        </script>
+
+    <script>
+    (function () {
+        const params = new URLSearchParams(window.location.search);
+        if (params.get('embedded') !== 'true') return;
+
+        // Notify parent portal of current URL so it can restore on refresh
+        function notifyParent() {
+            try {
+                window.parent.postMessage(
+                    { type: 'review-iframe-nav', iframe: 'iframe-review-bf', href: window.location.href },
+                    '*'
+                );
+            } catch (e) { /* cross-origin ignored */ }
+        }
+        notifyParent();
+        window.addEventListener('popstate', notifyParent);
+
+        // Preserve ?embedded=true on all internal link clicks
+        document.addEventListener('click', function (e) {
+            const a = e.target.closest('a[href]');
+            if (!a) return;
+            const href = a.getAttribute('href');
+            if (!href || href.startsWith('#') || href.startsWith('http') || href.startsWith('mailto')) return;
+            if (href.includes('embedded=true')) return;
+            a.setAttribute('href', href + (href.includes('?') ? '&' : '?') + 'embedded=true');
+        });
+    })();
+    </script>
+</body>
+
+</html>

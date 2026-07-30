@@ -1,0 +1,58 @@
+{#- Canonical review action buttons (ME / BF / EL).
+    THREE-COPY RULE: this file exists byte-identically in the three review apps
+    (same rule as static/image-viewer.js) -- edit all copies together.
+    Button definitions live in review_buttons.py (REVIEW_BUTTONS); per-app
+    endpoint names arrive via ctx.endpoints. Element ids are a JS contract with
+    the inline <script> in review.html -- never change them.
+
+    Usage:
+      {% from 'macros/review_buttons.html' import render_review_buttons %}
+      {{ render_review_buttons(review_buttons, 'top', btn_ctx) }}
+      {{ render_review_buttons(review_buttons, 'footer', btn_ctx) }}
+
+    ctx keys: doc_id, approved (bool), package_locked, review_locked,
+              package_lock_message, endpoints (dict: print/export/dashboard),
+              embedded (bool -- g.embedded evaluated at the call site, because
+              g is not visible inside a plain macro import). -#}
+{% macro render_review_buttons(buttons, position, ctx) %}
+    {%- for btn in buttons | selectattr('position', 'equalto', position) | sort(attribute='order') %}
+    {%- if btn.separator_before %}
+    <div class="vr mx-1"></div>
+    {%- endif %}
+    {%- if btn.kind == 'link' %}
+    {%- if btn.endpoint_key == 'dashboard' %}
+        {%- set href = url_for(ctx.endpoints['dashboard']) %}
+    {%- else %}
+        {%- set href = url_for(ctx.endpoints[btn.endpoint_key], doc_id=ctx.doc_id) %}
+    {%- endif %}
+    <a href="{{ href }}{% if btn.embedded_query and ctx.embedded %}?embedded=true{% endif %}"
+        {%- if btn.target_blank %} target="_blank" rel="noopener"{% endif %}
+        class="{{ btn.css_class }}" id="{{ btn.dom_id }}"{% if btn.title %} title="{{ btn.title }}"{% endif %}>
+        <i class="{{ btn.icon }}"></i> {{ btn.label }}
+    </a>
+    {%- elif btn.key == 'approve_toggle' %}
+    <button type="button" id="{{ btn.dom_id }}"
+        class="{{ btn.css_class }} {{ 'approved' if ctx.approved else 'pending' }}"
+        {%- if ctx.package_locked %} disabled aria-disabled="true" title="{{ ctx.package_lock_message }}"{% endif %}>
+        <span class="approve-icon">{{ '✅' if ctx.approved else '☐' }}</span>
+        <span class="approve-text">{{ 'Approved' if ctx.approved else 'Pending' }}</span>
+    </button>
+    {%- elif btn.key == 'save_stay' %}
+    <button type="button" id="{{ btn.dom_id }}" class="{{ btn.css_class }}"
+        title="{{ btn.title }}"
+        {%- if ctx.package_locked %} disabled aria-disabled="true"{% endif %}>
+        <i class="{{ btn.icon }}"></i><span>{{ btn.label }}</span>
+    </button>
+    {%- elif btn.key == 'save_next' %}
+    <button type="submit" class="{{ btn.css_class }}" name="action" value="{{ btn.action }}">
+        <span id="saveNextLabel" data-unlocked-label="{{ btn.label }}" data-locked-label="{{ btn.locked_label }}">{{ btn.locked_label if ctx.review_locked else btn.label }}</span> <i class="{{ btn.icon }}"></i>
+    </button>
+    {%- else %}
+    <button type="submit" class="{{ btn.css_class }}" name="action" value="{{ btn.action }}"
+        {%- if btn.lock == 'data-lock-save' %} data-lock-save="true"{% endif %}
+        {%- if btn.title %} title="{{ btn.title }}"{% endif %}>
+        {%- if btn.icon %}<i class="{{ btn.icon }}"></i> {% endif %}{{ btn.label }}
+    </button>
+    {%- endif %}
+    {%- endfor %}
+{% endmacro %}

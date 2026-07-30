@@ -1,0 +1,2490 @@
+{
+  "applied_objects": [],
+  "backup_path": null,
+  "db_path": "/home/developer/asset_capture_app_dev/data/QR_codes.db",
+  "mode": "dry_run",
+  "preflight": {
+    "finding_count": 247,
+    "findings": [
+      {
+        "detail": "Historical archived package row has print_out not equal to 1; migration will grandfather it.",
+        "kind": "historical_archived_unexported_row",
+        "package_id": "SDI-00005",
+        "print_out": "0",
+        "qr": "0000182418",
+        "rowid": 1,
+        "severity": "warning",
+        "table": "sdi_print_out_arch"
+      },
+      {
+        "detail": "Historical archived package row has print_out not equal to 1; migration will grandfather it.",
+        "kind": "historical_archived_unexported_row",
+        "package_id": "SDI-00005",
+        "print_out": "0",
+        "qr": "0000182460",
+        "rowid": 2,
+        "severity": "warning",
+        "table": "sdi_print_out_arch"
+      },
+      {
+        "detail": "Historical archived package row has print_out not equal to 1; migration will grandfather it.",
+        "kind": "historical_archived_unexported_row",
+        "package_id": "SDI-00005",
+        "print_out": "0",
+        "qr": "0000182461",
+        "rowid": 3,
+        "severity": "warning",
+        "table": "sdi_print_out_arch"
+      },
+      {
+        "detail": "Historical archived package row has print_out not equal to 1; migration will grandfather it.",
+        "kind": "historical_archived_unexported_row",
+        "package_id": "SDI-00005",
+        "print_out": "0",
+        "qr": "0000182424",
+        "rowid": 4,
+        "severity": "warning",
+        "table": "sdi_print_out_arch"
+      },
+      {
+        "detail": "Historical archived package row has print_out not equal to 1; migration will grandfather it.",
+        "kind": "historical_archived_unexported_row",
+        "package_id": "SDI-00005",
+        "print_out": "0",
+        "qr": "0000182450",
+        "rowid": 5,
+        "severity": "warning",
+        "table": "sdi_print_out_arch"
+      },
+      {
+        "detail": "Historical archived package row has print_out not equal to 1; migration will grandfather it.",
+        "kind": "historical_archived_unexported_row",
+        "package_id": "SDI-00005",
+        "print_out": "0",
+        "qr": "0000182451",
+        "rowid": 6,
+        "severity": "warning",
+        "table": "sdi_print_out_arch"
+      },
+      {
+        "detail": "Historical archived package row has print_out not equal to 1; migration will grandfather it.",
+        "kind": "historical_archived_unexported_row",
+        "package_id": "SDI-00005",
+        "print_out": "0",
+        "qr": "0000182459",
+        "rowid": 7,
+        "severity": "warning",
+        "table": "sdi_print_out_arch"
+      },
+      {
+        "detail": "Historical archived package row has print_out not equal to 1; migration will grandfather it.",
+        "kind": "historical_archived_unexported_row",
+        "package_id": "SDI-00005",
+        "print_out": "0",
+        "qr": "0000182462",
+        "rowid": 8,
+        "severity": "warning",
+        "table": "sdi_print_out_arch"
+      },
+      {
+        "detail": "Historical archived package row has print_out not equal to 1; migration will grandfather it.",
+        "kind": "historical_archived_unexported_row",
+        "package_id": "SDI-00005",
+        "print_out": "0",
+        "qr": "0000183705",
+        "rowid": 9,
+        "severity": "warning",
+        "table": "sdi_print_out_arch"
+      },
+      {
+        "detail": "Historical archived package row has print_out not equal to 1; migration will grandfather it.",
+        "kind": "historical_archived_unexported_row",
+        "package_id": "SDI-00005",
+        "print_out": "0",
+        "qr": "0000182420",
+        "rowid": 10,
+        "severity": "warning",
+        "table": "sdi_print_out_arch"
+      },
+      {
+        "detail": "Historical archived package row has print_out not equal to 1; migration will grandfather it.",
+        "kind": "historical_archived_unexported_row",
+        "package_id": "SDI-00005",
+        "print_out": "0",
+        "qr": "0000182421",
+        "rowid": 11,
+        "severity": "warning",
+        "table": "sdi_print_out_arch"
+      },
+      {
+        "detail": "Historical archived package row has print_out not equal to 1; migration will grandfather it.",
+        "kind": "historical_archived_unexported_row",
+        "package_id": "SDI-00005",
+        "print_out": "0",
+        "qr": "0000182422",
+        "rowid": 12,
+        "severity": "warning",
+        "table": "sdi_print_out_arch"
+      },
+      {
+        "detail": "Historical archived package row has print_out not equal to 1; migration will grandfather it.",
+        "kind": "historical_archived_unexported_row",
+        "package_id": "SDI-00005",
+        "print_out": "0",
+        "qr": "0000182423",
+        "rowid": 13,
+        "severity": "warning",
+        "table": "sdi_print_out_arch"
+      },
+      {
+        "detail": "Historical archived package row has print_out not equal to 1; migration will grandfather it.",
+        "kind": "historical_archived_unexported_row",
+        "package_id": "SDI-00005",
+        "print_out": "0",
+        "qr": "0000182452",
+        "rowid": 14,
+        "severity": "warning",
+        "table": "sdi_print_out_arch"
+      },
+      {
+        "detail": "Historical archived package row has print_out not equal to 1; migration will grandfather it.",
+        "kind": "historical_archived_unexported_row",
+        "package_id": "SDI-00005",
+        "print_out": "0",
+        "qr": "0000182453",
+        "rowid": 15,
+        "severity": "warning",
+        "table": "sdi_print_out_arch"
+      },
+      {
+        "detail": "Historical archived package row has print_out not equal to 1; migration will grandfather it.",
+        "kind": "historical_archived_unexported_row",
+        "package_id": "SDI-00005",
+        "print_out": "0",
+        "qr": "0000182454",
+        "rowid": 16,
+        "severity": "warning",
+        "table": "sdi_print_out_arch"
+      },
+      {
+        "detail": "Historical archived package row has print_out not equal to 1; migration will grandfather it.",
+        "kind": "historical_archived_unexported_row",
+        "package_id": "SDI-00005",
+        "print_out": "0",
+        "qr": "0000182455",
+        "rowid": 17,
+        "severity": "warning",
+        "table": "sdi_print_out_arch"
+      },
+      {
+        "detail": "Historical archived package row has print_out not equal to 1; migration will grandfather it.",
+        "kind": "historical_archived_unexported_row",
+        "package_id": "SDI-00005",
+        "print_out": "0",
+        "qr": "0000182463",
+        "rowid": 18,
+        "severity": "warning",
+        "table": "sdi_print_out_arch"
+      },
+      {
+        "detail": "Historical archived package row has print_out not equal to 1; migration will grandfather it.",
+        "kind": "historical_archived_unexported_row",
+        "package_id": "SDI-00005",
+        "print_out": "0",
+        "qr": "0000182464",
+        "rowid": 19,
+        "severity": "warning",
+        "table": "sdi_print_out_arch"
+      },
+      {
+        "detail": "Historical archived package row has print_out not equal to 1; migration will grandfather it.",
+        "kind": "historical_archived_unexported_row",
+        "package_id": "SDI-00005",
+        "print_out": "0",
+        "qr": "0000182456",
+        "rowid": 20,
+        "severity": "warning",
+        "table": "sdi_print_out_arch"
+      },
+      {
+        "detail": "Historical archived package row has print_out not equal to 1; migration will grandfather it.",
+        "kind": "historical_archived_unexported_row",
+        "package_id": "SDI-00005",
+        "print_out": "0",
+        "qr": "0000182457",
+        "rowid": 21,
+        "severity": "warning",
+        "table": "sdi_print_out_arch"
+      },
+      {
+        "detail": "Historical archived package row has print_out not equal to 1; migration will grandfather it.",
+        "kind": "historical_archived_unexported_row",
+        "package_id": "SDI-00005",
+        "print_out": "0",
+        "qr": "0000182458",
+        "rowid": 22,
+        "severity": "warning",
+        "table": "sdi_print_out_arch"
+      },
+      {
+        "detail": "Historical archived package row has print_out not equal to 1; migration will grandfather it.",
+        "kind": "historical_archived_unexported_row",
+        "package_id": "SDI-00005",
+        "print_out": "0",
+        "qr": "0000183706",
+        "rowid": 23,
+        "severity": "warning",
+        "table": "sdi_print_out_arch"
+      },
+      {
+        "detail": "Historical archived package row has print_out not equal to 1; migration will grandfather it.",
+        "kind": "historical_archived_unexported_row",
+        "package_id": "SDI-00005",
+        "print_out": "0",
+        "qr": "0000183719",
+        "rowid": 24,
+        "severity": "warning",
+        "table": "sdi_print_out_arch"
+      },
+      {
+        "detail": "Historical archived package row has print_out not equal to 1; migration will grandfather it.",
+        "kind": "historical_archived_unexported_row",
+        "package_id": "SDI-00005",
+        "print_out": "0",
+        "qr": "0000183861",
+        "rowid": 25,
+        "severity": "warning",
+        "table": "sdi_print_out_arch"
+      },
+      {
+        "detail": "Historical archived package row has print_out not equal to 1; migration will grandfather it.",
+        "kind": "historical_archived_unexported_row",
+        "package_id": "SDI-00005",
+        "print_out": "0",
+        "qr": "0000183876",
+        "rowid": 26,
+        "severity": "warning",
+        "table": "sdi_print_out_arch"
+      },
+      {
+        "detail": "Historical archived package row has print_out not equal to 1; migration will grandfather it.",
+        "kind": "historical_archived_unexported_row",
+        "package_id": "SDI-00005",
+        "print_out": "0",
+        "qr": "0000183877",
+        "rowid": 27,
+        "severity": "warning",
+        "table": "sdi_print_out_arch"
+      },
+      {
+        "detail": "Historical archived package row has print_out not equal to 1; migration will grandfather it.",
+        "kind": "historical_archived_unexported_row",
+        "package_id": "SDI-00005",
+        "print_out": "0",
+        "qr": "0000183878",
+        "rowid": 28,
+        "severity": "warning",
+        "table": "sdi_print_out_arch"
+      },
+      {
+        "detail": "Historical archived package row has print_out not equal to 1; migration will grandfather it.",
+        "kind": "historical_archived_unexported_row",
+        "package_id": "SDI-00005",
+        "print_out": "0",
+        "qr": "0000183879",
+        "rowid": 29,
+        "severity": "warning",
+        "table": "sdi_print_out_arch"
+      },
+      {
+        "detail": "Historical archived package row has print_out not equal to 1; migration will grandfather it.",
+        "kind": "historical_archived_unexported_row",
+        "package_id": "SDI-00005",
+        "print_out": "0",
+        "qr": "0000183880",
+        "rowid": 30,
+        "severity": "warning",
+        "table": "sdi_print_out_arch"
+      },
+      {
+        "detail": "Historical archived package row has print_out not equal to 1; migration will grandfather it.",
+        "kind": "historical_archived_unexported_row",
+        "package_id": "SDI-00005",
+        "print_out": "0",
+        "qr": "0000183862",
+        "rowid": 31,
+        "severity": "warning",
+        "table": "sdi_print_out_arch"
+      },
+      {
+        "detail": "Historical archived package row has print_out not equal to 1; migration will grandfather it.",
+        "kind": "historical_archived_unexported_row",
+        "package_id": "SDI-00005",
+        "print_out": "0",
+        "qr": "0000183863",
+        "rowid": 32,
+        "severity": "warning",
+        "table": "sdi_print_out_arch"
+      },
+      {
+        "detail": "Historical archived package row has print_out not equal to 1; migration will grandfather it.",
+        "kind": "historical_archived_unexported_row",
+        "package_id": "SDI-00005",
+        "print_out": "0",
+        "qr": "0000183864",
+        "rowid": 33,
+        "severity": "warning",
+        "table": "sdi_print_out_arch"
+      },
+      {
+        "detail": "Historical archived package row has print_out not equal to 1; migration will grandfather it.",
+        "kind": "historical_archived_unexported_row",
+        "package_id": "SDI-00005",
+        "print_out": "0",
+        "qr": "0000183874",
+        "rowid": 34,
+        "severity": "warning",
+        "table": "sdi_print_out_arch"
+      },
+      {
+        "detail": "Historical archived package row has print_out not equal to 1; migration will grandfather it.",
+        "kind": "historical_archived_unexported_row",
+        "package_id": "SDI-00005",
+        "print_out": "0",
+        "qr": "0000183875",
+        "rowid": 35,
+        "severity": "warning",
+        "table": "sdi_print_out_arch"
+      },
+      {
+        "detail": "Historical archived package row has print_out not equal to 1; migration will grandfather it.",
+        "kind": "historical_archived_unexported_row",
+        "package_id": "SDI-00005",
+        "print_out": "0",
+        "qr": "0000183865",
+        "rowid": 36,
+        "severity": "warning",
+        "table": "sdi_print_out_arch"
+      },
+      {
+        "detail": "Historical archived package row has print_out not equal to 1; migration will grandfather it.",
+        "kind": "historical_archived_unexported_row",
+        "package_id": "SDI-00005",
+        "print_out": "0",
+        "qr": "0000183867",
+        "rowid": 37,
+        "severity": "warning",
+        "table": "sdi_print_out_arch"
+      },
+      {
+        "detail": "Historical archived package row has print_out not equal to 1; migration will grandfather it.",
+        "kind": "historical_archived_unexported_row",
+        "package_id": "SDI-00005",
+        "print_out": "0",
+        "qr": "0000183868",
+        "rowid": 38,
+        "severity": "warning",
+        "table": "sdi_print_out_arch"
+      },
+      {
+        "detail": "Historical archived package row has print_out not equal to 1; migration will grandfather it.",
+        "kind": "historical_archived_unexported_row",
+        "package_id": "SDI-00005",
+        "print_out": "0",
+        "qr": "0000183869",
+        "rowid": 39,
+        "severity": "warning",
+        "table": "sdi_print_out_arch"
+      },
+      {
+        "detail": "Historical archived package row has print_out not equal to 1; migration will grandfather it.",
+        "kind": "historical_archived_unexported_row",
+        "package_id": "SDI-00005",
+        "print_out": "0",
+        "qr": "0000183870",
+        "rowid": 40,
+        "severity": "warning",
+        "table": "sdi_print_out_arch"
+      },
+      {
+        "detail": "Historical archived package row has print_out not equal to 1; migration will grandfather it.",
+        "kind": "historical_archived_unexported_row",
+        "package_id": "SDI-00005",
+        "print_out": "0",
+        "qr": "0000183871",
+        "rowid": 41,
+        "severity": "warning",
+        "table": "sdi_print_out_arch"
+      },
+      {
+        "detail": "Historical archived package row has print_out not equal to 1; migration will grandfather it.",
+        "kind": "historical_archived_unexported_row",
+        "package_id": "SDI-00005",
+        "print_out": "0",
+        "qr": "0000183872",
+        "rowid": 42,
+        "severity": "warning",
+        "table": "sdi_print_out_arch"
+      },
+      {
+        "detail": "Historical archived package row has print_out not equal to 1; migration will grandfather it.",
+        "kind": "historical_archived_unexported_row",
+        "package_id": "SDI-00005",
+        "print_out": "0",
+        "qr": "0000183873",
+        "rowid": 43,
+        "severity": "warning",
+        "table": "sdi_print_out_arch"
+      },
+      {
+        "detail": "Historical archived package row has print_out not equal to 1; migration will grandfather it.",
+        "kind": "historical_archived_unexported_row",
+        "package_id": "SDI-00005",
+        "print_out": "0",
+        "qr": "0000183721",
+        "rowid": 44,
+        "severity": "warning",
+        "table": "sdi_print_out_arch"
+      },
+      {
+        "detail": "Historical archived package row has print_out not equal to 1; migration will grandfather it.",
+        "kind": "historical_archived_unexported_row",
+        "package_id": "SDI-00005",
+        "print_out": "0",
+        "qr": "0000183722",
+        "rowid": 45,
+        "severity": "warning",
+        "table": "sdi_print_out_arch"
+      },
+      {
+        "detail": "Historical archived package row has print_out not equal to 1; migration will grandfather it.",
+        "kind": "historical_archived_unexported_row",
+        "package_id": "SDI-00005",
+        "print_out": "0",
+        "qr": "0000183723",
+        "rowid": 46,
+        "severity": "warning",
+        "table": "sdi_print_out_arch"
+      },
+      {
+        "detail": "Historical archived package row has print_out not equal to 1; migration will grandfather it.",
+        "kind": "historical_archived_unexported_row",
+        "package_id": "SDI-00005",
+        "print_out": "0",
+        "qr": "0000183725",
+        "rowid": 47,
+        "severity": "warning",
+        "table": "sdi_print_out_arch"
+      },
+      {
+        "detail": "Historical archived package row has print_out not equal to 1; migration will grandfather it.",
+        "kind": "historical_archived_unexported_row",
+        "package_id": "SDI-00005",
+        "print_out": "0",
+        "qr": "0000183727",
+        "rowid": 48,
+        "severity": "warning",
+        "table": "sdi_print_out_arch"
+      },
+      {
+        "detail": "Historical archived package row has print_out not equal to 1; migration will grandfather it.",
+        "kind": "historical_archived_unexported_row",
+        "package_id": "SDI-00005",
+        "print_out": "0",
+        "qr": "0000183728",
+        "rowid": 49,
+        "severity": "warning",
+        "table": "sdi_print_out_arch"
+      },
+      {
+        "detail": "Historical archived package row has print_out not equal to 1; migration will grandfather it.",
+        "kind": "historical_archived_unexported_row",
+        "package_id": "SDI-00005",
+        "print_out": "0",
+        "qr": "0000183729",
+        "rowid": 50,
+        "severity": "warning",
+        "table": "sdi_print_out_arch"
+      },
+      {
+        "detail": "Historical archived package row has print_out not equal to 1; migration will grandfather it.",
+        "kind": "historical_archived_unexported_row",
+        "package_id": "SDI-00005",
+        "print_out": "0",
+        "qr": "0000183730",
+        "rowid": 51,
+        "severity": "warning",
+        "table": "sdi_print_out_arch"
+      },
+      {
+        "detail": "Historical archived package row has print_out not equal to 1; migration will grandfather it.",
+        "kind": "historical_archived_unexported_row",
+        "package_id": "SDI-00005",
+        "print_out": "0",
+        "qr": "0000183731",
+        "rowid": 52,
+        "severity": "warning",
+        "table": "sdi_print_out_arch"
+      },
+      {
+        "detail": "Historical archived package row has print_out not equal to 1; migration will grandfather it.",
+        "kind": "historical_archived_unexported_row",
+        "package_id": "SDI-00005",
+        "print_out": "0",
+        "qr": "0000183733",
+        "rowid": 53,
+        "severity": "warning",
+        "table": "sdi_print_out_arch"
+      },
+      {
+        "detail": "Historical archived package row has print_out not equal to 1; migration will grandfather it.",
+        "kind": "historical_archived_unexported_row",
+        "package_id": "SDI-00005",
+        "print_out": "0",
+        "qr": "0000183734",
+        "rowid": 54,
+        "severity": "warning",
+        "table": "sdi_print_out_arch"
+      },
+      {
+        "detail": "Historical archived package row has print_out not equal to 1; migration will grandfather it.",
+        "kind": "historical_archived_unexported_row",
+        "package_id": "SDI-00005",
+        "print_out": "0",
+        "qr": "0000183735",
+        "rowid": 55,
+        "severity": "warning",
+        "table": "sdi_print_out_arch"
+      },
+      {
+        "detail": "Historical archived package row has print_out not equal to 1; migration will grandfather it.",
+        "kind": "historical_archived_unexported_row",
+        "package_id": "SDI-00005",
+        "print_out": "0",
+        "qr": "0000183736",
+        "rowid": 56,
+        "severity": "warning",
+        "table": "sdi_print_out_arch"
+      },
+      {
+        "detail": "Historical archived package row has print_out not equal to 1; migration will grandfather it.",
+        "kind": "historical_archived_unexported_row",
+        "package_id": "SDI-00005",
+        "print_out": "0",
+        "qr": "0000183737",
+        "rowid": 57,
+        "severity": "warning",
+        "table": "sdi_print_out_arch"
+      },
+      {
+        "detail": "Historical archived package row has print_out not equal to 1; migration will grandfather it.",
+        "kind": "historical_archived_unexported_row",
+        "package_id": "SDI-00005",
+        "print_out": "0",
+        "qr": "0000183738",
+        "rowid": 58,
+        "severity": "warning",
+        "table": "sdi_print_out_arch"
+      },
+      {
+        "detail": "Historical archived package row has print_out not equal to 1; migration will grandfather it.",
+        "kind": "historical_archived_unexported_row",
+        "package_id": "SDI-00005",
+        "print_out": "0",
+        "qr": "0000183739",
+        "rowid": 59,
+        "severity": "warning",
+        "table": "sdi_print_out_arch"
+      },
+      {
+        "detail": "Historical archived package row has print_out not equal to 1; migration will grandfather it.",
+        "kind": "historical_archived_unexported_row",
+        "package_id": "SDI-00005",
+        "print_out": "0",
+        "qr": "0000183740",
+        "rowid": 60,
+        "severity": "warning",
+        "table": "sdi_print_out_arch"
+      },
+      {
+        "detail": "Historical archived package row has print_out not equal to 1; migration will grandfather it.",
+        "kind": "historical_archived_unexported_row",
+        "package_id": "SDI-00005",
+        "print_out": "0",
+        "qr": "0000183741",
+        "rowid": 61,
+        "severity": "warning",
+        "table": "sdi_print_out_arch"
+      },
+      {
+        "detail": "Historical archived package row has print_out not equal to 1; migration will grandfather it.",
+        "kind": "historical_archived_unexported_row",
+        "package_id": "SDI-00005",
+        "print_out": "0",
+        "qr": "0000183742",
+        "rowid": 62,
+        "severity": "warning",
+        "table": "sdi_print_out_arch"
+      },
+      {
+        "detail": "Historical archived package row has print_out not equal to 1; migration will grandfather it.",
+        "kind": "historical_archived_unexported_row",
+        "package_id": "SDI-00005",
+        "print_out": "0",
+        "qr": "0000183743",
+        "rowid": 63,
+        "severity": "warning",
+        "table": "sdi_print_out_arch"
+      },
+      {
+        "detail": "Historical archived package row has print_out not equal to 1; migration will grandfather it.",
+        "kind": "historical_archived_unexported_row",
+        "package_id": "SDI-00005",
+        "print_out": "0",
+        "qr": "0000183744",
+        "rowid": 64,
+        "severity": "warning",
+        "table": "sdi_print_out_arch"
+      },
+      {
+        "detail": "Historical archived package row has print_out not equal to 1; migration will grandfather it.",
+        "kind": "historical_archived_unexported_row",
+        "package_id": "SDI-00005",
+        "print_out": "0",
+        "qr": "0000183745",
+        "rowid": 65,
+        "severity": "warning",
+        "table": "sdi_print_out_arch"
+      },
+      {
+        "detail": "Historical archived package row has print_out not equal to 1; migration will grandfather it.",
+        "kind": "historical_archived_unexported_row",
+        "package_id": "SDI-00005",
+        "print_out": "0",
+        "qr": "0000183746",
+        "rowid": 66,
+        "severity": "warning",
+        "table": "sdi_print_out_arch"
+      },
+      {
+        "detail": "Historical archived package row has print_out not equal to 1; migration will grandfather it.",
+        "kind": "historical_archived_unexported_row",
+        "package_id": "SDI-00005",
+        "print_out": "0",
+        "qr": "0000183747",
+        "rowid": 67,
+        "severity": "warning",
+        "table": "sdi_print_out_arch"
+      },
+      {
+        "detail": "Historical archived package row has print_out not equal to 1; migration will grandfather it.",
+        "kind": "historical_archived_unexported_row",
+        "package_id": "SDI-00005",
+        "print_out": "0",
+        "qr": "0000183748",
+        "rowid": 68,
+        "severity": "warning",
+        "table": "sdi_print_out_arch"
+      },
+      {
+        "detail": "Historical archived package row has print_out not equal to 1; migration will grandfather it.",
+        "kind": "historical_archived_unexported_row",
+        "package_id": "SDI-00005",
+        "print_out": "0",
+        "qr": "0000183749",
+        "rowid": 69,
+        "severity": "warning",
+        "table": "sdi_print_out_arch"
+      },
+      {
+        "detail": "Historical archived package row has print_out not equal to 1; migration will grandfather it.",
+        "kind": "historical_archived_unexported_row",
+        "package_id": "SDI-00005",
+        "print_out": "0",
+        "qr": "0000183750",
+        "rowid": 70,
+        "severity": "warning",
+        "table": "sdi_print_out_arch"
+      },
+      {
+        "detail": "Historical archived package row has print_out not equal to 1; migration will grandfather it.",
+        "kind": "historical_archived_unexported_row",
+        "package_id": "SDI-00005",
+        "print_out": "0",
+        "qr": "0000183751",
+        "rowid": 71,
+        "severity": "warning",
+        "table": "sdi_print_out_arch"
+      },
+      {
+        "detail": "Historical archived package row has print_out not equal to 1; migration will grandfather it.",
+        "kind": "historical_archived_unexported_row",
+        "package_id": "SDI-00005",
+        "print_out": "0",
+        "qr": "0000183752",
+        "rowid": 72,
+        "severity": "warning",
+        "table": "sdi_print_out_arch"
+      },
+      {
+        "detail": "Historical archived package row has print_out not equal to 1; migration will grandfather it.",
+        "kind": "historical_archived_unexported_row",
+        "package_id": "SDI-00005",
+        "print_out": "0",
+        "qr": "0000183753",
+        "rowid": 73,
+        "severity": "warning",
+        "table": "sdi_print_out_arch"
+      },
+      {
+        "detail": "Historical archived package row has print_out not equal to 1; migration will grandfather it.",
+        "kind": "historical_archived_unexported_row",
+        "package_id": "SDI-00005",
+        "print_out": "0",
+        "qr": "0000183754",
+        "rowid": 74,
+        "severity": "warning",
+        "table": "sdi_print_out_arch"
+      },
+      {
+        "detail": "Historical archived package row has print_out not equal to 1; migration will grandfather it.",
+        "kind": "historical_archived_unexported_row",
+        "package_id": "SDI-00005",
+        "print_out": "0",
+        "qr": "0000183755",
+        "rowid": 75,
+        "severity": "warning",
+        "table": "sdi_print_out_arch"
+      },
+      {
+        "detail": "Historical archived package row has print_out not equal to 1; migration will grandfather it.",
+        "kind": "historical_archived_unexported_row",
+        "package_id": "SDI-00005",
+        "print_out": "0",
+        "qr": "0000183756",
+        "rowid": 76,
+        "severity": "warning",
+        "table": "sdi_print_out_arch"
+      },
+      {
+        "detail": "Historical archived package row has print_out not equal to 1; migration will grandfather it.",
+        "kind": "historical_archived_unexported_row",
+        "package_id": "SDI-00005",
+        "print_out": "0",
+        "qr": "0000183757",
+        "rowid": 77,
+        "severity": "warning",
+        "table": "sdi_print_out_arch"
+      },
+      {
+        "detail": "Historical archived package row has print_out not equal to 1; migration will grandfather it.",
+        "kind": "historical_archived_unexported_row",
+        "package_id": "SDI-00005",
+        "print_out": "0",
+        "qr": "0000183758",
+        "rowid": 78,
+        "severity": "warning",
+        "table": "sdi_print_out_arch"
+      },
+      {
+        "detail": "Historical archived package row has print_out not equal to 1; migration will grandfather it.",
+        "kind": "historical_archived_unexported_row",
+        "package_id": "SDI-00005",
+        "print_out": "0",
+        "qr": "0000183759",
+        "rowid": 79,
+        "severity": "warning",
+        "table": "sdi_print_out_arch"
+      },
+      {
+        "detail": "Historical archived package row has print_out not equal to 1; migration will grandfather it.",
+        "kind": "historical_archived_unexported_row",
+        "package_id": "SDI-00005",
+        "print_out": "0",
+        "qr": "0000183760",
+        "rowid": 80,
+        "severity": "warning",
+        "table": "sdi_print_out_arch"
+      },
+      {
+        "detail": "Historical archived package row has print_out not equal to 1; migration will grandfather it.",
+        "kind": "historical_archived_unexported_row",
+        "package_id": "SDI-00005",
+        "print_out": "0",
+        "qr": "0000183763",
+        "rowid": 81,
+        "severity": "warning",
+        "table": "sdi_print_out_arch"
+      },
+      {
+        "detail": "Historical archived package row has print_out not equal to 1; migration will grandfather it.",
+        "kind": "historical_archived_unexported_row",
+        "package_id": "SDI-00005",
+        "print_out": "0",
+        "qr": "0000183764",
+        "rowid": 82,
+        "severity": "warning",
+        "table": "sdi_print_out_arch"
+      },
+      {
+        "detail": "Historical archived package row has print_out not equal to 1; migration will grandfather it.",
+        "kind": "historical_archived_unexported_row",
+        "package_id": "SDI-00005",
+        "print_out": "0",
+        "qr": "0000183765",
+        "rowid": 83,
+        "severity": "warning",
+        "table": "sdi_print_out_arch"
+      },
+      {
+        "detail": "Historical archived package row has print_out not equal to 1; migration will grandfather it.",
+        "kind": "historical_archived_unexported_row",
+        "package_id": "SDI-00005",
+        "print_out": "0",
+        "qr": "0000183766",
+        "rowid": 84,
+        "severity": "warning",
+        "table": "sdi_print_out_arch"
+      },
+      {
+        "detail": "Historical archived package row has print_out not equal to 1; migration will grandfather it.",
+        "kind": "historical_archived_unexported_row",
+        "package_id": "SDI-00005",
+        "print_out": "0",
+        "qr": "0000183767",
+        "rowid": 85,
+        "severity": "warning",
+        "table": "sdi_print_out_arch"
+      },
+      {
+        "detail": "Historical archived package row has print_out not equal to 1; migration will grandfather it.",
+        "kind": "historical_archived_unexported_row",
+        "package_id": "SDI-00005",
+        "print_out": "0",
+        "qr": "0000183768",
+        "rowid": 86,
+        "severity": "warning",
+        "table": "sdi_print_out_arch"
+      },
+      {
+        "detail": "Historical archived package row has print_out not equal to 1; migration will grandfather it.",
+        "kind": "historical_archived_unexported_row",
+        "package_id": "SDI-00005",
+        "print_out": "0",
+        "qr": "0000183769",
+        "rowid": 87,
+        "severity": "warning",
+        "table": "sdi_print_out_arch"
+      },
+      {
+        "detail": "Historical archived package row has print_out not equal to 1; migration will grandfather it.",
+        "kind": "historical_archived_unexported_row",
+        "package_id": "SDI-00005",
+        "print_out": "0",
+        "qr": "0000183770",
+        "rowid": 88,
+        "severity": "warning",
+        "table": "sdi_print_out_arch"
+      },
+      {
+        "detail": "Historical archived package row has print_out not equal to 1; migration will grandfather it.",
+        "kind": "historical_archived_unexported_row",
+        "package_id": "SDI-00005",
+        "print_out": "0",
+        "qr": "0000183771",
+        "rowid": 89,
+        "severity": "warning",
+        "table": "sdi_print_out_arch"
+      },
+      {
+        "detail": "Historical archived package row has print_out not equal to 1; migration will grandfather it.",
+        "kind": "historical_archived_unexported_row",
+        "package_id": "SDI-00005",
+        "print_out": "0",
+        "qr": "0000183772",
+        "rowid": 90,
+        "severity": "warning",
+        "table": "sdi_print_out_arch"
+      },
+      {
+        "detail": "Historical archived package row has print_out not equal to 1; migration will grandfather it.",
+        "kind": "historical_archived_unexported_row",
+        "package_id": "SDI-00005",
+        "print_out": "0",
+        "qr": "0000183773",
+        "rowid": 91,
+        "severity": "warning",
+        "table": "sdi_print_out_arch"
+      },
+      {
+        "detail": "Historical archived package row has print_out not equal to 1; migration will grandfather it.",
+        "kind": "historical_archived_unexported_row",
+        "package_id": "SDI-00005",
+        "print_out": "0",
+        "qr": "0000183774",
+        "rowid": 92,
+        "severity": "warning",
+        "table": "sdi_print_out_arch"
+      },
+      {
+        "detail": "Historical archived package row has print_out not equal to 1; migration will grandfather it.",
+        "kind": "historical_archived_unexported_row",
+        "package_id": "SDI-00005",
+        "print_out": "0",
+        "qr": "0000183783",
+        "rowid": 93,
+        "severity": "warning",
+        "table": "sdi_print_out_arch"
+      },
+      {
+        "detail": "Historical archived package row has print_out not equal to 1; migration will grandfather it.",
+        "kind": "historical_archived_unexported_row",
+        "package_id": "SDI-00005",
+        "print_out": "0",
+        "qr": "0000183784",
+        "rowid": 94,
+        "severity": "warning",
+        "table": "sdi_print_out_arch"
+      },
+      {
+        "detail": "Historical archived package row has print_out not equal to 1; migration will grandfather it.",
+        "kind": "historical_archived_unexported_row",
+        "package_id": "SDI-00005",
+        "print_out": "0",
+        "qr": "0000183785",
+        "rowid": 95,
+        "severity": "warning",
+        "table": "sdi_print_out_arch"
+      },
+      {
+        "detail": "Historical archived package row has print_out not equal to 1; migration will grandfather it.",
+        "kind": "historical_archived_unexported_row",
+        "package_id": "SDI-00005",
+        "print_out": "0",
+        "qr": "0000182465",
+        "rowid": 96,
+        "severity": "warning",
+        "table": "sdi_print_out_arch"
+      },
+      {
+        "detail": "Historical archived package row has print_out not equal to 1; migration will grandfather it.",
+        "kind": "historical_archived_unexported_row",
+        "package_id": "SDI-00005",
+        "print_out": "0",
+        "qr": "0000183775",
+        "rowid": 97,
+        "severity": "warning",
+        "table": "sdi_print_out_arch"
+      },
+      {
+        "detail": "Historical archived package row has print_out not equal to 1; migration will grandfather it.",
+        "kind": "historical_archived_unexported_row",
+        "package_id": "SDI-00005",
+        "print_out": "0",
+        "qr": "0000183778",
+        "rowid": 98,
+        "severity": "warning",
+        "table": "sdi_print_out_arch"
+      },
+      {
+        "detail": "Historical archived package row has print_out not equal to 1; migration will grandfather it.",
+        "kind": "historical_archived_unexported_row",
+        "package_id": "SDI-00005",
+        "print_out": "0",
+        "qr": "0000183779",
+        "rowid": 99,
+        "severity": "warning",
+        "table": "sdi_print_out_arch"
+      },
+      {
+        "detail": "Historical archived package row has print_out not equal to 1; migration will grandfather it.",
+        "kind": "historical_archived_unexported_row",
+        "package_id": "SDI-00005",
+        "print_out": "0",
+        "qr": "0000183780",
+        "rowid": 100,
+        "severity": "warning",
+        "table": "sdi_print_out_arch"
+      },
+      {
+        "detail": "Historical archived package row has print_out not equal to 1; migration will grandfather it.",
+        "kind": "historical_archived_unexported_row",
+        "package_id": "SDI-00005",
+        "print_out": "0",
+        "qr": "0000182466",
+        "rowid": 101,
+        "severity": "warning",
+        "table": "sdi_print_out_arch"
+      },
+      {
+        "detail": "Historical archived package row has print_out not equal to 1; migration will grandfather it.",
+        "kind": "historical_archived_unexported_row",
+        "package_id": "SDI-00005",
+        "print_out": "0",
+        "qr": "0000182467",
+        "rowid": 102,
+        "severity": "warning",
+        "table": "sdi_print_out_arch"
+      },
+      {
+        "detail": "Historical archived package row has print_out not equal to 1; migration will grandfather it.",
+        "kind": "historical_archived_unexported_row",
+        "package_id": "SDI-00005",
+        "print_out": "0",
+        "qr": "0000182468",
+        "rowid": 103,
+        "severity": "warning",
+        "table": "sdi_print_out_arch"
+      },
+      {
+        "detail": "Historical archived package row has print_out not equal to 1; migration will grandfather it.",
+        "kind": "historical_archived_unexported_row",
+        "package_id": "SDI-00005",
+        "print_out": "0",
+        "qr": "0000182469",
+        "rowid": 104,
+        "severity": "warning",
+        "table": "sdi_print_out_arch"
+      },
+      {
+        "detail": "Historical archived package row has print_out not equal to 1; migration will grandfather it.",
+        "kind": "historical_archived_unexported_row",
+        "package_id": "SDI-00005",
+        "print_out": "0",
+        "qr": "0000182470",
+        "rowid": 105,
+        "severity": "warning",
+        "table": "sdi_print_out_arch"
+      },
+      {
+        "detail": "Historical archived package row has print_out not equal to 1; migration will grandfather it.",
+        "kind": "historical_archived_unexported_row",
+        "package_id": "SDI-00005",
+        "print_out": "0",
+        "qr": "0000182471",
+        "rowid": 106,
+        "severity": "warning",
+        "table": "sdi_print_out_arch"
+      },
+      {
+        "detail": "Historical archived package row has print_out not equal to 1; migration will grandfather it.",
+        "kind": "historical_archived_unexported_row",
+        "package_id": "SDI-00005",
+        "print_out": "0",
+        "qr": "0000183801",
+        "rowid": 107,
+        "severity": "warning",
+        "table": "sdi_print_out_arch"
+      },
+      {
+        "detail": "Historical archived package row has print_out not equal to 1; migration will grandfather it.",
+        "kind": "historical_archived_unexported_row",
+        "package_id": "SDI-00005",
+        "print_out": "0",
+        "qr": "0000183802",
+        "rowid": 108,
+        "severity": "warning",
+        "table": "sdi_print_out_arch"
+      },
+      {
+        "detail": "Historical archived package row has print_out not equal to 1; migration will grandfather it.",
+        "kind": "historical_archived_unexported_row",
+        "package_id": "SDI-00005",
+        "print_out": "0",
+        "qr": "0000183803",
+        "rowid": 109,
+        "severity": "warning",
+        "table": "sdi_print_out_arch"
+      },
+      {
+        "detail": "Historical archived package row has print_out not equal to 1; migration will grandfather it.",
+        "kind": "historical_archived_unexported_row",
+        "package_id": "SDI-00005",
+        "print_out": "0",
+        "qr": "0000183804",
+        "rowid": 110,
+        "severity": "warning",
+        "table": "sdi_print_out_arch"
+      },
+      {
+        "detail": "Historical archived package row has print_out not equal to 1; migration will grandfather it.",
+        "kind": "historical_archived_unexported_row",
+        "package_id": "SDI-00005",
+        "print_out": "0",
+        "qr": "0000183805",
+        "rowid": 111,
+        "severity": "warning",
+        "table": "sdi_print_out_arch"
+      },
+      {
+        "detail": "Historical archived package row has print_out not equal to 1; migration will grandfather it.",
+        "kind": "historical_archived_unexported_row",
+        "package_id": "SDI-00005",
+        "print_out": "0",
+        "qr": "0000183806",
+        "rowid": 112,
+        "severity": "warning",
+        "table": "sdi_print_out_arch"
+      },
+      {
+        "detail": "Historical archived package row has print_out not equal to 1; migration will grandfather it.",
+        "kind": "historical_archived_unexported_row",
+        "package_id": "SDI-00005",
+        "print_out": "0",
+        "qr": "0000183807",
+        "rowid": 113,
+        "severity": "warning",
+        "table": "sdi_print_out_arch"
+      },
+      {
+        "detail": "Historical archived package row has print_out not equal to 1; migration will grandfather it.",
+        "kind": "historical_archived_unexported_row",
+        "package_id": "SDI-00005",
+        "print_out": "0",
+        "qr": "0000183808",
+        "rowid": 114,
+        "severity": "warning",
+        "table": "sdi_print_out_arch"
+      },
+      {
+        "detail": "Historical archived package row has print_out not equal to 1; migration will grandfather it.",
+        "kind": "historical_archived_unexported_row",
+        "package_id": "SDI-00005",
+        "print_out": "0",
+        "qr": "0000183810",
+        "rowid": 115,
+        "severity": "warning",
+        "table": "sdi_print_out_arch"
+      },
+      {
+        "detail": "Historical archived package row has print_out not equal to 1; migration will grandfather it.",
+        "kind": "historical_archived_unexported_row",
+        "package_id": "SDI-00005",
+        "print_out": "0",
+        "qr": "0000183811",
+        "rowid": 116,
+        "severity": "warning",
+        "table": "sdi_print_out_arch"
+      },
+      {
+        "detail": "Historical archived package row has print_out not equal to 1; migration will grandfather it.",
+        "kind": "historical_archived_unexported_row",
+        "package_id": "SDI-00005",
+        "print_out": "0",
+        "qr": "0000183812",
+        "rowid": 117,
+        "severity": "warning",
+        "table": "sdi_print_out_arch"
+      },
+      {
+        "detail": "Historical archived package row has print_out not equal to 1; migration will grandfather it.",
+        "kind": "historical_archived_unexported_row",
+        "package_id": "SDI-00005",
+        "print_out": "0",
+        "qr": "0000183813",
+        "rowid": 118,
+        "severity": "warning",
+        "table": "sdi_print_out_arch"
+      },
+      {
+        "detail": "Historical archived package row has print_out not equal to 1; migration will grandfather it.",
+        "kind": "historical_archived_unexported_row",
+        "package_id": "SDI-00005",
+        "print_out": "0",
+        "qr": "0000183814",
+        "rowid": 119,
+        "severity": "warning",
+        "table": "sdi_print_out_arch"
+      },
+      {
+        "detail": "Historical archived package row has print_out not equal to 1; migration will grandfather it.",
+        "kind": "historical_archived_unexported_row",
+        "package_id": "SDI-00005",
+        "print_out": "0",
+        "qr": "0000183815",
+        "rowid": 120,
+        "severity": "warning",
+        "table": "sdi_print_out_arch"
+      },
+      {
+        "detail": "Historical archived package row has print_out not equal to 1; migration will grandfather it.",
+        "kind": "historical_archived_unexported_row",
+        "package_id": "SDI-00005",
+        "print_out": "0",
+        "qr": "0000183816",
+        "rowid": 121,
+        "severity": "warning",
+        "table": "sdi_print_out_arch"
+      },
+      {
+        "detail": "Historical archived package row has print_out not equal to 1; migration will grandfather it.",
+        "kind": "historical_archived_unexported_row",
+        "package_id": "SDI-00005",
+        "print_out": "0",
+        "qr": "0000183817",
+        "rowid": 122,
+        "severity": "warning",
+        "table": "sdi_print_out_arch"
+      },
+      {
+        "detail": "Historical archived package row has print_out not equal to 1; migration will grandfather it.",
+        "kind": "historical_archived_unexported_row",
+        "package_id": "SDI-00005",
+        "print_out": "0",
+        "qr": "0000183818",
+        "rowid": 123,
+        "severity": "warning",
+        "table": "sdi_print_out_arch"
+      },
+      {
+        "detail": "Historical archived package row has print_out not equal to 1; migration will grandfather it.",
+        "kind": "historical_archived_unexported_row",
+        "package_id": "SDI-00005",
+        "print_out": "0",
+        "qr": "0000183819",
+        "rowid": 124,
+        "severity": "warning",
+        "table": "sdi_print_out_arch"
+      },
+      {
+        "detail": "Historical archived package row has print_out not equal to 1; migration will grandfather it.",
+        "kind": "historical_archived_unexported_row",
+        "package_id": "SDI-00005",
+        "print_out": "0",
+        "qr": "0000183820",
+        "rowid": 125,
+        "severity": "warning",
+        "table": "sdi_print_out_arch"
+      },
+      {
+        "detail": "Historical archived package row has print_out not equal to 1; migration will grandfather it.",
+        "kind": "historical_archived_unexported_row",
+        "package_id": "SDI-00005",
+        "print_out": "0",
+        "qr": "0000183821",
+        "rowid": 126,
+        "severity": "warning",
+        "table": "sdi_print_out_arch"
+      },
+      {
+        "detail": "Historical archived package row has print_out not equal to 1; migration will grandfather it.",
+        "kind": "historical_archived_unexported_row",
+        "package_id": "SDI-00005",
+        "print_out": "0",
+        "qr": "0000183822",
+        "rowid": 127,
+        "severity": "warning",
+        "table": "sdi_print_out_arch"
+      },
+      {
+        "detail": "Historical archived package row has print_out not equal to 1; migration will grandfather it.",
+        "kind": "historical_archived_unexported_row",
+        "package_id": "SDI-00005",
+        "print_out": "0",
+        "qr": "0000183823",
+        "rowid": 128,
+        "severity": "warning",
+        "table": "sdi_print_out_arch"
+      },
+      {
+        "detail": "Historical archived package row has print_out not equal to 1; migration will grandfather it.",
+        "kind": "historical_archived_unexported_row",
+        "package_id": "SDI-00005",
+        "print_out": "0",
+        "qr": "0000183824",
+        "rowid": 129,
+        "severity": "warning",
+        "table": "sdi_print_out_arch"
+      },
+      {
+        "detail": "Historical archived package row has print_out not equal to 1; migration will grandfather it.",
+        "kind": "historical_archived_unexported_row",
+        "package_id": "SDI-00005",
+        "print_out": "0",
+        "qr": "0000183825",
+        "rowid": 130,
+        "severity": "warning",
+        "table": "sdi_print_out_arch"
+      },
+      {
+        "detail": "Historical archived package row has print_out not equal to 1; migration will grandfather it.",
+        "kind": "historical_archived_unexported_row",
+        "package_id": "SDI-00005",
+        "print_out": "0",
+        "qr": "0000183826",
+        "rowid": 131,
+        "severity": "warning",
+        "table": "sdi_print_out_arch"
+      },
+      {
+        "detail": "Historical archived package row has print_out not equal to 1; migration will grandfather it.",
+        "kind": "historical_archived_unexported_row",
+        "package_id": "SDI-00005",
+        "print_out": "0",
+        "qr": "0000183827",
+        "rowid": 132,
+        "severity": "warning",
+        "table": "sdi_print_out_arch"
+      },
+      {
+        "detail": "Historical archived package row has print_out not equal to 1; migration will grandfather it.",
+        "kind": "historical_archived_unexported_row",
+        "package_id": "SDI-00005",
+        "print_out": "0",
+        "qr": "0000183828",
+        "rowid": 133,
+        "severity": "warning",
+        "table": "sdi_print_out_arch"
+      },
+      {
+        "detail": "Historical archived package row has print_out not equal to 1; migration will grandfather it.",
+        "kind": "historical_archived_unexported_row",
+        "package_id": "SDI-00005",
+        "print_out": "0",
+        "qr": "0000183829",
+        "rowid": 134,
+        "severity": "warning",
+        "table": "sdi_print_out_arch"
+      },
+      {
+        "detail": "Historical archived package row has print_out not equal to 1; migration will grandfather it.",
+        "kind": "historical_archived_unexported_row",
+        "package_id": "SDI-00005",
+        "print_out": "0",
+        "qr": "0000183830",
+        "rowid": 135,
+        "severity": "warning",
+        "table": "sdi_print_out_arch"
+      },
+      {
+        "detail": "Historical archived package row has print_out not equal to 1; migration will grandfather it.",
+        "kind": "historical_archived_unexported_row",
+        "package_id": "SDI-00005",
+        "print_out": "0",
+        "qr": "0000183831",
+        "rowid": 136,
+        "severity": "warning",
+        "table": "sdi_print_out_arch"
+      },
+      {
+        "detail": "Historical archived package row has print_out not equal to 1; migration will grandfather it.",
+        "kind": "historical_archived_unexported_row",
+        "package_id": "SDI-00022",
+        "print_out": "0",
+        "qr": "0000182479",
+        "rowid": 389,
+        "severity": "warning",
+        "table": "sdi_print_out_arch"
+      },
+      {
+        "detail": "Historical archived package row has print_out not equal to 1; migration will grandfather it.",
+        "kind": "historical_archived_unexported_row",
+        "package_id": "SDI-00022",
+        "print_out": "0",
+        "qr": "0000182480",
+        "rowid": 390,
+        "severity": "warning",
+        "table": "sdi_print_out_arch"
+      },
+      {
+        "detail": "Historical archived package row has print_out not equal to 1; migration will grandfather it.",
+        "kind": "historical_archived_unexported_row",
+        "package_id": "SDI-00022",
+        "print_out": "0",
+        "qr": "0000182481",
+        "rowid": 391,
+        "severity": "warning",
+        "table": "sdi_print_out_arch"
+      },
+      {
+        "detail": "Historical archived package row has print_out not equal to 1; migration will grandfather it.",
+        "kind": "historical_archived_unexported_row",
+        "package_id": "SDI-00022",
+        "print_out": "0",
+        "qr": "0000182482",
+        "rowid": 392,
+        "severity": "warning",
+        "table": "sdi_print_out_arch"
+      },
+      {
+        "detail": "Historical archived package row has print_out not equal to 1; migration will grandfather it.",
+        "kind": "historical_archived_unexported_row",
+        "package_id": "SDI-00022",
+        "print_out": "0",
+        "qr": "0000182483",
+        "rowid": 393,
+        "severity": "warning",
+        "table": "sdi_print_out_arch"
+      },
+      {
+        "detail": "Historical archived package row has print_out not equal to 1; migration will grandfather it.",
+        "kind": "historical_archived_unexported_row",
+        "package_id": "SDI-00022",
+        "print_out": "0",
+        "qr": "0000182484",
+        "rowid": 394,
+        "severity": "warning",
+        "table": "sdi_print_out_arch"
+      },
+      {
+        "detail": "Historical archived package row has print_out not equal to 1; migration will grandfather it.",
+        "kind": "historical_archived_unexported_row",
+        "package_id": "SDI-00022",
+        "print_out": "0",
+        "qr": "0000183793",
+        "rowid": 395,
+        "severity": "warning",
+        "table": "sdi_print_out_arch"
+      },
+      {
+        "detail": "Historical archived package row has print_out not equal to 1; migration will grandfather it.",
+        "kind": "historical_archived_unexported_row",
+        "package_id": "SDI-00022",
+        "print_out": "0",
+        "qr": "0000183794",
+        "rowid": 396,
+        "severity": "warning",
+        "table": "sdi_print_out_arch"
+      },
+      {
+        "detail": "Historical archived package row has print_out not equal to 1; migration will grandfather it.",
+        "kind": "historical_archived_unexported_row",
+        "package_id": "SDI-00022",
+        "print_out": "0",
+        "qr": "0000183795",
+        "rowid": 397,
+        "severity": "warning",
+        "table": "sdi_print_out_arch"
+      },
+      {
+        "detail": "Historical archived package row has print_out not equal to 1; migration will grandfather it.",
+        "kind": "historical_archived_unexported_row",
+        "package_id": "SDI-00022",
+        "print_out": "0",
+        "qr": "0000183796",
+        "rowid": 398,
+        "severity": "warning",
+        "table": "sdi_print_out_arch"
+      },
+      {
+        "detail": "Historical archived package row has print_out not equal to 1; migration will grandfather it.",
+        "kind": "historical_archived_unexported_row",
+        "package_id": "SDI-00022",
+        "print_out": "0",
+        "qr": "0000183797",
+        "rowid": 399,
+        "severity": "warning",
+        "table": "sdi_print_out_arch"
+      },
+      {
+        "detail": "Historical archived package row has print_out not equal to 1; migration will grandfather it.",
+        "kind": "historical_archived_unexported_row",
+        "package_id": "SDI-00022",
+        "print_out": "0",
+        "qr": "0000183841",
+        "rowid": 400,
+        "severity": "warning",
+        "table": "sdi_print_out_arch"
+      },
+      {
+        "detail": "Historical archived package row has print_out not equal to 1; migration will grandfather it.",
+        "kind": "historical_archived_unexported_row",
+        "package_id": "SDI-00022",
+        "print_out": "0",
+        "qr": "0000183847",
+        "rowid": 401,
+        "severity": "warning",
+        "table": "sdi_print_out_arch"
+      },
+      {
+        "detail": "Historical archived package row has print_out not equal to 1; migration will grandfather it.",
+        "kind": "historical_archived_unexported_row",
+        "package_id": "SDI-00022",
+        "print_out": "0",
+        "qr": "0000183848",
+        "rowid": 402,
+        "severity": "warning",
+        "table": "sdi_print_out_arch"
+      },
+      {
+        "detail": "Historical archived package row has print_out not equal to 1; migration will grandfather it.",
+        "kind": "historical_archived_unexported_row",
+        "package_id": "SDI-00022",
+        "print_out": "0",
+        "qr": "0000183849",
+        "rowid": 403,
+        "severity": "warning",
+        "table": "sdi_print_out_arch"
+      },
+      {
+        "detail": "Historical archived package row has print_out not equal to 1; migration will grandfather it.",
+        "kind": "historical_archived_unexported_row",
+        "package_id": "SDI-00022",
+        "print_out": "0",
+        "qr": "0000183850",
+        "rowid": 404,
+        "severity": "warning",
+        "table": "sdi_print_out_arch"
+      },
+      {
+        "detail": "Historical archived package row has print_out not equal to 1; migration will grandfather it.",
+        "kind": "historical_archived_unexported_row",
+        "package_id": "SDI-00022",
+        "print_out": "0",
+        "qr": "0000183851",
+        "rowid": 405,
+        "severity": "warning",
+        "table": "sdi_print_out_arch"
+      },
+      {
+        "detail": "Historical archived package row has print_out not equal to 1; migration will grandfather it.",
+        "kind": "historical_archived_unexported_row",
+        "package_id": "SDI-00022",
+        "print_out": "0",
+        "qr": "0000183852",
+        "rowid": 406,
+        "severity": "warning",
+        "table": "sdi_print_out_arch"
+      },
+      {
+        "detail": "Historical archived package row has print_out not equal to 1; migration will grandfather it.",
+        "kind": "historical_archived_unexported_row",
+        "package_id": "SDI-00022",
+        "print_out": "0",
+        "qr": "0000183853",
+        "rowid": 407,
+        "severity": "warning",
+        "table": "sdi_print_out_arch"
+      },
+      {
+        "detail": "Historical archived package row has print_out not equal to 1; migration will grandfather it.",
+        "kind": "historical_archived_unexported_row",
+        "package_id": "SDI-00022",
+        "print_out": "0",
+        "qr": "0000183854",
+        "rowid": 408,
+        "severity": "warning",
+        "table": "sdi_print_out_arch"
+      },
+      {
+        "detail": "Historical archived package row has print_out not equal to 1; migration will grandfather it.",
+        "kind": "historical_archived_unexported_row",
+        "package_id": "SDI-00022",
+        "print_out": "0",
+        "qr": "0000183855",
+        "rowid": 409,
+        "severity": "warning",
+        "table": "sdi_print_out_arch"
+      },
+      {
+        "detail": "Historical archived package row has print_out not equal to 1; migration will grandfather it.",
+        "kind": "historical_archived_unexported_row",
+        "package_id": "SDI-00022",
+        "print_out": "0",
+        "qr": "0000183856",
+        "rowid": 410,
+        "severity": "warning",
+        "table": "sdi_print_out_arch"
+      },
+      {
+        "detail": "Historical archived package row has print_out not equal to 1; migration will grandfather it.",
+        "kind": "historical_archived_unexported_row",
+        "package_id": "SDI-00022",
+        "print_out": "0",
+        "qr": "0000183857",
+        "rowid": 411,
+        "severity": "warning",
+        "table": "sdi_print_out_arch"
+      },
+      {
+        "detail": "Historical archived package row has print_out not equal to 1; migration will grandfather it.",
+        "kind": "historical_archived_unexported_row",
+        "package_id": "SDI-00022",
+        "print_out": "0",
+        "qr": "0000183858",
+        "rowid": 412,
+        "severity": "warning",
+        "table": "sdi_print_out_arch"
+      },
+      {
+        "detail": "Historical archived package row has print_out not equal to 1; migration will grandfather it.",
+        "kind": "historical_archived_unexported_row",
+        "package_id": "SDI-00022",
+        "print_out": "0",
+        "qr": "0000183860",
+        "rowid": 413,
+        "severity": "warning",
+        "table": "sdi_print_out_arch"
+      },
+      {
+        "detail": "Historical archived package row has print_out not equal to 1; migration will grandfather it.",
+        "kind": "historical_archived_unexported_row",
+        "package_id": "SDI-00022",
+        "print_out": "0",
+        "qr": "0000183786",
+        "rowid": 414,
+        "severity": "warning",
+        "table": "sdi_print_out_arch"
+      },
+      {
+        "detail": "Historical archived package row has print_out not equal to 1; migration will grandfather it.",
+        "kind": "historical_archived_unexported_row",
+        "package_id": "SDI-00022",
+        "print_out": "0",
+        "qr": "0000183787",
+        "rowid": 415,
+        "severity": "warning",
+        "table": "sdi_print_out_arch"
+      },
+      {
+        "detail": "Historical archived package row has print_out not equal to 1; migration will grandfather it.",
+        "kind": "historical_archived_unexported_row",
+        "package_id": "SDI-00022",
+        "print_out": "0",
+        "qr": "0000183788",
+        "rowid": 416,
+        "severity": "warning",
+        "table": "sdi_print_out_arch"
+      },
+      {
+        "detail": "Historical archived package row has print_out not equal to 1; migration will grandfather it.",
+        "kind": "historical_archived_unexported_row",
+        "package_id": "SDI-00022",
+        "print_out": "0",
+        "qr": "0000183789",
+        "rowid": 417,
+        "severity": "warning",
+        "table": "sdi_print_out_arch"
+      },
+      {
+        "detail": "Historical archived package row has print_out not equal to 1; migration will grandfather it.",
+        "kind": "historical_archived_unexported_row",
+        "package_id": "SDI-00022",
+        "print_out": "0",
+        "qr": "0000183790",
+        "rowid": 418,
+        "severity": "warning",
+        "table": "sdi_print_out_arch"
+      },
+      {
+        "detail": "Historical archived package row has print_out not equal to 1; migration will grandfather it.",
+        "kind": "historical_archived_unexported_row",
+        "package_id": "SDI-00022",
+        "print_out": "0",
+        "qr": "0000183791",
+        "rowid": 419,
+        "severity": "warning",
+        "table": "sdi_print_out_arch"
+      },
+      {
+        "detail": "Historical archived package row has print_out not equal to 1; migration will grandfather it.",
+        "kind": "historical_archived_unexported_row",
+        "package_id": "SDI-00022",
+        "print_out": "0",
+        "qr": "0000183792",
+        "rowid": 420,
+        "severity": "warning",
+        "table": "sdi_print_out_arch"
+      },
+      {
+        "detail": "Historical archived package row has print_out not equal to 1; migration will grandfather it.",
+        "kind": "historical_archived_unexported_row",
+        "package_id": "SDI-00022",
+        "print_out": "0",
+        "qr": "0000184406",
+        "rowid": 421,
+        "severity": "warning",
+        "table": "sdi_print_out_arch"
+      },
+      {
+        "detail": "Historical archived package row has print_out not equal to 1; migration will grandfather it.",
+        "kind": "historical_archived_unexported_row",
+        "package_id": "SDI-00022",
+        "print_out": "0",
+        "qr": "0000184407",
+        "rowid": 422,
+        "severity": "warning",
+        "table": "sdi_print_out_arch"
+      },
+      {
+        "detail": "Historical archived package row has print_out not equal to 1; migration will grandfather it.",
+        "kind": "historical_archived_unexported_row",
+        "package_id": "SDI-00022",
+        "print_out": "0",
+        "qr": "0000184408",
+        "rowid": 423,
+        "severity": "warning",
+        "table": "sdi_print_out_arch"
+      },
+      {
+        "detail": "Historical archived package row has print_out not equal to 1; migration will grandfather it.",
+        "kind": "historical_archived_unexported_row",
+        "package_id": "SDI-00022",
+        "print_out": "0",
+        "qr": "0000184409",
+        "rowid": 424,
+        "severity": "warning",
+        "table": "sdi_print_out_arch"
+      },
+      {
+        "detail": "Historical archived package row has print_out not equal to 1; migration will grandfather it.",
+        "kind": "historical_archived_unexported_row",
+        "package_id": "SDI-00022",
+        "print_out": "0",
+        "qr": "0000184410",
+        "rowid": 425,
+        "severity": "warning",
+        "table": "sdi_print_out_arch"
+      },
+      {
+        "detail": "Historical archived package row has print_out not equal to 1; migration will grandfather it.",
+        "kind": "historical_archived_unexported_row",
+        "package_id": "SDI-00022",
+        "print_out": "0",
+        "qr": "0000184411",
+        "rowid": 426,
+        "severity": "warning",
+        "table": "sdi_print_out_arch"
+      },
+      {
+        "detail": "Historical archived package row has print_out not equal to 1; migration will grandfather it.",
+        "kind": "historical_archived_unexported_row",
+        "package_id": "SDI-00022",
+        "print_out": "0",
+        "qr": "0000184412",
+        "rowid": 427,
+        "severity": "warning",
+        "table": "sdi_print_out_arch"
+      },
+      {
+        "detail": "Historical archived package row has print_out not equal to 1; migration will grandfather it.",
+        "kind": "historical_archived_unexported_row",
+        "package_id": "SDI-00022",
+        "print_out": "0",
+        "qr": "0000184413",
+        "rowid": 428,
+        "severity": "warning",
+        "table": "sdi_print_out_arch"
+      },
+      {
+        "detail": "Historical archived package row has print_out not equal to 1; migration will grandfather it.",
+        "kind": "historical_archived_unexported_row",
+        "package_id": "SDI-00022",
+        "print_out": "0",
+        "qr": "0000184414",
+        "rowid": 429,
+        "severity": "warning",
+        "table": "sdi_print_out_arch"
+      },
+      {
+        "detail": "Historical archived package row has print_out not equal to 1; migration will grandfather it.",
+        "kind": "historical_archived_unexported_row",
+        "package_id": "SDI-00022",
+        "print_out": "0",
+        "qr": "0000184415",
+        "rowid": 430,
+        "severity": "warning",
+        "table": "sdi_print_out_arch"
+      },
+      {
+        "detail": "Historical archived package row has print_out not equal to 1; migration will grandfather it.",
+        "kind": "historical_archived_unexported_row",
+        "package_id": "SDI-00022",
+        "print_out": "0",
+        "qr": "0000184416",
+        "rowid": 431,
+        "severity": "warning",
+        "table": "sdi_print_out_arch"
+      },
+      {
+        "detail": "Historical archived package row has print_out not equal to 1; migration will grandfather it.",
+        "kind": "historical_archived_unexported_row",
+        "package_id": "SDI-00022",
+        "print_out": "0",
+        "qr": "0000184417",
+        "rowid": 432,
+        "severity": "warning",
+        "table": "sdi_print_out_arch"
+      },
+      {
+        "detail": "Historical archived package row has print_out not equal to 1; migration will grandfather it.",
+        "kind": "historical_archived_unexported_row",
+        "package_id": "SDI-00022",
+        "print_out": "0",
+        "qr": "0000184418",
+        "rowid": 433,
+        "severity": "warning",
+        "table": "sdi_print_out_arch"
+      },
+      {
+        "detail": "Historical archived package row has print_out not equal to 1; migration will grandfather it.",
+        "kind": "historical_archived_unexported_row",
+        "package_id": "SDI-00022",
+        "print_out": "0",
+        "qr": "0000184419",
+        "rowid": 434,
+        "severity": "warning",
+        "table": "sdi_print_out_arch"
+      },
+      {
+        "detail": "Historical archived package row has print_out not equal to 1; migration will grandfather it.",
+        "kind": "historical_archived_unexported_row",
+        "package_id": "SDI-00022",
+        "print_out": "0",
+        "qr": "0000184420",
+        "rowid": 435,
+        "severity": "warning",
+        "table": "sdi_print_out_arch"
+      },
+      {
+        "detail": "Historical archived package row has print_out not equal to 1; migration will grandfather it.",
+        "kind": "historical_archived_unexported_row",
+        "package_id": "SDI-00022",
+        "print_out": "0",
+        "qr": "0000184421",
+        "rowid": 436,
+        "severity": "warning",
+        "table": "sdi_print_out_arch"
+      },
+      {
+        "detail": "Historical archived package row has print_out not equal to 1; migration will grandfather it.",
+        "kind": "historical_archived_unexported_row",
+        "package_id": "SDI-00022",
+        "print_out": "0",
+        "qr": "0000184422",
+        "rowid": 437,
+        "severity": "warning",
+        "table": "sdi_print_out_arch"
+      },
+      {
+        "detail": "Historical archived package row has print_out not equal to 1; migration will grandfather it.",
+        "kind": "historical_archived_unexported_row",
+        "package_id": "SDI-00022",
+        "print_out": "0",
+        "qr": "0000184423",
+        "rowid": 438,
+        "severity": "warning",
+        "table": "sdi_print_out_arch"
+      },
+      {
+        "detail": "Historical archived package row has print_out not equal to 1; migration will grandfather it.",
+        "kind": "historical_archived_unexported_row",
+        "package_id": "SDI-00022",
+        "print_out": "0",
+        "qr": "0000184424",
+        "rowid": 439,
+        "severity": "warning",
+        "table": "sdi_print_out_arch"
+      },
+      {
+        "detail": "Historical archived package row has print_out not equal to 1; migration will grandfather it.",
+        "kind": "historical_archived_unexported_row",
+        "package_id": "SDI-00022",
+        "print_out": "0",
+        "qr": "0000184425",
+        "rowid": 440,
+        "severity": "warning",
+        "table": "sdi_print_out_arch"
+      },
+      {
+        "detail": "Historical archived package row has print_out not equal to 1; migration will grandfather it.",
+        "kind": "historical_archived_unexported_row",
+        "package_id": "SDI-00022",
+        "print_out": "0",
+        "qr": "0000184426",
+        "rowid": 441,
+        "severity": "warning",
+        "table": "sdi_print_out_arch"
+      },
+      {
+        "detail": "Historical archived package row has print_out not equal to 1; migration will grandfather it.",
+        "kind": "historical_archived_unexported_row",
+        "package_id": "SDI-00022",
+        "print_out": "0",
+        "qr": "0000184427",
+        "rowid": 442,
+        "severity": "warning",
+        "table": "sdi_print_out_arch"
+      },
+      {
+        "detail": "Historical archived package row has print_out not equal to 1; migration will grandfather it.",
+        "kind": "historical_archived_unexported_row",
+        "package_id": "SDI-00022",
+        "print_out": "0",
+        "qr": "0000184428",
+        "rowid": 443,
+        "severity": "warning",
+        "table": "sdi_print_out_arch"
+      },
+      {
+        "detail": "Historical archived package row has print_out not equal to 1; migration will grandfather it.",
+        "kind": "historical_archived_unexported_row",
+        "package_id": "SDI-00022",
+        "print_out": "0",
+        "qr": "0000184429",
+        "rowid": 444,
+        "severity": "warning",
+        "table": "sdi_print_out_arch"
+      },
+      {
+        "detail": "Historical archived package row has print_out not equal to 1; migration will grandfather it.",
+        "kind": "historical_archived_unexported_row",
+        "package_id": "SDI-00022",
+        "print_out": "0",
+        "qr": "0000184430",
+        "rowid": 445,
+        "severity": "warning",
+        "table": "sdi_print_out_arch"
+      },
+      {
+        "detail": "Historical archived package row has print_out not equal to 1; migration will grandfather it.",
+        "kind": "historical_archived_unexported_row",
+        "package_id": "SDI-00022",
+        "print_out": "0",
+        "qr": "0000184431",
+        "rowid": 446,
+        "severity": "warning",
+        "table": "sdi_print_out_arch"
+      },
+      {
+        "detail": "Historical archived package row has print_out not equal to 1; migration will grandfather it.",
+        "kind": "historical_archived_unexported_row",
+        "package_id": "SDI-00022",
+        "print_out": "0",
+        "qr": "0000184432",
+        "rowid": 447,
+        "severity": "warning",
+        "table": "sdi_print_out_arch"
+      },
+      {
+        "detail": "Historical archived package row has print_out not equal to 1; migration will grandfather it.",
+        "kind": "historical_archived_unexported_row",
+        "package_id": "SDI-00022",
+        "print_out": "0",
+        "qr": "0000184433",
+        "rowid": 448,
+        "severity": "warning",
+        "table": "sdi_print_out_arch"
+      },
+      {
+        "detail": "Historical archived package row has print_out not equal to 1; migration will grandfather it.",
+        "kind": "historical_archived_unexported_row",
+        "package_id": "SDI-00022",
+        "print_out": "0",
+        "qr": "0000184434",
+        "rowid": 449,
+        "severity": "warning",
+        "table": "sdi_print_out_arch"
+      },
+      {
+        "detail": "Historical archived package row has print_out not equal to 1; migration will grandfather it.",
+        "kind": "historical_archived_unexported_row",
+        "package_id": "SDI-00022",
+        "print_out": "0",
+        "qr": "0000184435",
+        "rowid": 450,
+        "severity": "warning",
+        "table": "sdi_print_out_arch"
+      },
+      {
+        "detail": "Historical archived package row has print_out not equal to 1; migration will grandfather it.",
+        "kind": "historical_archived_unexported_row",
+        "package_id": "SDI-00022",
+        "print_out": "0",
+        "qr": "0000184436",
+        "rowid": 451,
+        "severity": "warning",
+        "table": "sdi_print_out_arch"
+      },
+      {
+        "detail": "Historical archived package row has print_out not equal to 1; migration will grandfather it.",
+        "kind": "historical_archived_unexported_row",
+        "package_id": "SDI-00022",
+        "print_out": "0",
+        "qr": "0000184437",
+        "rowid": 452,
+        "severity": "warning",
+        "table": "sdi_print_out_arch"
+      },
+      {
+        "detail": "Historical archived package row has print_out not equal to 1; migration will grandfather it.",
+        "kind": "historical_archived_unexported_row",
+        "package_id": "SDI-00022",
+        "print_out": "0",
+        "qr": "0000184438",
+        "rowid": 453,
+        "severity": "warning",
+        "table": "sdi_print_out_arch"
+      },
+      {
+        "detail": "Historical archived package row has print_out not equal to 1; migration will grandfather it.",
+        "kind": "historical_archived_unexported_row",
+        "package_id": "SDI-00022",
+        "print_out": "0",
+        "qr": "0000184459",
+        "rowid": 454,
+        "severity": "warning",
+        "table": "sdi_print_out_arch"
+      },
+      {
+        "detail": "Historical archived package row has print_out not equal to 1; migration will grandfather it.",
+        "kind": "historical_archived_unexported_row",
+        "package_id": "SDI-00022",
+        "print_out": "0",
+        "qr": "0000184460",
+        "rowid": 455,
+        "severity": "warning",
+        "table": "sdi_print_out_arch"
+      },
+      {
+        "detail": "Historical archived package row has print_out not equal to 1; migration will grandfather it.",
+        "kind": "historical_archived_unexported_row",
+        "package_id": "SDI-00022",
+        "print_out": "0",
+        "qr": "0000184461",
+        "rowid": 456,
+        "severity": "warning",
+        "table": "sdi_print_out_arch"
+      },
+      {
+        "detail": "Historical archived package row has print_out not equal to 1; migration will grandfather it.",
+        "kind": "historical_archived_unexported_row",
+        "package_id": "SDI-00022",
+        "print_out": "0",
+        "qr": "0000184462",
+        "rowid": 457,
+        "severity": "warning",
+        "table": "sdi_print_out_arch"
+      },
+      {
+        "detail": "Historical archived package row has print_out not equal to 1; migration will grandfather it.",
+        "kind": "historical_archived_unexported_row",
+        "package_id": "SDI-00022",
+        "print_out": "0",
+        "qr": "0000184463",
+        "rowid": 458,
+        "severity": "warning",
+        "table": "sdi_print_out_arch"
+      },
+      {
+        "detail": "Historical archived package row has print_out not equal to 1; migration will grandfather it.",
+        "kind": "historical_archived_unexported_row",
+        "package_id": "SDI-00022",
+        "print_out": "0",
+        "qr": "0000184464",
+        "rowid": 459,
+        "severity": "warning",
+        "table": "sdi_print_out_arch"
+      },
+      {
+        "detail": "Historical archived package row has print_out not equal to 1; migration will grandfather it.",
+        "kind": "historical_archived_unexported_row",
+        "package_id": "SDI-00022",
+        "print_out": "0",
+        "qr": "0000184465",
+        "rowid": 460,
+        "severity": "warning",
+        "table": "sdi_print_out_arch"
+      },
+      {
+        "detail": "Historical archived package row has print_out not equal to 1; migration will grandfather it.",
+        "kind": "historical_archived_unexported_row",
+        "package_id": "SDI-00022",
+        "print_out": "0",
+        "qr": "0000184466",
+        "rowid": 461,
+        "severity": "warning",
+        "table": "sdi_print_out_arch"
+      },
+      {
+        "detail": "Historical archived package row has print_out not equal to 1; migration will grandfather it.",
+        "kind": "historical_archived_unexported_row",
+        "package_id": "SDI-00022",
+        "print_out": "0",
+        "qr": "0000184467",
+        "rowid": 462,
+        "severity": "warning",
+        "table": "sdi_print_out_arch"
+      },
+      {
+        "detail": "Historical archived package row has print_out not equal to 1; migration will grandfather it.",
+        "kind": "historical_archived_unexported_row",
+        "package_id": "SDI-00022",
+        "print_out": "0",
+        "qr": "0000184468",
+        "rowid": 463,
+        "severity": "warning",
+        "table": "sdi_print_out_arch"
+      },
+      {
+        "detail": "Historical archived package row has print_out not equal to 1; migration will grandfather it.",
+        "kind": "historical_archived_unexported_row",
+        "package_id": "SDI-00022",
+        "print_out": "0",
+        "qr": "0000184469",
+        "rowid": 464,
+        "severity": "warning",
+        "table": "sdi_print_out_arch"
+      },
+      {
+        "detail": "Historical archived package row has print_out not equal to 1; migration will grandfather it.",
+        "kind": "historical_archived_unexported_row",
+        "package_id": "SDI-00022",
+        "print_out": "0",
+        "qr": "0000184470",
+        "rowid": 465,
+        "severity": "warning",
+        "table": "sdi_print_out_arch"
+      },
+      {
+        "detail": "Historical archived package row has print_out not equal to 1; migration will grandfather it.",
+        "kind": "historical_archived_unexported_row",
+        "package_id": "SDI-00022",
+        "print_out": "0",
+        "qr": "0000184471",
+        "rowid": 466,
+        "severity": "warning",
+        "table": "sdi_print_out_arch"
+      },
+      {
+        "detail": "Historical archived package row has print_out not equal to 1; migration will grandfather it.",
+        "kind": "historical_archived_unexported_row",
+        "package_id": "SDI-00022",
+        "print_out": "0",
+        "qr": "0000184472",
+        "rowid": 467,
+        "severity": "warning",
+        "table": "sdi_print_out_arch"
+      },
+      {
+        "detail": "Historical archived package row has print_out not equal to 1; migration will grandfather it.",
+        "kind": "historical_archived_unexported_row",
+        "package_id": "SDI-00022",
+        "print_out": "0",
+        "qr": "0000184473",
+        "rowid": 468,
+        "severity": "warning",
+        "table": "sdi_print_out_arch"
+      },
+      {
+        "detail": "Historical archived package row has print_out not equal to 1; migration will grandfather it.",
+        "kind": "historical_archived_unexported_row",
+        "package_id": "SDI-00022",
+        "print_out": "0",
+        "qr": "0000184474",
+        "rowid": 469,
+        "severity": "warning",
+        "table": "sdi_print_out_arch"
+      },
+      {
+        "detail": "Historical archived package row has print_out not equal to 1; migration will grandfather it.",
+        "kind": "historical_archived_unexported_row",
+        "package_id": "SDI-00022",
+        "print_out": "0",
+        "qr": "0000184475",
+        "rowid": 470,
+        "severity": "warning",
+        "table": "sdi_print_out_arch"
+      },
+      {
+        "detail": "Historical archived package row has print_out not equal to 1; migration will grandfather it.",
+        "kind": "historical_archived_unexported_row",
+        "package_id": "SDI-00022",
+        "print_out": "0",
+        "qr": "0000184476",
+        "rowid": 471,
+        "severity": "warning",
+        "table": "sdi_print_out_arch"
+      },
+      {
+        "detail": "Historical archived package row has print_out not equal to 1; migration will grandfather it.",
+        "kind": "historical_archived_unexported_row",
+        "package_id": "SDI-00022",
+        "print_out": "0",
+        "qr": "0000184477",
+        "rowid": 472,
+        "severity": "warning",
+        "table": "sdi_print_out_arch"
+      },
+      {
+        "detail": "Historical archived package row has print_out not equal to 1; migration will grandfather it.",
+        "kind": "historical_archived_unexported_row",
+        "package_id": "SDI-00022",
+        "print_out": "0",
+        "qr": "0000184498",
+        "rowid": 473,
+        "severity": "warning",
+        "table": "sdi_print_out_arch"
+      },
+      {
+        "detail": "Historical archived package row has print_out not equal to 1; migration will grandfather it.",
+        "kind": "historical_archived_unexported_row",
+        "package_id": "SDI-00022",
+        "print_out": "0",
+        "qr": "0000184547",
+        "rowid": 474,
+        "severity": "warning",
+        "table": "sdi_print_out_arch"
+      },
+      {
+        "detail": "Historical archived package row has print_out not equal to 1; migration will grandfather it.",
+        "kind": "historical_archived_unexported_row",
+        "package_id": "SDI-00022",
+        "print_out": "0",
+        "qr": "0000184548",
+        "rowid": 475,
+        "severity": "warning",
+        "table": "sdi_print_out_arch"
+      },
+      {
+        "detail": "Historical archived package row has print_out not equal to 1; migration will grandfather it.",
+        "kind": "historical_archived_unexported_row",
+        "package_id": "SDI-00022",
+        "print_out": "0",
+        "qr": "0000184549",
+        "rowid": 476,
+        "severity": "warning",
+        "table": "sdi_print_out_arch"
+      },
+      {
+        "detail": "Historical archived package row has print_out not equal to 1; migration will grandfather it.",
+        "kind": "historical_archived_unexported_row",
+        "package_id": "SDI-00022",
+        "print_out": "0",
+        "qr": "0000184551",
+        "rowid": 477,
+        "severity": "warning",
+        "table": "sdi_print_out_arch"
+      },
+      {
+        "detail": "Historical archived package row has print_out not equal to 1; migration will grandfather it.",
+        "kind": "historical_archived_unexported_row",
+        "package_id": "SDI-00022",
+        "print_out": "0",
+        "qr": "0000184552",
+        "rowid": 478,
+        "severity": "warning",
+        "table": "sdi_print_out_arch"
+      },
+      {
+        "detail": "Historical archived package row has print_out not equal to 1; migration will grandfather it.",
+        "kind": "historical_archived_unexported_row",
+        "package_id": "SDI-00022",
+        "print_out": "0",
+        "qr": "0000184553",
+        "rowid": 479,
+        "severity": "warning",
+        "table": "sdi_print_out_arch"
+      },
+      {
+        "detail": "Historical archived package row has print_out not equal to 1; migration will grandfather it.",
+        "kind": "historical_archived_unexported_row",
+        "package_id": "SDI-00022",
+        "print_out": "0",
+        "qr": "0000184554",
+        "rowid": 480,
+        "severity": "warning",
+        "table": "sdi_print_out_arch"
+      },
+      {
+        "detail": "Historical archived package row has print_out not equal to 1; migration will grandfather it.",
+        "kind": "historical_archived_unexported_row",
+        "package_id": "SDI-00022",
+        "print_out": "0",
+        "qr": "0000184555",
+        "rowid": 481,
+        "severity": "warning",
+        "table": "sdi_print_out_arch"
+      },
+      {
+        "detail": "Historical archived package row has print_out not equal to 1; migration will grandfather it.",
+        "kind": "historical_archived_unexported_row",
+        "package_id": "SDI-00022",
+        "print_out": "0",
+        "qr": "0000184556",
+        "rowid": 482,
+        "severity": "warning",
+        "table": "sdi_print_out_arch"
+      },
+      {
+        "detail": "Historical archived package row has print_out not equal to 1; migration will grandfather it.",
+        "kind": "historical_archived_unexported_row",
+        "package_id": "SDI-00022",
+        "print_out": "0",
+        "qr": "0000184848",
+        "rowid": 483,
+        "severity": "warning",
+        "table": "sdi_print_out_arch"
+      },
+      {
+        "detail": "Historical archived package row has print_out not equal to 1; migration will grandfather it.",
+        "kind": "historical_archived_unexported_row",
+        "package_id": "SDI-00022",
+        "print_out": "0",
+        "qr": "0000184849",
+        "rowid": 484,
+        "severity": "warning",
+        "table": "sdi_print_out_arch"
+      },
+      {
+        "detail": "Historical archived package row has print_out not equal to 1; migration will grandfather it.",
+        "kind": "historical_archived_unexported_row",
+        "package_id": "SDI-00022",
+        "print_out": "0",
+        "qr": "0000184852",
+        "rowid": 485,
+        "severity": "warning",
+        "table": "sdi_print_out_arch"
+      },
+      {
+        "detail": "Historical archived package row has print_out not equal to 1; migration will grandfather it.",
+        "kind": "historical_archived_unexported_row",
+        "package_id": "SDI-00022",
+        "print_out": "0",
+        "qr": "0000184853",
+        "rowid": 486,
+        "severity": "warning",
+        "table": "sdi_print_out_arch"
+      },
+      {
+        "detail": "Historical archived package row has print_out not equal to 1; migration will grandfather it.",
+        "kind": "historical_archived_unexported_row",
+        "package_id": "SDI-00022",
+        "print_out": "0",
+        "qr": "0000184856",
+        "rowid": 487,
+        "severity": "warning",
+        "table": "sdi_print_out_arch"
+      },
+      {
+        "detail": "Historical archived package row has print_out not equal to 1; migration will grandfather it.",
+        "kind": "historical_archived_unexported_row",
+        "package_id": "SDI-00022",
+        "print_out": "0",
+        "qr": "0000184857",
+        "rowid": 488,
+        "severity": "warning",
+        "table": "sdi_print_out_arch"
+      },
+      {
+        "detail": "Historical archived package row has print_out not equal to 1; migration will grandfather it.",
+        "kind": "historical_archived_unexported_row",
+        "package_id": "SDI-00022",
+        "print_out": "0",
+        "qr": "0000184858",
+        "rowid": 489,
+        "severity": "warning",
+        "table": "sdi_print_out_arch"
+      },
+      {
+        "detail": "Historical archived package row has print_out not equal to 1; migration will grandfather it.",
+        "kind": "historical_archived_unexported_row",
+        "package_id": "SDI-00022",
+        "print_out": "0",
+        "qr": "0000184859",
+        "rowid": 490,
+        "severity": "warning",
+        "table": "sdi_print_out_arch"
+      },
+      {
+        "detail": "Historical archived package row has print_out not equal to 1; migration will grandfather it.",
+        "kind": "historical_archived_unexported_row",
+        "package_id": "SDI-00022",
+        "print_out": "0",
+        "qr": "0000184860",
+        "rowid": 491,
+        "severity": "warning",
+        "table": "sdi_print_out_arch"
+      },
+      {
+        "detail": "Historical archived package row has print_out not equal to 1; migration will grandfather it.",
+        "kind": "historical_archived_unexported_row",
+        "package_id": "SDI-00022",
+        "print_out": "0",
+        "qr": "0000184862",
+        "rowid": 492,
+        "severity": "warning",
+        "table": "sdi_print_out_arch"
+      },
+      {
+        "detail": "Historical archived package row has print_out not equal to 1; migration will grandfather it.",
+        "kind": "historical_archived_unexported_row",
+        "package_id": "SDI-00022",
+        "print_out": "0",
+        "qr": "0000184863",
+        "rowid": 493,
+        "severity": "warning",
+        "table": "sdi_print_out_arch"
+      },
+      {
+        "detail": "Historical archived package row has print_out not equal to 1; migration will grandfather it.",
+        "kind": "historical_archived_unexported_row",
+        "package_id": "SDI-00022",
+        "print_out": "0",
+        "qr": "0000184886",
+        "rowid": 494,
+        "severity": "warning",
+        "table": "sdi_print_out_arch"
+      },
+      {
+        "detail": "Historical archived package row has print_out not equal to 1; migration will grandfather it.",
+        "kind": "historical_archived_unexported_row",
+        "package_id": "SDI-00022",
+        "print_out": "0",
+        "qr": "0000184887",
+        "rowid": 495,
+        "severity": "warning",
+        "table": "sdi_print_out_arch"
+      },
+      {
+        "detail": "Historical archived package row has print_out not equal to 1; migration will grandfather it.",
+        "kind": "historical_archived_unexported_row",
+        "package_id": "SDI-00022",
+        "print_out": "0",
+        "qr": "0000184888",
+        "rowid": 496,
+        "severity": "warning",
+        "table": "sdi_print_out_arch"
+      },
+      {
+        "detail": "Historical archived package row has print_out not equal to 1; migration will grandfather it.",
+        "kind": "historical_archived_unexported_row",
+        "package_id": "SDI-00022",
+        "print_out": "0",
+        "qr": "0000184889",
+        "rowid": 497,
+        "severity": "warning",
+        "table": "sdi_print_out_arch"
+      },
+      {
+        "detail": "Historical archived package row has print_out not equal to 1; migration will grandfather it.",
+        "kind": "historical_archived_unexported_row",
+        "package_id": "SDI-00022",
+        "print_out": "0",
+        "qr": "0000184890",
+        "rowid": 498,
+        "severity": "warning",
+        "table": "sdi_print_out_arch"
+      },
+      {
+        "detail": "Historical archived package row has print_out not equal to 1; migration will grandfather it.",
+        "kind": "historical_archived_unexported_row",
+        "package_id": "SDI-00022",
+        "print_out": "0",
+        "qr": "0000184892",
+        "rowid": 499,
+        "severity": "warning",
+        "table": "sdi_print_out_arch"
+      }
+    ],
+    "findings_by_kind": {
+      "historical_archived_unexported_row": 247
+    },
+    "findings_by_severity": {
+      "warning": 247
+    },
+    "package_qr_count": 623
+  },
+  "report_path": "/home/developer/asset_capture_app_dev/data/sdi_package_db_guardrails_dry_run_report_20260602_153054.json",
+  "status": "dry_run"
+}

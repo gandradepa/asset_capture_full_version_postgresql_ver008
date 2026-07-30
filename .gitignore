@@ -1,0 +1,64 @@
+# --- Secrets & credentials (never commit) ---
+.env
+*.env
+*.env.bak*
+.smbcredentials
+.ssh/
+auth_service/users.db
+
+# --- Server home-directory artifacts (copied from /home/developer) ---
+.vscode-server/
+.cache/
+.local/
+.dotnet/
+.claude/
+.claude.json
+.bash_history
+.bash_logout
+.bashrc
+.profile
+.lesshst
+.psql_history
+.python_history
+.selected_editor
+.sudo_as_admin_successful
+.wget-hsts
+
+# --- Python ---
+venv/
+__pycache__/
+*.pyc
+
+# --- Logs ---
+logs/
+*.log
+
+# --- Backups & deploy artifacts ---
+backups/
+backup_app/
+db_backups/
+deploy_backups/
+.deploy_backups/
+deploy_staging/
+deploy_review_status_*/
+*.bak
+*.bak.*
+*.bak_*
+*.tar.gz
+backup_qr_code.sql
+
+# --- Operational data stores (not source code) ---
+Capture_photos_upload/
+Output_jason_api/
+QR_database/
+sld_extract_feedback/
+SDI_process/sdi_json_output/
+*.db
+*.sqlite
+
+# --- Vendored / third party ---
+third_party/
+
+# --- OS junk ---
+Thumbs.db
+.DS_Store

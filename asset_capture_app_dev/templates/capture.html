@@ -1,0 +1,1088 @@
+{% extends "base.html" %}
+{% block title %}Capture Asset Photos{% endblock %}
+
+{% block content %}
+<!-- Step Indicator -->
+<nav class="step-indicator" aria-label="Workflow progress">
+  <div class="step-indicator__item">
+    <div class="step-indicator__dot step-indicator__dot--completed"></div>
+    <span class="step-indicator__label step-indicator__label--completed">Start</span>
+  </div>
+  <div class="step-indicator__connector step-indicator__connector--completed"></div>
+  <div class="step-indicator__item">
+    <div class="step-indicator__dot step-indicator__dot--active" aria-current="step"></div>
+    <span class="step-indicator__label step-indicator__label--active">Capture</span>
+  </div>
+  <div class="step-indicator__connector"></div>
+  <div class="step-indicator__item">
+    <div class="step-indicator__dot"></div>
+    <span class="step-indicator__label">Done</span>
+  </div>
+</nav>
+
+<!-- New Layout Container -->
+<div class="w-full max-w-2xl mx-auto pb-32">
+
+  <!-- Header -->
+  <div class="mb-6 px-4 pt-2">
+    <p id="allPhotosState" class="hidden alert alert-success mt-3 mb-0">
+      All set. You can save when ready.
+    </p>
+  </div>
+
+  <form method="POST" action="{{ url_for('submit') }}" enctype="multipart/form-data" id="captureForm" class="px-4">
+    <noscript>
+      <div class="alert alert-warning mb-4">
+        JavaScript is disabled. Camera capture and preview are unavailable; use file pickers to upload photos.
+      </div>
+      <style>
+        .file-upload-btn {
+          display: none !important;
+        }
+
+        input[type="file"] {
+          display: block !important;
+          margin-top: 0.5rem;
+        }
+
+        #previewAllBtn,
+        #previewModal,
+        #cameraModal {
+          display: none !important;
+        }
+      </style>
+    </noscript>
+
+    <!-- Status Card (Replacement for disabled select) -->
+    <div
+      class="bg-blue-50 border border-blue-100 rounded-xl p-4 mb-8 flex items-start gap-4 shadow-sm">
+
+      <div class="bg-white p-2.5 rounded-full text-blue-600 shadow-sm">
+        <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none"
+          aria-hidden="true" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path>
+          <polyline points="22 4 12 14.01 9 11.01"></polyline>
+        </svg>
+      </div>
+      <div class="flex-1">
+        <p class="text-xs font-medium text-blue-600 mb-1">You're working on</p>
+        <p class="text-gray-900 font-semibold text-lg leading-tight">
+          A new asset <span class="text-sm font-normal text-gray-500">(QR required)</span>
+        </p>
+      </div>
+
+      <!-- Mobile capture always registers new-asset process 0. -->
+      <input type="hidden" name="capture_process" value="{{ capture_process }}">
+    </div>
+
+    <!-- Hidden form data -->
+    <input type="hidden" name="qr_code" value="{{ qr_code }}">
+    <input type="hidden" name="building_code" value="{{ building_code }}">
+    <input type="hidden" name="location" value="{{ location }}">
+    <input type="hidden" name="asset_type" value="{{ asset_type }}">
+    <input type="hidden" name="overwrite" value="{{ overwrite|default('0') }}">
+    <input type="hidden" name="stopwatch_start_utc" value="{{ stopwatch_start_utc|default('') }}">
+    <!-- Best-effort device GPS, filled at save time by the captureForm submit handler. -->
+    <input type="hidden" name="latitude" id="captureLatitude" value="">
+    <input type="hidden" name="longitude" id="captureLongitude" value="">
+
+    {% if asset_type == 'Mechanical' %}
+    {% set fields = [
+    ('image_0','Asset Plate', false),
+    ('image_1','UBC Tag', false),
+    ('image_2','Main Asset Photo', false),
+    ('image_3','Technical Safety BC', false),
+    ('image_4','Extra Photo (Optional)', true)
+    ] %}
+
+    {% elif asset_type in ['Back Flow','Backflow'] %}
+    {% set fields = [
+    ('image_0','Asset Plate', false),
+    ('image_1','Asset Plate (additional)', false),
+    ('image_2','Main Photo', false),
+    ('image_3','Extra Photo (Optional)', true)
+    ] %}
+
+    {% elif asset_type == 'Electrical' %}
+    {% set fields = [
+    ('image_0','Asset Plate (Optional)', false),
+    ('image_1','UBC Asset Tag', false),
+    ('image_2','Panel Schedule', false),
+    ('image_3','Extra Photo (Optional)', true)
+    ] %}
+
+    {% else %}
+    {% set fields = [
+    ('image_0','Asset Plate', false),
+    ('image_1','UBC Tag', false),
+    ('image_2','Main Asset Photo', false),
+    ('image_3','Extra Photo (Optional)', true)
+    ] %}
+    {% endif %}
+
+    <div class="alert alert-info mb-4" role="note">
+      Take at least one of the first two photos before saving.
+    </div>
+    <div id="primaryPhotoError" class="hidden alert alert-warning mb-4" role="alert" aria-live="assertive">
+      A photo is required in one of the first two positions. Take photo -0 or photo -1, then save again.
+    </div>
+
+    <!-- Photo Upload Grid -->
+    <div class="photo-capture-grid">
+      {% for name, label, optional in fields %}
+      <div class="photo-capture-card" data-photo-slot="{{ name }}">
+
+        <!-- Field Header -->
+        <div class="photo-capture-card__header">
+          <label class="photo-capture-card__label" title="{{ label }}">
+            {% if label in ['Main Asset Photo', 'Main Photo'] %}Main Asset
+            {% elif label == 'Technical Safety BC' %}TSBC
+            {% elif label == 'Asset Plate (additional)' %}Asset Plate 2
+            {% elif label == 'Asset Plate (Optional)' %}Asset Plate
+            {% elif label == 'Extra Photo (Optional)' %}Extra Photo
+            {% else %}{{ label }}{% endif %}
+          </label>
+          <!-- Status Indicator Dot -->
+          <div id="status_dot_{{ name }}" class="photo-capture-card__status bg-gray-300 transition-colors"></div>
+        </div>
+
+        <!-- Tile Body -->
+        <div class="photo-capture-card__body">
+
+          <!-- Image Preview Container -->
+          <div id="preview_container_{{ name }}"
+            class="photo-capture-card__preview-container relative w-full h-full flex flex-col items-center justify-center">
+
+            <img id="preview_{{ loop.index }}"
+              class="photo-capture-card__preview hidden w-full h-48 object-cover rounded-lg shadow-sm border border-gray-100 mb-3"
+              alt="Preview {{ loop.index }}" data-label="{{ label }}">
+
+            <!-- Empty State Illustration/Icon -->
+            <div id="empty_state_{{ name }}" class="photo-empty-state flex flex-col items-center justify-center text-gray-400 mb-4">
+              <svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24" fill="none"
+                aria-hidden="true" stroke="currentColor" stroke-width="1" stroke-linecap="round" stroke-linejoin="round"
+                class="mb-2 opacity-50">
+                <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
+                <circle cx="8.5" cy="8.5" r="1.5"></circle>
+                <polyline points="21 15 16 10 5 21"></polyline>
+              </svg>
+              <span class="text-xs">Tap to add</span>
+            </div>
+
+            <!-- Upload/Camera Button -->
+            <div class="file-upload-wrapper photo-snap-wrapper w-full">
+              <div class="file-upload-btn photo-snap-btn"
+                id="label_{{ name }}" onclick="openCamera('{{ name }}', '{{ label }}')">
+                <span id="text_{{ name }}" class="photo-snap-btn__text">Tap to snap</span>
+              </div>
+              <input type="file" name="{{ name }}" id="{{ name }}" accept="image/*"
+                {% if optional %}data-optional="true"{% endif %}
+                onchange="previewImage(event, 'preview_{{ loop.index }}', '{{ name }}')" style="display: none;">
+            </div>
+
+            <!-- File Info & Retake -->
+            <div id="fileinfo_{{ name }}"
+              class="hidden w-full mt-3 pt-3 border-t border-gray-100 flex items-center justify-between text-xs">
+              <span id="filename_{{ name }}" class="text-gray-500 truncate max-w-[60%]">filename.jpg</span>
+              <a href="javascript:void(0)" onclick="resetFile('{{ name }}', 'preview_{{ loop.index }}')"
+                class="text-gray-500 hover:text-blue-600 font-medium flex items-center gap-1.5 transition-colors">
+                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none"
+                  aria-hidden="true" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+                  stroke-linejoin="round">
+                  <path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"></path>
+                  <path d="M3 3v5h5"></path>
+                  <path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"></path>
+                  <path d="M16 21h5v-5"></path>
+                </svg>
+                Replace
+              </a>
+            </div>
+
+          </div>
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+
+    <!-- Optional capture details -->
+    <div class="mt-6 mb-4">
+      <div class="field-group">
+        <label for="capture_notes" class="block text-sm font-medium mb-2">
+          Notes <span class="text-gray-500 font-normal">(optional)</span>
+        </label>
+        <textarea name="capture_notes" id="capture_notes" rows="4"
+                  maxlength="200" autocomplete="off" autocapitalize="sentences"
+                  placeholder="e.g. behind access panel"></textarea>
+        <span class="helper-text"><span id="notesCharCount">0</span>/200 characters</span>
+      </div>
+      <div class="field-group">
+        <label for="installation_date_picker" class="block text-sm font-medium mb-2">
+          Installation Date <span class="text-gray-500 font-normal">(optional)</span>
+        </label>
+        <!-- The picker carries no name: the submitted value lives in the hidden
+             input and is only set when the user taps the confirm (check) button,
+             so an OS-prefilled "today" is never saved by accident. -->
+        <div class="install-date-row">
+          <input type="date" id="installation_date_picker" autocomplete="off">
+          <button type="button" id="installDateConfirmBtn" class="btn btn-success install-date-btn" hidden aria-label="Confirm installation date">&#10003;</button>
+          <button type="button" id="installDateClearBtn" class="btn btn-outline install-date-btn" hidden aria-label="Clear installation date">&#10005;</button>
+        </div>
+        <input type="hidden" name="installation_date" id="installation_date" value="">
+        <span class="helper-text" id="installDateHelper">Date the asset was installed, if known.</span>
+      </div>
+    </div>
+
+    <!-- Sticky Bottom Actions -->
+    <div
+      class="fixed bottom-0 left-0 right-0 bg-white/95 backdrop-blur-md border-t border-gray-200 p-4 pb-safe z-40 shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.05)]">
+      <div class="max-w-2xl mx-auto flex gap-2">
+        <button type="button" id="previewAllBtn"
+          class="flex-1 btn btn-secondary text-xs sm:text-sm font-medium py-3 px-1 whitespace-nowrap overflow-hidden text-ellipsis">
+          Preview
+        </button>
+        <a href="{{ url_for('start', building_code=building_code, asset_type=asset_type) }}"
+          class="flex-1 btn btn-outline py-3 px-1 text-xs sm:text-sm whitespace-nowrap flex items-center justify-center overflow-hidden text-ellipsis">
+          Change
+        </a>
+        <button type="submit" id="submitBtn"
+          class="flex-1 btn btn-success capture-submit-btn text-sm sm:text-base font-semibold shadow-md py-3 px-1">
+          <span class="capture-submit-btn__label">Save and Continue</span>
+        </button>
+      </div>
+    </div>
+
+  </form>
+</div>
+
+<!-- Preview Modal -->
+<div id="previewModal" class="hidden"
+  style="position:fixed; inset:0; background:rgba(0,0,0,0.55); z-index:50; display:flex; align-items:center; justify-content:center; padding:1rem;">
+  <div
+    style="background:#fff; border-radius:0.75rem; max-width:960px; width:100%; max-height:90vh; overflow:auto; box-shadow:0 10px 40px rgba(0,0,0,0.2); padding:1.25rem;">
+    <div class="flex" style="justify-content:space-between; align-items:center; margin-bottom:0.75rem;">
+      <h3 class="text-lg font-semibold">Preview Captured Photos</h3>
+      <button type="button" id="previewClose" class="btn btn-outline" style="min-width:100px;">Close</button>
+    </div>
+    <div id="previewGrid" style="display:grid; grid-template-columns:repeat(auto-fit,minmax(200px,1fr)); gap:1rem;">
+    </div>
+  </div>
+</div>
+
+<!-- Camera Modal -->
+<!-- Camera Modal (Updated for full screen & modern UI) -->
+<!-- Camera Modal (Updated for full screen & modern UI) -->
+<div id="cameraModal" class="hidden fixed inset-0 z-50 bg-black" role="dialog" aria-modal="true"
+  aria-label="Camera capture dialog" tabindex="-1">
+  <video id="cameraFeed" autoplay playsinline muted class="absolute inset-0 w-full h-full object-cover"></video>
+  <canvas id="cameraCanvas" style="display:none;"></canvas>
+
+  <!-- Top Bar (Back button only) -->
+  <div class="absolute top-0 left-0 right-0 p-4 pt-safe flex justify-between items-start z-10 pointer-events-none">
+    <!-- Empty for now, or could keep a close button here if needed, but close is at bottom -->
+  </div>
+
+  <!-- Left Side Controls (Zoom & Torch) -->
+  <div class="absolute left-0 top-0 bottom-0 z-20 flex flex-col justify-center pointer-events-none">
+    <div class="pointer-events-auto flex flex-col gap-6 items-start">
+
+      <!-- Zoom Slider -->
+      <div id="zoomControl"
+        class="hidden flex-col items-center bg-black/30 backdrop-blur-md rounded-r-xl py-4 px-2 text-white overflow-visible">
+
+        <!-- Container to hold the rotated slider (reserves vertical space) -->
+        <div class="relative flex items-center justify-center" style="width: 30px; height: 280px;">
+          <input type="range" id="zoomSlider" min="2" max="5" step="0.3" value="1"
+            oninput="handleZoomSlider(this.value)" aria-label="Camera zoom" data-camera-control
+            class="appearance-none bg-white/20 rounded-full outline-none absolute"
+            style="width: 280px; max-width: none; height: 6px; top: 50%; left: 50%; transform: translate(-50%, -50%) rotate(-90deg);">
+        </div>
+
+        <!-- Label below -->
+        <span id="zoomValue" class="text-xs font-mono mt-2 whitespace-nowrap">1.0x</span>
+
+        <style>
+          /* Custom thumb style for the rotated slider */
+          #zoomSlider::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            appearance: none;
+            width: 20px;
+            height: 20px;
+            background: white;
+            border-radius: 50%;
+            cursor: pointer;
+            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+          }
+
+          #zoomSlider::-moz-range-thumb {
+            width: 20px;
+            height: 20px;
+            background: white;
+            border-radius: 50%;
+            cursor: pointer;
+            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+            border: none;
+          }
+        </style>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- Bottom Controls -->
+  <div
+    class="absolute bottom-0 left-0 right-0 p-8 pb-safe bg-gradient-to-t from-black/80 via-black/40 to-transparent flex flex-col items-center justify-end gap-8 z-10">
+
+    <div class="w-full flex justify-between items-center">
+      <!-- Cancel Button Container -->
+      <div class="w-[80px] flex justify-center">
+        <button type="button" class="text-white font-medium p-4" onclick="closeCamera()" data-camera-control>
+          Cancel
+        </button>
+      </div>
+
+      <!-- Capture Button -->
+      <button type="button" id="captureBtn"
+        class="w-20 h-20 rounded-full border-4 border-white flex items-center justify-center relative"
+        aria-label="Capture photo" data-camera-control onclick="capturePhoto()">
+        <div class="w-16 h-16 bg-white rounded-full active:scale-90 transition-transform"></div>
+      </button>
+
+      <!-- Flash Button -->
+      <!-- Use same width as Cancel button (approx 80px based on padding+text) to balance layout -->
+      <div class="w-[80px] flex justify-center">
+        <button type="button" id="torchBtn" class="p-4 text-white hidden" aria-label="Toggle flashlight"
+          data-camera-control onclick="toggleTorch()">
+          <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none"
+            aria-hidden="true" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"></path>
+          </svg>
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+
+
+<script>
+  let currentStream = null;
+  let currentInputName = null;
+  let currentLabel = null;
+  let videoTrack = null;
+  let imageCapture = null;
+  let torchEnabled = false;
+  let hiResMode = false;
+
+  // Zoom-related variables
+  let zoomSupported = false;
+  let zoomMin = 1;
+  let zoomMax = 1;
+  let currentZoom = 1;
+  let initialPinchDistance = null;
+  let initialPinchZoom = 1;
+  let previousFocusElement = null;
+  let cameraKeydownHandler = null;
+  let allPhotosToastShown = false;
+
+  function getCameraControls() {
+    return Array.from(document.querySelectorAll('#cameraModal [data-camera-control]'))
+      .filter(el => !el.hasAttribute('disabled') && el.offsetParent !== null);
+  }
+
+  function onCameraKeydown(event) {
+    const modal = document.getElementById('cameraModal');
+    if (!modal || modal.classList.contains('hidden')) return;
+
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      closeCamera();
+      return;
+    }
+
+    if (event.key !== 'Tab') return;
+    const controls = getCameraControls();
+    if (!controls.length) return;
+
+    const first = controls[0];
+    const last = controls[controls.length - 1];
+
+    if (event.shiftKey && document.activeElement === first) {
+      event.preventDefault();
+      last.focus();
+      return;
+    }
+    if (!event.shiftKey && document.activeElement === last) {
+      event.preventDefault();
+      first.focus();
+    }
+  }
+
+  async function openCamera(inputName, label) {
+    currentInputName = inputName;
+    currentLabel = label || 'capture';
+    hiResMode = (inputName || '').endsWith('_0');
+    const modal = document.getElementById('cameraModal');
+    const video = document.getElementById('cameraFeed');
+    const torchBtn = document.getElementById('torchBtn');
+
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: {
+          facingMode: { ideal: 'environment' },
+          width: { ideal: hiResMode ? 1920 : 1280 },
+          height: { ideal: hiResMode ? 1080 : 720 }
+        }
+      });
+      currentStream = stream;
+      video.srcObject = stream;
+      modal.classList.remove('hidden');
+      modal.classList.add('flex', 'flex-col');
+      previousFocusElement = document.activeElement;
+      if (cameraKeydownHandler) {
+        document.removeEventListener('keydown', cameraKeydownHandler);
+      }
+      cameraKeydownHandler = onCameraKeydown;
+      document.addEventListener('keydown', cameraKeydownHandler);
+
+      videoTrack = stream.getVideoTracks()[0];
+      if ('ImageCapture' in window && videoTrack) {
+        try { imageCapture = new ImageCapture(videoTrack); } catch { imageCapture = null; }
+      }
+
+      // Try to align resolution based on the target profile
+      try {
+        const caps = videoTrack.getCapabilities ? videoTrack.getCapabilities() : null;
+        if (caps && caps.width && caps.height) {
+          const maxW = caps.width.max || (hiResMode ? 1920 : 1280);
+          const maxH = caps.height.max || (hiResMode ? 1080 : 720);
+          const target = {
+            width: hiResMode ? maxW : Math.min(maxW, 1280),
+            height: hiResMode ? maxH : Math.min(maxH, 720)
+          };
+          await videoTrack.applyConstraints({ advanced: [target] });
+        }
+      } catch (e) {
+        console.warn('Could not adjust resolution', e);
+      }
+
+      // Check for torch and zoom capabilities
+      try {
+        const capabilities = videoTrack.getCapabilities();
+
+        // Torch capability
+        if (capabilities.torch) {
+          torchBtn.classList.remove('hidden');
+        } else {
+          torchBtn.classList.add('hidden');
+        }
+
+        // Zoom capability
+        const zoomControl = document.getElementById('zoomControl');
+        const zoomSlider = document.getElementById('zoomSlider');
+        if (capabilities.zoom) {
+          zoomSupported = true;
+          zoomMin = capabilities.zoom.min || 1;
+          zoomMax = capabilities.zoom.max || 1;
+          currentZoom = zoomMin;
+
+          // Configure the slider
+          zoomSlider.min = zoomMin;
+          zoomSlider.max = zoomMax;
+          zoomSlider.step = (zoomMax - zoomMin) / 50; // 50 steps
+          zoomSlider.value = zoomMin;
+          updateZoomDisplay(zoomMin);
+
+          zoomControl.classList.remove('hidden');
+          zoomControl.classList.add('flex');
+          console.log(`Zoom supported: ${zoomMin}x - ${zoomMax}x`);
+        } else {
+          zoomSupported = false;
+          zoomControl.classList.add('hidden');
+          zoomControl.classList.remove('flex');
+          console.log('Zoom not supported on this device');
+        }
+      } catch (e) {
+        console.log("Could not check capabilities", e);
+        torchBtn.classList.add('hidden');
+        document.getElementById('zoomControl').classList.add('hidden');
+      }
+
+      // Set up pinch-to-zoom event listeners
+      setupPinchToZoom(video);
+      const captureBtn = document.getElementById('captureBtn');
+      if (captureBtn) captureBtn.focus();
+
+    } catch (err) {
+      console.error("Error opening camera:", err);
+      alert("Could not access camera. Please ensure permissions are granted and you are using a secure context (HTTPS).");
+    }
+  }
+
+  function closeCamera() {
+    const modal = document.getElementById('cameraModal');
+    const video = document.getElementById('cameraFeed');
+    const torchBtn = document.getElementById('torchBtn');
+    const zoomControl = document.getElementById('zoomControl');
+    const zoomSlider = document.getElementById('zoomSlider');
+
+    if (currentStream) {
+      currentStream.getTracks().forEach(track => {
+        track.stop();
+      });
+      currentStream = null;
+    }
+
+    video.srcObject = null;
+    modal.classList.add('hidden');
+    modal.classList.remove('flex', 'flex-col');
+    torchEnabled = false;
+    torchBtn.classList.remove('active');
+    torchBtn.style.backgroundColor = '';
+    torchBtn.style.color = '';
+    videoTrack = null;
+    imageCapture = null;
+
+    // Reset zoom state
+    zoomSupported = false;
+    currentZoom = 1;
+    zoomMin = 1;
+    zoomMax = 1;
+    initialPinchDistance = null;
+    zoomSlider.value = 1;
+    zoomControl.classList.add('hidden');
+
+    // Remove pinch-to-zoom event listeners
+    removePinchToZoom(video);
+    if (cameraKeydownHandler) {
+      document.removeEventListener('keydown', cameraKeydownHandler);
+      cameraKeydownHandler = null;
+    }
+    if (previousFocusElement && typeof previousFocusElement.focus === 'function') {
+      previousFocusElement.focus();
+    }
+  }
+
+  async function toggleTorch() {
+    if (!videoTrack) return;
+    const torchBtn = document.getElementById('torchBtn');
+    try {
+      torchEnabled = !torchEnabled;
+      await videoTrack.applyConstraints({
+        advanced: [{ torch: torchEnabled }]
+      });
+      if (torchEnabled) {
+        torchBtn.classList.add('text-yellow-400');
+        torchBtn.classList.add('bg-black/50');
+      } else {
+        torchBtn.classList.remove('text-yellow-400');
+        torchBtn.classList.remove('bg-black/50');
+      }
+    } catch (err) {
+      console.error("Error toggling torch:", err);
+      torchEnabled = !torchEnabled;
+      alert("Flashlight control failed: " + err.message);
+    }
+  }
+
+  // ========== ZOOM FUNCTIONS ==========
+
+  function updateZoomDisplay(zoomLevel) {
+    const zoomValueEl = document.getElementById('zoomValue');
+    if (zoomValueEl) {
+      zoomValueEl.textContent = parseFloat(zoomLevel).toFixed(1) + 'x';
+    }
+  }
+
+  async function applyZoom(zoomLevel) {
+    if (!videoTrack || !zoomSupported) return;
+    // Clamp zoom level
+    zoomLevel = Math.max(zoomMin, Math.min(zoomMax, zoomLevel));
+    try {
+      await videoTrack.applyConstraints({
+        advanced: [{ zoom: zoomLevel }]
+      });
+      currentZoom = zoomLevel;
+      updateZoomDisplay(zoomLevel);
+      const slider = document.getElementById('zoomSlider');
+      if (slider) {
+        slider.value = zoomLevel;
+      }
+    } catch (err) {
+      console.error('Error applying zoom:', err);
+    }
+  }
+
+  function handleZoomSlider(value) {
+    applyZoom(parseFloat(value));
+  }
+
+  // ========== PINCH-TO-ZOOM FUNCTIONS ==========
+  function getDistance(touch1, touch2) {
+    const dx = touch1.clientX - touch2.clientX;
+    const dy = touch1.clientY - touch2.clientY;
+    return Math.sqrt(dx * dx + dy * dy);
+  }
+
+  function handleTouchStart(e) {
+    if (e.touches.length === 2) {
+      e.preventDefault();
+      initialPinchDistance = getDistance(e.touches[0], e.touches[1]);
+      initialPinchZoom = currentZoom;
+    }
+  }
+
+  function handleTouchMove(e) {
+    if (e.touches.length === 2 && initialPinchDistance !== null && zoomSupported) {
+      e.preventDefault();
+      const currentDistance = getDistance(e.touches[0], e.touches[1]);
+      const scale = currentDistance / initialPinchDistance;
+      let newZoom = initialPinchZoom * scale;
+      newZoom = Math.max(zoomMin, Math.min(zoomMax, newZoom));
+      applyZoom(newZoom);
+    }
+  }
+
+  function handleTouchEnd(e) {
+    if (e.touches.length < 2) {
+      initialPinchDistance = null;
+    }
+  }
+
+  function setupPinchToZoom(videoElement) {
+    if (!videoElement) return;
+    videoElement.addEventListener('touchstart', handleTouchStart, { passive: false });
+    videoElement.addEventListener('touchmove', handleTouchMove, { passive: false });
+    videoElement.addEventListener('touchend', handleTouchEnd, { passive: true });
+    videoElement.addEventListener('touchcancel', handleTouchEnd, { passive: true });
+  }
+
+  function removePinchToZoom(videoElement) {
+    if (!videoElement) return;
+    videoElement.removeEventListener('touchstart', handleTouchStart);
+    videoElement.removeEventListener('touchmove', handleTouchMove);
+    videoElement.removeEventListener('touchend', handleTouchEnd);
+    videoElement.removeEventListener('touchcancel', handleTouchEnd);
+  }
+
+  async function capturePhoto() {
+    const canvas = document.getElementById('cameraCanvas');
+    const video = document.getElementById('cameraFeed');
+
+    if (!video.videoWidth) return;
+
+    let blob = null;
+    const isPrimary = (currentInputName || '').endsWith('_0');
+
+    // Prefer ImageCapture
+    if (imageCapture && typeof imageCapture.takePhoto === 'function') {
+      try {
+        const caps = videoTrack && videoTrack.getCapabilities ? videoTrack.getCapabilities() : {};
+        const photoSettings = {};
+        if (caps.imageWidth && caps.imageWidth.max) photoSettings.imageWidth = isPrimary ? caps.imageWidth.max : Math.min(caps.imageWidth.max, 1280);
+        if (caps.imageHeight && caps.imageHeight.max) photoSettings.imageHeight = isPrimary ? caps.imageHeight.max : Math.min(caps.imageHeight.max, 720);
+        blob = await imageCapture.takePhoto(photoSettings);
+      } catch (e) {
+        console.warn("takePhoto failed, falling back to canvas", e);
+      }
+    }
+
+    if (!blob) {
+      const w = video.videoWidth || 1280;
+      const h = video.videoHeight || 720;
+      const targetW = isPrimary ? w : 1280;
+      const targetH = isPrimary ? h : 720;
+      canvas.width = targetW;
+      canvas.height = targetH;
+      const ctx = canvas.getContext('2d');
+      ctx.drawImage(video, 0, 0, targetW, targetH);
+      blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/jpeg', 0.9));
+    }
+
+    if (!blob) {
+      alert("Capture failed");
+      return;
+    }
+
+    blob = await ensurePortraitOrientation(blob, isPrimary);
+
+    // Replicate app.py filename logic
+    const qrCode = document.querySelector('input[name="qr_code"]').value;
+    const buildingCode = document.querySelector('input[name="building_code"]').value;
+    const assetType = document.querySelector('input[name="asset_type"]').value;
+
+    const safeQr = sanitizeComponent(qrCode, true);
+    const safeBldg = sanitizeComponent(buildingCode, false);
+    const safeType = sanitizeComponent(mapAssetTypeToAbbrev(assetType), false);
+
+    const seq = currentInputName.replace('image_', '');
+    const filename = `${safeQr} ${safeBldg} ${safeType} - ${seq}.jpg`;
+
+    const file = new File([blob], filename, { type: "image/jpeg" });
+
+    const input = document.getElementById(currentInputName);
+    const dataTransfer = new DataTransfer();
+    dataTransfer.items.add(file);
+    input.files = dataTransfer.files;
+
+    // Trigger change event
+    input.dispatchEvent(new Event('change'));
+    closeCamera();
+  }
+
+  // ========== PORTRAIT ORIENTATION HELPER (Unchanged) ==========
+  async function ensurePortraitOrientation(blob, highQuality = false) {
+    return new Promise((resolve) => {
+      const img = new Image();
+      img.onload = async () => {
+        const width = img.width;
+        const height = img.height;
+        if (height >= width) {
+          resolve(blob);
+          return;
+        }
+        const rotationCanvas = document.createElement('canvas');
+        rotationCanvas.width = height;
+        rotationCanvas.height = width;
+        const ctx = rotationCanvas.getContext('2d');
+        ctx.translate(rotationCanvas.width / 2, rotationCanvas.height / 2);
+        ctx.rotate(90 * Math.PI / 180);
+        ctx.drawImage(img, -width / 2, -height / 2);
+        rotationCanvas.toBlob((rotatedBlob) => {
+          resolve(rotatedBlob || blob);
+        }, 'image/jpeg', highQuality ? 0.98 : 0.9);
+      };
+      img.onerror = () => resolve(blob);
+      img.src = URL.createObjectURL(blob);
+    });
+  }
+
+  // --- Helper Functions Mirroring app.py ---
+  function sanitizeComponent(s, preferDigits = true) {
+    s = (s || "").trim();
+    if (preferDigits) {
+      const m = s.match(/(\d{6,})/);
+      if (m) s = m[1];
+    }
+    s = s.replace(/^[a-zA-Z]+:/, '').replace(/^\/+|\/+$/g, '');
+    s = s.replace(/[<>:"/\\|?*]+/g, '_').replace(/\s+/g, '_');
+    s = s.replace(/[^A-Za-z0-9._-]+/g, '').replace(/^[._-]+|[._-]+$/g, '');
+    return s.substring(0, 80) || "fallback";
+  }
+
+  function mapAssetTypeToAbbrev(t) {
+    t = (t || "").trim().toLowerCase();
+    if (t.startsWith("mech")) return "ME";
+    if (t.startsWith("elec")) return "EL";
+    if (t.startsWith("back")) return "BF";
+    return (t.substring(0, 2).toUpperCase()) || "AS";
+  }
+
+  // ========== UPDATED UI LOGIC ==========
+
+  const primaryPhotoKeys = ['image_0', 'image_1'];
+
+  function hasPrimaryCapturePhoto() {
+    return primaryPhotoKeys.some(key => {
+      const input = document.getElementById(key);
+      return input && input.files && input.files.length > 0;
+    });
+  }
+
+  function updatePrimaryPhotoValidation(showError = false) {
+    const valid = hasPrimaryCapturePhoto();
+    const errorEl = document.getElementById('primaryPhotoError');
+    const primaryCards = primaryPhotoKeys
+      .map(key => document.querySelector(`[data-photo-slot="${key}"]`))
+      .filter(Boolean);
+
+    if (errorEl) {
+      errorEl.classList.toggle('hidden', valid || !showError);
+    }
+    primaryCards.forEach(card => {
+      card.classList.toggle('primary-photo-required', !valid && showError);
+    });
+
+    return valid;
+  }
+
+  function updateCompletionState() {
+    const stateEl = document.getElementById('allPhotosState');
+    const inputs = Array.from(document.querySelectorAll('input[type="file"][id^="image_"]:not([data-optional="true"])'));
+    const completed = inputs.filter(input => input.files && input.files.length > 0).length;
+    const allComplete = inputs.length > 0 && completed === inputs.length;
+
+    if (stateEl) {
+      stateEl.classList.toggle('hidden', !allComplete);
+    }
+
+    if (allComplete && !allPhotosToastShown && typeof window.showToast === 'function') {
+      allPhotosToastShown = true;
+      window.showToast('All required photos captured.', 'success', 2500);
+    }
+    if (!allComplete) {
+      allPhotosToastShown = false;
+    }
+  }
+
+  function previewImage(event, previewId, inputName) {
+    const img = document.getElementById(previewId);
+    const file = event.target.files[0];
+    const labelBtn = document.getElementById('label_' + inputName);
+    const textSpan = document.getElementById('text_' + inputName);
+    const fileInfo = document.getElementById('fileinfo_' + inputName);
+    const filename = document.getElementById('filename_' + inputName);
+    const emptyState = document.getElementById('empty_state_' + inputName);
+    const statusDot = document.getElementById('status_dot_' + inputName);
+    const card = labelBtn ? labelBtn.closest('.photo-capture-card') : null;
+
+    if (!file) {
+      resetFile(inputName, previewId);
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = e => {
+      img.src = e.target.result;
+      img.classList.remove('hidden');
+      if (emptyState) {
+        emptyState.classList.add('hidden');
+        emptyState.classList.remove('flex');
+      }
+
+      labelBtn.innerHTML = `<span id="text_${inputName}" class="photo-snap-btn__text">Change photo</span>`;
+      labelBtn.classList.add('is-change');
+      if (card) card.classList.add('has-photo');
+
+      if (textSpan) textSpan.textContent = 'Change';
+
+      fileInfo.classList.remove('hidden');
+      filename.textContent = file.name;
+
+      // Update dot
+      if (statusDot) {
+        statusDot.classList.remove('bg-gray-300');
+        statusDot.classList.add('bg-green-500');
+        statusDot.classList.remove('status-dot--pulse');
+        void statusDot.offsetWidth; // retrigger animation when replacing a file
+        statusDot.classList.add('status-dot--pulse');
+      }
+      updateCompletionState();
+      updatePrimaryPhotoValidation(false);
+    };
+    reader.readAsDataURL(file);
+  }
+
+  function resetFile(inputName, previewId) {
+    const input = document.getElementById(inputName);
+    const img = document.getElementById(previewId);
+    const labelBtn = document.getElementById('label_' + inputName);
+    const textSpan = document.getElementById('text_' + inputName);
+    const fileInfo = document.getElementById('fileinfo_' + inputName);
+    const emptyState = document.getElementById('empty_state_' + inputName);
+    const statusDot = document.getElementById('status_dot_' + inputName);
+    const card = labelBtn ? labelBtn.closest('.photo-capture-card') : null;
+
+    input.value = '';
+    img.classList.add('hidden');
+    img.src = '';
+    if (emptyState) {
+      emptyState.classList.remove('hidden');
+      emptyState.classList.add('flex');
+    }
+
+    // Reset button style
+    labelBtn.innerHTML = `
+      <span id="text_${inputName}" class="photo-snap-btn__text">Tap to snap</span>
+    `;
+    labelBtn.classList.remove('is-change');
+    if (card) card.classList.remove('has-photo');
+
+    fileInfo.classList.add('hidden');
+
+    // Reset dot
+    if (statusDot) {
+      statusDot.classList.remove('bg-green-500');
+      statusDot.classList.add('bg-gray-300');
+      statusDot.classList.remove('status-dot--pulse');
+    }
+    updateCompletionState();
+    updatePrimaryPhotoValidation(false);
+  }
+
+  // Preview Modal
+  const previewAllBtn = document.getElementById('previewAllBtn');
+  const previewModal = document.getElementById('previewModal');
+  const previewGrid = document.getElementById('previewGrid');
+  const previewClose = document.getElementById('previewClose');
+
+  function openPreviewModal() {
+    if (!previewModal || !previewGrid) return;
+    previewGrid.innerHTML = '';
+    const previews = document.querySelectorAll('[id^="preview_"]');
+    let hasPhotos = false;
+
+    previews.forEach(img => {
+      if (img && img.src && !img.classList.contains('hidden')) {
+        hasPhotos = true;
+        const wrap = document.createElement('div');
+        wrap.className = "bg-white p-2 rounded-lg shadow-sm border border-gray-100 break-inside-avoid mb-4";
+
+        const labelText = img.dataset.label || "Photo";
+        wrap.innerHTML = `
+          <p class="text-xs font-bold text-gray-500 mb-2 uppercase tracking-wide">${labelText}</p>
+          <img src="${img.src}" class="w-full h-auto rounded-md" loading="lazy">
+        `;
+        previewGrid.appendChild(wrap);
+      }
+    });
+
+    if (!hasPhotos) {
+      previewGrid.innerHTML = `
+         <div class="col-span-full flex flex-col items-center justify-center py-10 text-gray-400">
+           <svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1" class="mb-4 opacity-50"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect><circle cx="8.5" cy="8.5" r="1.5"></circle><polyline points="21 15 16 10 5 21"></polyline></svg>
+           <p>No photos captured yet.</p>
+         </div>
+       `;
+    }
+
+    previewModal.classList.remove('hidden');
+    document.body.style.overflow = 'hidden';
+  }
+
+  function closePreviewModal() {
+    previewModal.classList.add('hidden');
+    document.body.style.overflow = '';
+  }
+
+  if (previewAllBtn) previewAllBtn.addEventListener('click', openPreviewModal);
+  if (previewClose) previewClose.addEventListener('click', closePreviewModal);
+  if (previewModal) {
+    previewModal.addEventListener('click', (e) => {
+      if (e.target === previewModal) closePreviewModal();
+    });
+  }
+
+  // Apply the "Saving..." loading state to the submit button.
+  function setSubmitLoadingState() {
+    const submitBtn = document.getElementById('submitBtn');
+    if (!submitBtn) return;
+    submitBtn.classList.add('opacity-75', 'cursor-not-allowed');
+    submitBtn.innerHTML = `
+      <svg class="animate-spin -ml-1 mr-3 h-5 w-5 text-white inline-block" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+        <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+        <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+      </svg>
+      Saving...
+    `;
+    submitBtn.disabled = true;
+  }
+
+  // Optional capture details: live character counter for Notes.
+  const notesInput = document.getElementById('capture_notes');
+  const notesCharCount = document.getElementById('notesCharCount');
+  if (notesInput && notesCharCount) {
+    notesInput.addEventListener('input', function () {
+      notesCharCount.textContent = String(notesInput.value.length);
+    });
+  }
+
+  // Installation Date: the visible picker is NOT the submitted field. iOS can
+  // pre-fill "today" the moment the calendar opens, so the value only becomes
+  // real when the user taps the check button, copying it into the hidden
+  // name="installation_date" input. The X button clears both.
+  const installPicker = document.getElementById('installation_date_picker');
+  const installHidden = document.getElementById('installation_date');
+  const installConfirmBtn = document.getElementById('installDateConfirmBtn');
+  const installClearBtn = document.getElementById('installDateClearBtn');
+  const installHelper = document.getElementById('installDateHelper');
+  const INSTALL_HELPER_DEFAULT = 'Date the asset was installed, if known.';
+  if (installPicker && installHidden && installConfirmBtn && installClearBtn) {
+    installPicker.max = new Date().toISOString().slice(0, 10);
+    const syncInstallDateUI = () => {
+      const pending = installPicker.value && installPicker.value !== installHidden.value;
+      installConfirmBtn.hidden = !pending;
+      installClearBtn.hidden = !installPicker.value && !installHidden.value;
+      if (pending) {
+        installHelper.textContent = 'Tap ✓ to confirm ' + installPicker.value + '.';
+      } else if (installHidden.value) {
+        installHelper.textContent = 'Installation date set: ' + installHidden.value + '.';
+      } else {
+        installHelper.textContent = INSTALL_HELPER_DEFAULT;
+      }
+    };
+    installPicker.addEventListener('change', syncInstallDateUI);
+    installPicker.addEventListener('input', syncInstallDateUI);
+    installConfirmBtn.addEventListener('click', function () {
+      installHidden.value = installPicker.value;
+      syncInstallDateUI();
+    });
+    installClearBtn.addEventListener('click', function () {
+      installPicker.value = '';
+      installHidden.value = '';
+      syncInstallDateUI();
+    });
+  }
+
+  // Form submission: validate, then BEST-EFFORT capture the device GPS position
+  // before the native multipart POST. Geolocation NEVER blocks the save — on
+  // permission denial, timeout, or an unsupported browser we submit without
+  // coordinates. Requires a secure context (HTTPS in prod / localhost), the same
+  // constraint the camera already has.
+  let coordsCaptureDone = false;
+  document.getElementById('captureForm').addEventListener('submit', function (e) {
+    // Trim/clamp Notes once up front; form.submit() below never re-fires this
+    // handler, so the cleaned value is what both submit paths POST.
+    if (notesInput) notesInput.value = notesInput.value.trim().slice(0, 200);
+    if (!updatePrimaryPhotoValidation(true)) {
+      e.preventDefault();
+      const firstPrimaryCard = document.querySelector('[data-photo-slot="image_0"]');
+      if (firstPrimaryCard) {
+        firstPrimaryCard.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }
+      if (typeof window.showToast === 'function') {
+        window.showToast('Take photo -0 or photo -1 before saving.', 'warning', 4000);
+      }
+      return;
+    }
+
+    // Fast path: already captured (or no geolocation support) — let the POST run.
+    // Note: form.submit() below does NOT re-fire this submit handler.
+    if (coordsCaptureDone || !navigator.geolocation) {
+      setSubmitLoadingState();
+      return;
+    }
+
+    e.preventDefault();
+    setSubmitLoadingState();
+    const form = this;
+    let settled = false;
+    const submitOnce = () => {
+      if (settled) return;
+      settled = true;
+      coordsCaptureDone = true;
+      form.submit();
+    };
+
+    try {
+      navigator.geolocation.getCurrentPosition(
+        function (pos) {
+          document.getElementById('captureLatitude').value = pos.coords.latitude;
+          document.getElementById('captureLongitude').value = pos.coords.longitude;
+          submitOnce();
+        },
+        function () {
+          // Permission denied / position unavailable / timed out — save anyway.
+          submitOnce();
+        },
+        { enableHighAccuracy: true, timeout: 8000, maximumAge: 60000 }
+      );
+    } catch (err) {
+      submitOnce();
+    }
+    // Safety net: never leave the form hanging if no callback ever fires.
+    setTimeout(submitOnce, 9000);
+  });
+  updateCompletionState();
+  updatePrimaryPhotoValidation(false);
+</script>
+{% endblock %}

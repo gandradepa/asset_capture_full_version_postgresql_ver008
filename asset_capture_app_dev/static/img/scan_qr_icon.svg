@@ -1,0 +1,35 @@
+<svg width="240" height="240" viewBox="0 0 240 240" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <g stroke="#1B1B1B" stroke-width="14" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M30 75V40C30 34.4772 34.4772 30 40 30H75" />
+    <path d="M165 30H200C205.523 30 210 34.4772 210 40V75" />
+    <path d="M210 165V200C210 205.523 205.523 210 200 210H165" />
+    <path d="M75 210H40C34.4772 210 30 205.523 30 200V165" />
+  </g>
+
+  <g fill="#1B1B1B">
+    <path fill-rule="evenodd" clip-rule="evenodd" d="M50 50H98V98H50V50ZM60 60V88H88V60H60ZM68 68H80V80H68V68Z" />
+    <path fill-rule="evenodd" clip-rule="evenodd" d="M142 50H190V98H142V50ZM152 60V88H180V60H152ZM160 68H172V80H160V68Z" />
+    <path fill-rule="evenodd" clip-rule="evenodd" d="M50 142H98V190H50V142ZM60 152V180H88V152H60ZM68 160H80V172H68V160Z" />
+  </g>
+
+  <g fill="#1B1B1B">
+    <rect x="108" y="50" width="10" height="10" />
+    <rect x="124" y="50" width="10" height="10" />
+    <rect x="108" y="66" width="10" height="26" />
+    <rect x="124" y="75" width="10" height="10" />
+    <rect x="108" y="100" width="26" height="10" />
+    <rect x="124" y="116" width="10" height="26" />
+    <rect x="108" y="142" width="10" height="18" />
+    <rect x="50" y="108" width="10" height="10" />
+    <rect x="66" y="108" width="24" height="10" />
+    <rect x="50" y="124" width="24" height="10" />
+    <rect x="80" y="124" width="10" height="10" />
+    <rect x="142" y="108" width="24" height="10" />
+    <rect x="174" y="108" width="10" height="10" />
+  </g>
+
+  <g stroke="#1B1B1B" stroke-width="12" stroke-linecap="round">
+    <circle cx="155" cy="155" r="35" fill="white" stroke-width="14"/>
+    <line x1="180" y1="180" x2="205" y2="205" stroke-width="16" />
+  </g>
+</svg>

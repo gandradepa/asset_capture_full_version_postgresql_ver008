@@ -1,0 +1,7 @@
+# requirements.txt
+Flask==3.1.2
+
+# Server-side xlsx generation for the dashboard /export/review-xlsx endpoint.
+openpyxl>=3.1,<4
+# Required by openpyxl for embedding the corner logo image.
+pillow>=10

@@ -1,0 +1,132 @@
+{% macro render_map(building_code, height='250px', start_lat=None, start_lng=None, start_label='Start') %}
+<script>
+    if (!document.getElementById('leaflet-css')) {
+        let link = document.createElement('link');
+        link.id = 'leaflet-css';
+        link.rel = 'stylesheet';
+        link.href = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.css';
+        document.head.appendChild(link);
+    }
+    if (!document.getElementById('leaflet-js')) {
+        let script = document.createElement('script');
+        script.id = 'leaflet-js';
+        script.src = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.js';
+        document.head.appendChild(script);
+    }
+</script>
+
+<style>
+    .map-container-widget {
+        height: {{ height }};
+        width: 100%;
+        background: #f8f9fa;
+        display: none; /* Hidden by default until data confirms location */
+        z-index: 1;
+    }
+    /* Fix for layer control z-index to ensure it sits above map tiles */
+    .leaflet-control-layers {
+        border: none !important;
+        box-shadow: 0 2px 5px rgba(0,0,0,0.4) !important;
+    }
+</style>
+
+<div id="map_widget_{{ building_code }}" class="map-container-widget"
+    {% if start_lat is not none and start_lng is not none %}
+    data-start-lat="{{ start_lat }}"
+    data-start-lng="{{ start_lng }}"
+    data-start-label="{{ start_label }}"
+    {% endif %}></div>
+
+<script>
+(function() {
+    const bCode = "{{ building_code }}";
+    const mapId = "map_widget_{{ building_code }}";
+
+    // Wait for Leaflet to load
+    const checkLeaflet = setInterval(function() {
+        if (window.L) {
+            clearInterval(checkLeaflet);
+            initWidgetMap();
+        }
+    }, 100);
+
+    function initWidgetMap() {
+        fetch(`/api/building_location/${bCode}`)
+        .then(res => res.json())
+        .then(data => {
+            if (data.success && data.data) {
+                const container = document.getElementById(mapId);
+                container.style.display = 'block';
+                const startLat = parseFloat(container.dataset.startLat);
+                const startLng = parseFloat(container.dataset.startLng);
+                const startLabel = container.dataset.startLabel || 'Start';
+                const hasStart = !Number.isNaN(startLat) && !Number.isNaN(startLng);
+
+                // --- 1. Define the Layers ---
+                
+                // Standard Street View (OpenStreetMap)
+                const streetLayer = L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                    maxZoom: 19,
+                    attribution: '&copy; OpenStreetMap'
+                });
+
+                // Satellite View (Esri World Imagery)
+                const satelliteLayer = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+                    maxZoom: 19,
+                    attribution: 'Tiles &copy; Esri'
+                });
+
+                // --- 2. Initialize Map ---
+                const map = L.map(mapId, {
+                    center: [data.data.lat, data.data.lng],
+                    zoom: 17, // Start zoomed in closer
+                    layers: [streetLayer], // Default to Street View
+                    zoomControl: false // Optional: Hide zoom buttons if you want a cleaner look (remove this line to keep them)
+                });
+
+                // Add Zoom Control manually (if you want it in a specific spot, otherwise default is fine)
+                L.control.zoom({ position: 'topleft' }).addTo(map);
+
+                // --- 3. Add the "Button" (Layer Switcher) ---
+                const baseMaps = {
+                    "Street Map": streetLayer,
+                    "Satellite": satelliteLayer
+                };
+                
+                // Position topright is standard for these controls
+                L.control.layers(baseMaps, null, { position: 'topright' }).addTo(map);
+
+                // --- 4. Add Marker ---
+                L.marker([data.data.lat, data.data.lng]).addTo(map)
+                    .bindPopup(`<b>${data.data.name}</b><br>Code: ${bCode}`)
+                    .openPopup();
+
+                if (hasStart) {
+                    L.marker([startLat, startLng]).addTo(map).bindPopup(startLabel);
+                    const routeUrl = `https://routing.openstreetmap.de/routed-foot/route/v1/foot/${startLng},${startLat};${data.data.lng},${data.data.lat}?overview=full&geometries=geojson`;
+                    fetch(routeUrl)
+                        .then(res => res.json())
+                        .then(route => {
+                            if (route.code !== 'Ok' || !route.routes?.length) {
+                                map.fitBounds(L.latLngBounds([[startLat, startLng], [data.data.lat, data.data.lng]]), { padding: [20, 20] });
+                                return;
+                            }
+                            const line = L.geoJSON(route.routes[0].geometry, {
+                                style: { color: '#0d6efd', weight: 4, opacity: 0.9 }
+                            }).addTo(map);
+                            map.fitBounds(line.getBounds(), { padding: [20, 20] });
+                        })
+                        .catch(() => {
+                            map.fitBounds(L.latLngBounds([[startLat, startLng], [data.data.lat, data.data.lng]]), { padding: [20, 20] });
+                        });
+                }
+
+                // Fix map rendering issues inside hidden/flex containers
+                setTimeout(() => { map.invalidateSize(); }, 300);
+            }
+        })
+        .catch(err => console.log("Map widget error:", err));
+    }
+})();
+</script>
+{% endmacro %}

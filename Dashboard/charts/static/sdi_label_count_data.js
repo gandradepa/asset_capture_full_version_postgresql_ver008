@@ -1,0 +1,1 @@
+window.SDI_LABEL_COUNT_DATA = [{"sdi_label": "SDI", "process": "Electrical", "sdi_label_count": 49}, {"sdi_label": "SDI", "process": "Mechanical/Backflow", "sdi_label_count": 72}, {"sdi_label": "SDI", "process": "archived", "sdi_label_count": 136}, {"sdi_label": "SDI", "process": "requested_ticket", "sdi_label_count": 123}];

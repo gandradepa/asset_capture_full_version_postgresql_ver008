@@ -1,0 +1,97 @@
+{% macro render_map(building_code, height='250px') %}
+<script>
+    // 1. Lazy Load Leaflet CSS/JS to avoid blocking render
+    if (!document.getElementById('leaflet-css')) {
+        let link = document.createElement('link');
+        link.id = 'leaflet-css';
+        link.rel = 'stylesheet';
+        link.href = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.css';
+        document.head.appendChild(link);
+    }
+    if (!document.getElementById('leaflet-js')) {
+        let script = document.createElement('script');
+        script.id = 'leaflet-js';
+        script.src = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.js';
+        document.head.appendChild(script);
+    }
+</script>
+
+<style>
+    .map-container-widget {
+        height: {{ height }};
+        width: 100%;
+        background: #f8f9fa;
+        display: none; /* Hidden by default until data confirms location */
+        z-index: 1;
+        border-radius: 12px;
+        border: 1px solid #e9ecef;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+        margin-bottom: 1rem;
+    }
+    /* Fix for layer control z-index */
+    .leaflet-control-layers {
+        border: none !important;
+        box-shadow: 0 2px 5px rgba(0,0,0,0.4) !important;
+    }
+</style>
+
+<div id="map_widget_{{ building_code }}" class="map-container-widget"></div>
+
+<script>
+(function() {
+    const bCode = "{{ building_code }}";
+    const mapId = "map_widget_{{ building_code }}";
+
+    // Wait for Leaflet global object (L) to load
+    const checkLeaflet = setInterval(function() {
+        if (window.L) {
+            clearInterval(checkLeaflet);
+            initWidgetMap();
+        }
+    }, 100);
+
+    function initWidgetMap() {
+        // Fetch coordinates from the shared GPS Service
+        fetch(`/api/building_location/${bCode}`)
+        .then(res => res.json())
+        .then(data => {
+            if (data.success && data.data) {
+                const container = document.getElementById(mapId);
+                container.style.display = 'block';
+
+                // --- Define Layers ---
+                const streetLayer = L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                    maxZoom: 19,
+                    attribution: '&copy; OpenStreetMap'
+                });
+                const satelliteLayer = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+                    maxZoom: 19,
+                    attribution: 'Tiles &copy; Esri'
+                });
+
+                // --- Init Map ---
+                const map = L.map(mapId, {
+                    center: [data.data.lat, data.data.lng],
+                    zoom: 17, 
+                    layers: [streetLayer],
+                    zoomControl: false 
+                });
+
+                // Add Controls
+                L.control.zoom({ position: 'topleft' }).addTo(map);
+                L.control.layers({ "Street Map": streetLayer, "Satellite": satelliteLayer }, null, { position: 'topright' }).addTo(map);
+
+                // Add Marker
+                L.marker([data.data.lat, data.data.lng]).addTo(map)
+                    .bindPopup(`<b>${data.data.name}</b><br>Code: ${bCode}`)
+                    .openPopup();
+
+                // Fix rendering if container was hidden
+                setTimeout(() => { map.invalidateSize(); }, 300);
+            }
+        })
+        .catch(err => console.log("Map widget error:", err));
+    }
+})();
+</script>
+{% endmacro %}

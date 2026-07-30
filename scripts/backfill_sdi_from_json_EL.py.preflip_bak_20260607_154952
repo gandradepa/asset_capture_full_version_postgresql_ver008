@@ -1,0 +1,261 @@
+"""
+Backfill sdi_dataset_EL rows from their matching Output_jason_api JSON files.
+
+Context: some sdi_dataset_EL rows end up with empty critical fields (UBC Asset
+Tag, Equipment ID, Supply From, Voltage, Amperage, etc.) even though the
+matching JSON has the full AI-extracted data. This script re-runs the
+canonical JSON->DB sync function (_sync_db_from_structured) against each
+affected row so the DB matches the JSON.
+
+Safety:
+  - Default is dry-run. Pass --apply to actually write.
+  - By default only touches rows where UBC Asset Tag AND Equipment ID are both
+    empty in the DB. Pass --force to also touch rows that look fine (not
+    normally needed).
+  - Make a DB backup before running with --apply.
+
+Usage:
+  python scripts/backfill_sdi_from_json_EL.py                      # dry-run, all buildings
+  python scripts/backfill_sdi_from_json_EL.py --building 217       # dry-run, one building
+  python scripts/backfill_sdi_from_json_EL.py --qr 0000183852      # dry-run, one QR
+  python scripts/backfill_sdi_from_json_EL.py --apply              # actually write
+  python scripts/backfill_sdi_from_json_EL.py --force --apply      # also touch non-empty rows
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import sqlite3
+import sys
+from typing import Optional
+
+REPO_ROOT = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
+DEFAULT_DB = os.path.join(REPO_ROOT, "asset_capture_app_dev", "data", "QR_codes.db")
+DEFAULT_JSON_DIR = os.path.join(REPO_ROOT, "Output_jason_api")
+EL_DASHBOARD_DIR = os.path.join(REPO_ROOT, "review", "Asset_dashboard_browser_EL")
+AUTH_SERVICE_DIR = os.path.join(REPO_ROOT, "auth_service")
+
+CRITICAL_FIELDS = ("UBC Asset Tag", "Equipment ID", "Supply From",
+                   "Amperage Rating", "Voltage Rating", "Ampere", "Volts")
+
+
+def parse_args():
+    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--db", default=DEFAULT_DB, help=f"SQLite DB path (default: {DEFAULT_DB})")
+    ap.add_argument("--json-dir", default=DEFAULT_JSON_DIR, help=f"JSON dir (default: {DEFAULT_JSON_DIR})")
+    ap.add_argument("--building", default=None, help="Restrict to one building code")
+    ap.add_argument("--qr", default=None, help="Restrict to one QR code")
+    ap.add_argument("--apply", action="store_true", help="Actually write (default: dry-run)")
+    ap.add_argument("--force", action="store_true",
+                    help="Also sync rows whose DB columns already look populated (default: only empty)")
+    ap.add_argument("--limit", type=int, default=0, help="Cap number of rows processed (0 = no cap)")
+    return ap.parse_args()
+
+
+def setup_module_env(db: str, json_dir: str):
+    os.environ["DB_PATH"] = db
+    os.environ["JSON_DIR"] = json_dir
+    # Asset_dashboard_EL sets app.config['SQLALCHEMY_DATABASE_URI'] from
+    # DATABASE_URI at module-import time. If the env var is missing the
+    # import fails before _sync_db_from_structured is callable. Point it at
+    # the local auth users.db — this script never triggers a user login.
+    if "DATABASE_URI" not in os.environ:
+        users_db = os.path.join(AUTH_SERVICE_DIR, "users.db")
+        os.environ["DATABASE_URI"] = f"sqlite:///{users_db.replace(os.sep, '/')}"
+    for p in (AUTH_SERVICE_DIR, EL_DASHBOARD_DIR):
+        if p not in sys.path:
+            sys.path.insert(0, p)
+
+
+def _fetch_rows(conn: sqlite3.Connection, building: Optional[str], qr: Optional[str], force: bool):
+    q = 'SELECT rowid, "QR Code", Building, "UBC Asset Tag", "Equipment ID" FROM sdi_dataset_EL WHERE 1=1'
+    params: list = []
+    if not force:
+        q += ' AND COALESCE(TRIM("UBC Asset Tag"), "") = "" AND COALESCE(TRIM("Equipment ID"), "") = ""'
+    if building:
+        q += ' AND Building = ?'
+        params.append(building)
+    if qr:
+        q += ' AND "QR Code" = ?'
+        params.append(qr)
+    q += ' ORDER BY Building, "QR Code"'
+    conn.row_factory = sqlite3.Row
+    return conn.execute(q, params).fetchall()
+
+
+def _load_json_payload(json_dir: str, qr: str, building: str):
+    path = os.path.join(json_dir, f"{qr}_EL_{building}.json")
+    if not os.path.isfile(path):
+        return None, path, f"JSON file missing: {path}"
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except Exception as e:
+        return None, path, f"JSON read failed: {e}"
+    sd = data.get("structured_data") or {}
+    if not isinstance(sd, dict):
+        return None, path, "structured_data missing/not a dict"
+    tag = (sd.get("UBC Asset Tag") or "").strip() or (sd.get("Branch Panel") or "").strip()
+    if not tag:
+        return None, path, "JSON has empty UBC Asset Tag AND Branch Panel"
+    return data, path, None
+
+
+def _snapshot_sdi_row(conn: sqlite3.Connection, qr: str) -> dict:
+    conn.row_factory = sqlite3.Row
+    row = conn.execute(
+        'SELECT "UBC Asset Tag","Equipment ID","Supply From","Amperage Rating","Voltage Rating","Volts","Ampere","Location","Avg_ai_conf" '
+        'FROM sdi_dataset_EL WHERE "QR Code" = ?', (qr,)
+    ).fetchone()
+    return dict(row) if row else {}
+
+
+def _qr_codes_location(conn: sqlite3.Connection, qr: str) -> Optional[str]:
+    """QR_codes.Location is the canonical location store (cascades to Space/
+    Floor/etc). Prefer it over the JSON's structured_data.Location when it's
+    populated, since the JSON may carry stale AI-extracted values while the
+    user has since edited Location through the Swift Over / review UIs."""
+    try:
+        row = conn.execute('SELECT Location FROM QR_codes WHERE QR_code_ID = ?', (qr,)).fetchone()
+    except sqlite3.Error:
+        return None
+    if not row:
+        return None
+    val = row[0]
+    if val is None:
+        return None
+    val = str(val).strip()
+    return val or None
+
+
+def _diff(before: dict, after: dict) -> list[tuple[str, object, object]]:
+    keys = sorted(set(before) | set(after))
+    out = []
+    for k in keys:
+        b = before.get(k)
+        a = after.get(k)
+        if (b or "") != (a or ""):
+            out.append((k, b, a))
+    return out
+
+
+def main():
+    args = parse_args()
+    if not os.path.isfile(args.db):
+        sys.exit(f"DB not found: {args.db}")
+    if not os.path.isdir(args.json_dir):
+        sys.exit(f"JSON dir not found: {args.json_dir}")
+
+    setup_module_env(args.db, args.json_dir)
+    try:
+        import Asset_dashboard_EL as el_mod
+    except Exception as e:
+        sys.exit(f"Failed to import Asset_dashboard_EL: {e}")
+
+    sync = el_mod._sync_db_from_structured
+
+    mode = "APPLY (writing)" if args.apply else "DRY-RUN (no writes)"
+    scope = []
+    if args.building: scope.append(f"building={args.building}")
+    if args.qr: scope.append(f"qr={args.qr}")
+    if args.force: scope.append("force=all-rows")
+    else: scope.append("only-empty-rows")
+    print(f"== Backfill sdi_dataset_EL from JSON  |  {mode}  |  {', '.join(scope)}")
+    print(f"   DB:   {args.db}")
+    print(f"   JSON: {args.json_dir}")
+
+    conn = sqlite3.connect(args.db)
+    try:
+        rows = _fetch_rows(conn, args.building, args.qr, args.force)
+    finally:
+        conn.close()
+
+    if args.limit > 0:
+        rows = rows[: args.limit]
+
+    print(f"   candidates: {len(rows)}\n")
+
+    processed = synced = skipped = failed = 0
+    for r in rows:
+        qr = r["QR Code"]
+        bld = r["Building"]
+        if not qr or not bld:
+            skipped += 1
+            continue
+        processed += 1
+
+        payload, jp, err = _load_json_payload(args.json_dir, qr, bld)
+        if err:
+            print(f"[SKIP] {qr}  bld={bld}  {err}")
+            skipped += 1
+            continue
+
+        sd = dict(payload["structured_data"])  # copy — we may patch Location
+        avg = payload.get("Avg_ai_conf") or payload.get("avg_ai_conf")
+
+        conn = sqlite3.connect(args.db)
+        try:
+            before = _snapshot_sdi_row(conn, qr)
+            canonical_loc = _qr_codes_location(conn, qr)
+        finally:
+            conn.close()
+
+        # Location policy: QR_codes.Location is the canonical store. If it's
+        # populated, make the backfill's Location match it rather than the
+        # JSON's (possibly stale) structured_data.Location. Leaves the JSON
+        # key alone if QR_codes has nothing to contribute.
+        if canonical_loc is not None:
+            sd["Location"] = canonical_loc
+
+        if not args.apply:
+            # Build a synthetic "after" by trusting the (possibly patched) sd
+            # for the key fields. Not an exhaustive preview — the real call
+            # derives more fields — but it shows which empties will fill.
+            preview_after = dict(before)
+            for k in ("UBC Asset Tag", "Supply From", "Location"):
+                v = sd.get(k)
+                if v is not None: preview_after[k] = str(v).strip()
+            for k_src, k_dst in (("Volts", "Voltage Rating"), ("Ampere", "Amperage Rating")):
+                v = sd.get(k_src)
+                if v is not None:
+                    preview_after[k_src] = str(v).strip()
+                    preview_after[k_dst] = str(v).strip()
+            diffs = _diff(before, preview_after)
+            loc_note = ""
+            if canonical_loc is not None:
+                loc_note = f"  (Location sourced from QR_codes: {canonical_loc!r})"
+            print(f"[DRY] {qr}  bld={bld}  would change {len(diffs)} field(s){loc_note}:")
+            for k, b, a in diffs:
+                print(f"        {k}: {b!r} -> {a!r}")
+            continue
+
+        # APPLY path
+        try:
+            sync(qr=qr, building=bld, sd=sd, asset_type=(payload.get("asset_type") or "EL"), avg_ai_conf=avg)
+        except Exception as e:
+            print(f"[FAIL] {qr}  bld={bld}  sync raised: {e}")
+            failed += 1
+            continue
+
+        conn = sqlite3.connect(args.db)
+        try:
+            after = _snapshot_sdi_row(conn, qr)
+        finally:
+            conn.close()
+
+        diffs = _diff(before, after)
+        synced += 1
+        print(f"[OK ] {qr}  bld={bld}  fields changed: {len(diffs)}")
+        for k, b, a in diffs:
+            print(f"        {k}: {b!r} -> {a!r}")
+
+    print()
+    print(f"Done. processed={processed}  synced={synced}  skipped={skipped}  failed={failed}")
+    if not args.apply:
+        print("(dry-run — no DB writes)")
+
+
+if __name__ == "__main__":
+    main()

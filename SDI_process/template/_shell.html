@@ -1,0 +1,7 @@
+{# UBC Asset Management shell — sidebar + topbar overlay. #}
+<link rel="stylesheet" href="{{ url_for('static', filename='shell/shell.css') }}?v=20260623-3">
+<meta name="acshell-active" content="sdi">
+{% if current_user is defined and current_user.is_authenticated %}
+<meta name="acshell-user" content="{{ current_user.username or username or 'User' }}">
+{% endif %}
+<script src="{{ url_for('static', filename='shell/shell.js') }}?v=20260623-3" defer></script>

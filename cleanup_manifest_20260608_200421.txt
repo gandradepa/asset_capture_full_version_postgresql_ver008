@@ -1,0 +1,76 @@
+# C4 cutover cleanup Mon Jun  8 20:04:21 PDT 2026
+  1.7G  /home/developer/asset_backup_stage_20260604_105707
+  1.7G  /home/developer/asset_backup_stage_20260604_090624
+   14M  /home/developer/staging_review_el
+  7.5M  /home/developer/staging_dashboard
+  4.8M  /home/developer/staging_sdi
+   16M  /home/developer/backups
+  376K  /home/developer/docs_backup_20260608_184400.tar.gz
+  9.3M  /home/developer/QR_database/dryrun_snapshot.db
+  4.0K  /home/developer/QR_database/dryrun_etl.py
+  4.0K  /home/developer/QR_database/pg_verify.py
+  4.0K  /home/developer/QR_database/pg_trigger_test.py
+  4.0K  /home/developer/QR_database/pg_sdi_guard_test.py
+  4.0K  /home/developer/QR_database/pg_matching_test.py
+  4.0K  /home/developer/QR_database/etl.log
+  4.0K  /home/developer/QR_database/pgloader.log
+  2.5M  /home/developer/QR_database/server.log
+  1.2M  /tmp/qr_code_db.dump
+  7.7M  /tmp/qr_code_db.sql
+  128K  /tmp/docs_bundle.tgz
+  4.0K  /tmp/docs_deploy_stamp
+  4.0K  /tmp/docs_to_deploy.txt
+  272K  /home/developer/API/API_interface_ME_ver00.py.preflip_bak_20260607_154952
+  8.0K  /home/developer/QR_database/c3_model.sql.bak_20260606_122249
+  8.0K  /home/developer/QR_database/c3_model.sql.bak_flip_20260607_154624
+  220K  /home/developer/Dashboard/templates/dashboard.html.bak_20260504_141500_pre_review_url_filter
+  224K  /home/developer/Dashboard/templates/dashboard.html.bak_20260504_155624_pre_user_admin
+  236K  /home/developer/Dashboard/templates/dashboard.html.bak_20260504_161326_pre_user_name
+  240K  /home/developer/Dashboard/templates/dashboard.html.bak_20260505_123832
+  280K  /home/developer/Dashboard/templates/dashboard.html.bak_20260520_104419
+  288K  /home/developer/Dashboard/templates/dashboard.html.bak_20260520_105303
+# --- staging dirs (missed in first pass), deleted Mon Jun  8 20:12:32 PDT 2026 ---
+  3.3M  /home/developer/staging_review_me
+  2.5M  /home/developer/staging_review_bf
+  1.5M  /home/developer/staging_api
+  528K  /home/developer/staging_scripts
+  100K  /home/developer/staging_capture
+  4.0K  /home/developer/staging_ai_qa
+# --- round 3 (full re-scan finds), deleted Mon Jun  8 20:19:13 PDT 2026 ---
+   76M  deploy_backups
+  4.0K  db_backend.env.preflipfix_165459
+   40K  current_prod_templates.tar.gz
+  4.0K  __pycache__
+     0  Comp
+  2.6M  UBC Asset Capture Application - Server Documentation_old.docx
+  1.6M  UBC Asset Capture Application - Technical Documentation_preveious_version.docx
+  1.6M  UBC Asset Capture Application - Technical Documentation_old.docx
+   40K  UBC Asset Capture Application - Server Documentation_new_server_manual_old.docx
+# --- redundant SQLite .bak removal (live rollback kept), Tue Jun  9 08:39:26 PDT 2026 ---
+8.2M  QR_codes.bak_20260430_151626_ai_status_el_backfill.db
+8.2M  QR_codes.bak_20260430_153019_purge_0000084088.db
+8.2M  QR_codes.bak_20260430_153321_purge_0000184919.db
+8.2M  QR_codes.bak_20260430_153330_purge_None.db
+8.2M  QR_codes.bak_20260430_153903_refresh_el_stale_jsons.db
+8.2M  QR_codes.bak_20260501_110823_main_asset_backfill.db
+8.2M  QR_codes.bak_20260501_120449_main_asset_backfill.db
+8.2M  QR_codes.bak_20260501_132524_pre_sust_sync.db
+8.2M  QR_codes.bak_20260501_135423_pre_sust_sync.db
+11M  QR_codes.bak_20260501_140906_pre_sust_asset_delete.db
+11M  QR_codes.bak_20260504_101732_pre_750_recover.db
+11M  QR_codes.bak_20260504_120500_pre_wire_split.db
+17M  QR_codes.bak_20260602_153054_sdi_package_db_guardrails.db
+17M  QR_codes.bak_20260603_152011_asset_system_code_text.db
+17M  QR_codes.bak_20260603_152154_before_vacuum_after_asset_system_code_text.db
+11M  QR_codes.bak_pre_audit_trail_20260506_103937.db
+17M  QR_codes.bak_pre_id_check_generated_20260511_122107.db
+8.2M  QR_codes.db.bak.20260422_164448
+8.2M  QR_codes.db.bak.prebulk.20260422_165639
+8.2M  QR_codes.db.bak.premig.20260422_165143
+8.1M  QR_codes.db.bak_20260422_090511
+17M  QR_codes.db.bak_20260603_085120
+9.2M  QR_codes.db.bak_20260604_101143_phase_a
+9.3M  QR_codes.db.bak_20260604_103512_phase_b
+8.2M  QR_codes.db.bak_pre_sdi00010_cleanup_20260427_090022
+8.2M  QR_codes.db.bak_unknown_pnl_20260422_135436
+9.3M  QR_codes.db.fullbak_20260604_104052_postAB

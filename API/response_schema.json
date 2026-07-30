@@ -1,0 +1,86 @@
+{
+  "type": "object",
+  "properties": {
+    "qr_code": {
+      "type": "string"
+    },
+    "building_code": {
+      "type": "string"
+    },
+    "asset_type": {
+      "type": "string",
+      "enum": [
+        "ME",
+        "BF",
+        "EL"
+      ]
+    },
+    "extracted": {
+      "type": "object",
+      "properties": {
+        "Manufacturer": {
+          "type": "string"
+        },
+        "Model": {
+          "type": "string"
+        },
+        "Serial": {
+          "type": "string"
+        },
+        "Year": {
+          "type": "string"
+        },
+        "UBC Tag": {
+          "type": "string"
+        },
+        "Technical Safety BC": {
+          "type": "string"
+        },
+        "EL": {
+          "type": "object"
+        }
+      },
+      "required": [
+        "Manufacturer",
+        "Model",
+        "Serial",
+        "Year",
+        "UBC Tag",
+        "Technical Safety BC",
+        "EL"
+      ]
+    },
+    "confidence": {
+      "type": "object"
+    },
+    "manual_review": {
+      "type": "object",
+      "properties": {
+        "prefill": {
+          "type": "object"
+        },
+        "flag_for_review": {
+          "type": "integer",
+          "enum": [
+            0,
+            1
+          ]
+        },
+        "raw_ocr": {
+          "type": "array"
+        }
+      },
+      "required": [
+        "flag_for_review"
+      ]
+    }
+  },
+  "required": [
+    "qr_code",
+    "building_code",
+    "asset_type",
+    "extracted",
+    "confidence",
+    "manual_review"
+  ]
+}

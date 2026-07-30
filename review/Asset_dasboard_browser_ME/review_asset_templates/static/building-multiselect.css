@@ -1,0 +1,83 @@
+/* building-multiselect.css — styles for the shared Building multi-select dropdown
+   (window.BuildingMultiselect in building-multiselect.js).
+
+   THREE-COPY RULE: this file exists byte-identically in the ME, BF, and EL review
+   apps (same rule as image-viewer.js). Edit all three together; `git diff
+   --no-index` between copies must stay empty.
+
+   Self-contained on purpose: values are hardcoded to match the review apps'
+   "stitch" filter styling (.stitch-input) — the Life Cycle design tokens do not
+   exist in these apps. */
+
+.ms { position: relative; width: 100%; }
+.ms-toggle {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  width: 100%; min-height: 38px; padding: 8px 12px;
+  font-family: inherit; font-size: 0.9rem; text-align: left; color: #334155;
+  background-color: #f8fafc;
+  border: 1px solid #e2e8f0; border-radius: 6px;
+  cursor: pointer;
+  transition: border-color 0.2s, background-color 0.2s, box-shadow 0.2s;
+}
+.ms-toggle:hover { border-color: #cbd5e1; }
+.ms-toggle:focus-visible, .ms.is-open .ms-toggle {
+  outline: none; background-color: #fff;
+  border-color: #3b82f6; box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+}
+.ms-text { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.ms-caret { flex: 0 0 auto; font-size: 0.7rem; color: #64748b; transition: transform 0.2s; }
+.ms.is-open .ms-caret { transform: rotate(180deg); }
+.ms-panel {
+  /* Fixed + JS-positioned (see positionPanel in building-multiselect.js) so the
+     pop-over escapes overflow clipping and sticky bars. z-index 2000 clears the
+     EL command bar (1040) and DataTables headers. */
+  position: fixed; top: 0; left: 0;
+  width: max-content; max-width: 24rem; z-index: 2000;
+  display: flex; flex-direction: column; gap: 6px;
+  padding: 8px;
+  background: #fff;
+  border: 1px solid #e2e8f0; border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.12);
+}
+.ms-panel[hidden] { display: none; }   /* beats .ms-panel { display:flex } */
+.ms-search {
+  width: 100%; min-height: 34px; padding: 4px 10px;
+  font-family: inherit; font-size: 0.85rem; color: #334155;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0; border-radius: 6px;
+}
+.ms-search:focus {
+  outline: none; background: #fff;
+  border-color: #3b82f6; box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+}
+.ms-actions { display: flex; gap: 6px; padding: 0 2px; }
+.ms-action {
+  padding: 2px 4px; font-family: inherit; font-size: 0.75rem; font-weight: 600;
+  color: #3b82f6; background: none; border: none; border-radius: 4px;
+  cursor: pointer;
+}
+.ms-action:hover { text-decoration: underline; }
+.ms-action:focus-visible { outline: none; box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1); }
+.ms-options { max-height: 260px; overflow-y: auto; overflow-x: hidden; display: flex; flex-direction: column; }
+/* Option rows are <label> elements. The ".ms-options" prefix (0,2,0 specificity)
+   plus the explicit font/margin/transform resets harden them against host label
+   styling (e.g. the Dashboard's ".filter-container label" sets display:block,
+   uppercase, small bold muted text — which would break the flex alignment). */
+.ms-options .ms-option {
+  display: flex; align-items: center; gap: 8px;
+  margin: 0; padding: 6px 10px; border-radius: 6px;
+  font-size: 0.85rem; font-weight: 400; color: #334155;
+  text-transform: none;
+  white-space: nowrap; cursor: pointer;
+  -webkit-user-select: none; user-select: none;
+  transition: background 0.15s, color 0.15s;
+}
+.ms-options .ms-option[hidden] { display: none; }  /* beats .ms-option { display:flex } */
+.ms-options .ms-option:hover { background: #f1f5f9; }
+.ms-options .ms-option input {
+  flex: 0 0 auto; width: 15px; height: 15px; margin: 0;
+  accent-color: #3b82f6; cursor: pointer;
+}
+.ms-options .ms-option.is-on { background: #eff6ff; color: #1d4ed8; font-weight: 600; }
+.ms-option-name { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.ms-empty { padding: 6px 10px; font-size: 0.85rem; color: #64748b; }

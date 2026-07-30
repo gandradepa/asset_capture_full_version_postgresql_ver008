@@ -1,0 +1,160 @@
+--- templates/start.html
++++ templates/start.html
+@@ -24,7 +24,7 @@
+ <!-- Asset Setup Section -->
+ <div class="card mb-4">
+   <div class="mb-4 pb-2 border-b border-gray-200">
+-    <h3 class="text-lg font-bold text-gray-800">Asset Setup</h3>
++    <h3 class="text-lg font-semibold text-gray-800">Let's find your asset</h3>
+   </div>
+ 
+   <form method="POST" action="{{ url_for('capture') }}" id="startForm">
+@@ -45,20 +45,19 @@
+ 
+     <!-- Capture Process -->
+     <div class="field-group">
+-      <label for="capture_process" class="block text-sm font-semibold mb-2">Capture Process</label>
++      <label for="capture_process" class="block text-sm font-medium mb-2">What are you doing?</label>
+       <select name="capture_process" id="capture_process" required>
+-        <option value="" {% if not capture_process %}selected{% endif %}>-- Select Capture Process --</option>
+-        <option value="0" {% if capture_process=='0' %}selected{% endif %}>New Asset (QR Required)</option>
+-        <option value="1" {% if capture_process=='1' %}selected{% endif %}>Existing Ones (QR Required)</option>
+-        <option value="2" {% if capture_process=='2' %}selected{% endif %}>Replacing | Checking Asset (NO QR Required)
++        <option value="" {% if not capture_process %}selected{% endif %}>Pick a workflow</option>
++        <option value="0" {% if capture_process=='0' %}selected{% endif %}>Add a new asset (scan QR)</option>
++        <option value="1" {% if capture_process=='1' %}selected{% endif %}>Update an existing asset (scan QR)</option>
++        <option value="2" {% if capture_process=='2' %}selected{% endif %}>Replace or check an asset (no QR needed)
+         </option>
+       </select>
+-      <span class="helper-text">Choose the type of asset capture workflow</span>
+     </div>
+ 
+     <!-- Select Building -->
+     <div class="field-group field-with-icon">
+-      <label for="building_code" class="block text-sm font-semibold mb-2">Select Building</label>
++      <label for="building_code" class="block text-sm font-medium mb-2">Which building?</label>
+       <span class="field-icon">
+         <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor">
+           <path
+@@ -66,35 +65,33 @@
+         </svg>
+       </span>
+       <select name="building_code" id="building_code" required>
+-        <option value="">-- Select Building --</option>
++        <option value="">Pick a building</option>
+         {% for b in building_options %}
+         <option value="{{ b.code }}" {% if building_code and b.code==building_code %}selected{% endif %}>{{ b.name }}
+         </option>
+         {% endfor %}
+       </select>
+-      <span class="helper-text">Choose the property where the asset is located</span>
+     </div>
+ 
+     <!-- Location -->
+     <div class="field-group">
+-      <label for="location" class="block text-sm font-semibold mb-2">Location</label>
+-      <input type="text" id="location_search" class="w-full mb-2" placeholder="Type to filter locations"
++      <label for="location" class="block text-sm font-medium mb-2">Where in the building?</label>
++      <input type="text" id="location_search" class="w-full mb-2" placeholder="Start typing a room or space"
+         autocomplete="off" />
+       <noscript><input type="text" name="location_fallback" class="w-full mb-2"
+-          placeholder="Enter location manually"></noscript>
++          placeholder="Type the location"></noscript>
+       <div id="location_suggestions" class="w-full"
+         style="max-height: 160px; overflow-y: auto; border: 1px solid #e5e7eb; border-radius: 6px; background:#fff; position: relative; z-index: 5;">
+       </div>
+       <div id="location_skeleton" class="skeleton skeleton-input" style="display: none;"></div>
+       <select name="location" id="location">
+-        <option value="">-- Select First the Property --</option>
++        <option value="">Pick a building first</option>
+       </select>
+-      <span class="helper-text">Select the specific space or room</span>
+     </div>
+ 
+     <!-- Asset Type -->
+     <div class="field-group field-with-icon">
+-      <label for="asset_type" class="block text-sm font-semibold mb-2">Asset Type</label>
++      <label for="asset_type" class="block text-sm font-medium mb-2">What kind of asset?</label>
+       <span class="field-icon" id="asset_type_icon">
+         <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor">
+           <path
+@@ -106,12 +103,10 @@
+         <option value="Electrical" {% if asset_type=='Electrical' %}selected{% endif %}>Electrical</option>
+         <option value="Backflow" {% if asset_type=='Backflow' %}selected{% endif %}>Backflow</option>
+       </select>
+-      <span class="helper-text">Type of equipment being captured</span>
+     </div>
+ 
+-    <!-- Identify Asset Section -->
++    <!-- Identify Asset Section (header removed — the section's purpose is self-evident) -->
+     <div class="bg-gray-50 rounded-xl border border-gray-200 p-4 mb-4">
+-      <h3 class="text-center font-bold text-gray-800 mb-4">Identify Asset</h3>
+ 
+       <!-- QR Scanner Area (Box) -->
+       <div id="qr-reader" class="mb-4"
+@@ -134,7 +129,7 @@
+         <button type="button" id="startScanner"
+           class="btn btn-primary w-full py-2 flex flex-col gap-1 items-center justify-center bg-blue-600 hover:bg-blue-700 text-white shadow-md transition-all">
+           <span class="text-xl">▣</span>
+-          <span id="scannerBtnText" class="font-bold text-sm uppercase tracking-wide">TAP TO SCAN QR CODE</span>
++          <span id="scannerBtnText" class="font-semibold text-sm">Scan the QR code</span>
+         </button>
+         <div id="torch-container" class="hidden">
+           <button type="button" id="torchToggle" class="btn btn-outline w-full mt-2" title="Toggle flashlight">Toggle
+@@ -151,24 +146,24 @@
+           <div class="w-full border-t border-gray-300"></div>
+         </div>
+         <div class="relative flex justify-center">
+-          <span class="bg-gray-50 px-2 text-sm text-gray-500">or enter manually</span>
++          <span class="bg-gray-50 px-2 text-sm text-gray-500">or type the code</span>
+         </div>
+       </div>
+ 
+       <!-- Inline Manual Entry -->
+       <div class="manual-entry-row">
+         <div class="manual-entry-input-wrapper">
+-          <input type="text" id="manual_qr" class="manual-entry-input" placeholder="10-digit asset code"
++          <input type="text" id="manual_qr" class="manual-entry-input" placeholder="10-digit code"
+             pattern="[0-9]{10}" inputmode="numeric" maxlength="10" autocomplete="off"
+-            aria-label="Enter 10-digit QR code manually" />
++            aria-label="Enter 10-digit code" />
+         </div>
+-        <button type="button" id="useManual" class="btn btn-secondary">Verify</button>
++        <button type="button" id="useManual" class="btn btn-secondary">Use this code</button>
+       </div>
+     </div>
+ 
+     <!-- Submit Button (Sticky) -->
+     <div class="sticky-actions">
+-      <button type="submit" id="submitBtn" class="btn btn-success btn-large btn-full font-bold uppercase tracking-wide">
++      <button type="submit" id="submitBtn" class="btn btn-success btn-large btn-full font-semibold">
+         Continue
+       </button>
+     </div>
+@@ -178,7 +173,7 @@
+ <!-- Recent scans sidebar -->
+ <div class="card mt-4">
+   <div class="mb-2 pb-2 border-b border-gray-200">
+-    <h3 class="text-md font-bold text-gray-700">Recent Scans</h3>
++    <h3 class="text-md font-semibold text-gray-700">Your recent scans</h3>
+   </div>
+   <div id="recent_scans" class="space-y-2 text-sm text-gray-600">
+     <div id="recent_scans_skeleton" class="flex gap-3 overflow-hidden">
+@@ -186,7 +181,7 @@
+       <div class="skeleton skeleton-card"></div>
+       <div class="skeleton skeleton-card"></div>
+     </div>
+-    <div id="no-recent-scans" class="text-center italic text-gray-400 py-2 hidden">No recent scans</div>
++    <div id="no-recent-scans" class="text-center italic text-gray-400 py-2 hidden">Your scans will show up here</div>
+   </div>
+ </div>
+ 
+@@ -1068,7 +1063,7 @@
+       container.innerHTML = '';
+       container.className = 'recent-scans-carousel';
+       if (!recentScans.length) {
+-        container.innerHTML = '<div class="text-gray-500 text-sm" style="padding: 8px;">No recent scans</div>';
++        container.innerHTML = '<div class="text-gray-500 text-sm" style="padding: 8px;">Your scans will show up here</div>';
+         container.className = '';
+         return;
+       }

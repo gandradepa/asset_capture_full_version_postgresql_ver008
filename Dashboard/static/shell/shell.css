@@ -1,0 +1,389 @@
+/* ============================================================
+   UBC Asset Management Shell — sidebar + topbar overlay
+   All selectors are scoped under .acshell-* to avoid colliding
+   with the host application's existing styles.
+   No external dependencies.
+   ============================================================ */
+
+:root {
+  --acshell-navy: #002145;
+  --acshell-blue: #0055B7;
+  --acshell-card: #FFFFFF;
+  --acshell-border: #E5E7EB;
+  --acshell-text: #111827;
+  --acshell-muted: #6B7280;
+  --acshell-success: #059669;
+  --acshell-warning: #D97706;
+  --acshell-danger: #DC2626;
+}
+
+/* Host body shift — JS adds `.acshell-host` to <body> */
+body.acshell-host {
+  padding-left: 325px;
+  padding-top: 64px;
+  box-sizing: border-box;
+}
+
+@media (max-width: 1023.98px) {
+  body.acshell-host {
+    padding-left: 0;
+  }
+}
+
+/* ---------- Sidebar ---------- */
+.acshell-sidebar {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 325px;
+  height: 100vh;
+  background-color: var(--acshell-navy);
+  color: #fff;
+  z-index: 9998;
+  display: flex;
+  flex-direction: column;
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  transition: transform 0.25s ease;
+  box-sizing: border-box;
+}
+
+.acshell-sidebar * { box-sizing: border-box; }
+
+.acshell-brand {
+  padding: 18px 16px 12px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.acshell-logo {
+  width: 47.61px;
+  height: 47.61px;
+  border-radius: 8px;
+  object-fit: cover;
+  display: block;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  background-color: var(--acshell-navy);
+}
+
+.acshell-brand-text {
+  line-height: 1.2;
+}
+.acshell-brand-title {
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+.acshell-brand-sub {
+  font-size: 13px;
+  color: rgba(255, 255, 255, 0.6);
+}
+
+.acshell-close {
+  margin-left: auto;
+  background: transparent;
+  border: 0;
+  color: rgba(255, 255, 255, 0.75);
+  cursor: pointer;
+  padding: 4px;
+  display: none;
+}
+.acshell-close:hover { color: #fff; }
+
+@media (max-width: 1023.98px) {
+  .acshell-close { display: inline-flex; }
+}
+
+.acshell-search {
+  padding: 0 16px 12px;
+  position: relative;
+}
+.acshell-search input {
+  width: 100%;
+  height: 34px;
+  padding: 0 12px 0 32px;
+  font-size: 13px;
+  background-color: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 8px;
+  color: #fff;
+  font-family: inherit;
+  outline: none;
+}
+.acshell-search input::placeholder { color: rgba(255, 255, 255, 0.5); }
+.acshell-search input:focus {
+  border-color: var(--acshell-blue);
+  box-shadow: 0 0 0 3px rgba(0, 85, 183, 0.25);
+}
+.acshell-search-icon {
+  position: absolute;
+  left: 26px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 14px;
+  height: 14px;
+  color: rgba(255, 255, 255, 0.55);
+  pointer-events: none;
+}
+
+.acshell-nav {
+  flex: 1;
+  overflow-y: auto;
+  padding: 4px 8px 16px;
+}
+.acshell-nav::-webkit-scrollbar { width: 6px; }
+.acshell-nav::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.2); border-radius: 3px; }
+.acshell-nav::-webkit-scrollbar-track { background: transparent; }
+
+.acshell-group-label {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.45);
+  padding: 0 12px;
+  margin: 14px 0 6px;
+}
+
+.acshell-link {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  font-size: 13px;
+  color: rgba(255, 255, 255, 0.78);
+  border-radius: 8px;
+  text-decoration: none;
+  position: relative;
+  transition: background-color 0.15s ease, color 0.15s ease;
+  cursor: pointer;
+  line-height: 1.2;
+}
+.acshell-link:hover {
+  background-color: rgba(255, 255, 255, 0.07);
+  color: #fff;
+}
+.acshell-link.acshell-active {
+  background-color: rgba(0, 85, 183, 0.35);
+  color: #fff;
+  font-weight: 500;
+}
+.acshell-link.acshell-active::before {
+  content: '';
+  position: absolute;
+  left: -8px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 3px;
+  height: 22px;
+  background-color: #fff;
+  border-radius: 0 2px 2px 0;
+}
+.acshell-link svg {
+  width: 20.24px;
+  height: 20.24px;
+  flex-shrink: 0;
+}
+
+.acshell-foot {
+  padding: 10px 16px;
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.55);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.acshell-online {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.acshell-online::before {
+  content: '';
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background-color: #34d399;
+}
+
+/* ---------- Topbar ---------- */
+.acshell-topbar {
+  position: fixed;
+  top: 0;
+  left: 325px;
+  right: 0;
+  height: 64px;
+  background-color: #fff;
+  border-bottom: 1px solid var(--acshell-border);
+  display: flex;
+  align-items: center;
+  padding: 0 24px;
+  gap: 16px;
+  z-index: 9997;
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  box-sizing: border-box;
+}
+
+@media (max-width: 1023.98px) {
+  .acshell-topbar {
+    left: 0;
+  }
+}
+
+.acshell-topbar * { box-sizing: border-box; }
+
+.acshell-hamburger {
+  display: none;
+  background: transparent;
+  border: 0;
+  padding: 6px;
+  margin-left: -6px;
+  cursor: pointer;
+  color: var(--acshell-text);
+}
+.acshell-hamburger:hover { background-color: #F3F4F6; border-radius: 6px; }
+.acshell-hamburger svg { width: 22px; height: 22px; }
+
+@media (max-width: 1023.98px) {
+  .acshell-hamburger { display: inline-flex; }
+}
+
+.acshell-breadcrumb {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--acshell-muted);
+}
+.acshell-breadcrumb a {
+  color: var(--acshell-muted);
+  text-decoration: none;
+}
+.acshell-breadcrumb a:hover { color: var(--acshell-blue); }
+.acshell-breadcrumb .acshell-sep { color: #D1D5DB; }
+.acshell-breadcrumb .acshell-current {
+  color: var(--acshell-text);
+  font-weight: 500;
+}
+
+.acshell-topbar-right {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.acshell-globalsearch {
+  position: relative;
+  width: 280px;
+}
+.acshell-globalsearch input {
+  width: 100%;
+  height: 36px;
+  padding: 0 12px 0 36px;
+  font-size: 13px;
+  background-color: #fff;
+  border: 1px solid var(--acshell-border);
+  border-radius: 8px;
+  color: var(--acshell-text);
+  font-family: inherit;
+  outline: none;
+}
+.acshell-globalsearch input:focus {
+  border-color: var(--acshell-blue);
+  box-shadow: 0 0 0 3px rgba(0, 85, 183, 0.12);
+}
+.acshell-globalsearch-icon {
+  position: absolute;
+  left: 12px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 16px;
+  height: 16px;
+  color: var(--acshell-muted);
+}
+
+@media (max-width: 767.98px) {
+  .acshell-globalsearch { display: none; }
+}
+
+.acshell-icon-btn {
+  width: 36px;
+  height: 36px;
+  border-radius: 8px;
+  background-color: transparent;
+  border: 0;
+  color: var(--acshell-text);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  position: relative;
+}
+.acshell-icon-btn:hover { background-color: #F3F4F6; }
+.acshell-icon-btn svg { width: 18px; height: 18px; }
+.acshell-dot-danger {
+  position: absolute;
+  top: 7px;
+  right: 7px;
+  width: 7px;
+  height: 7px;
+  background-color: var(--acshell-danger);
+  border-radius: 50%;
+  border: 1.5px solid #fff;
+}
+
+.acshell-avatar {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, var(--acshell-navy), var(--acshell-blue));
+  color: #fff;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  font-weight: 600;
+  font-family: inherit;
+}
+
+/* ---------- Mobile backdrop ---------- */
+.acshell-backdrop {
+  position: fixed;
+  inset: 0;
+  background-color: rgba(17, 24, 39, 0.5);
+  z-index: 9996;
+}
+
+@media (max-width: 1023.98px) {
+  .acshell-sidebar {
+    transform: translateX(-100%);
+  }
+  .acshell-sidebar.acshell-open {
+    transform: translateX(0);
+  }
+}
+
+/* ---------- Safety: hide on iframes (Dashboard embeds sub-apps via iframe) ---------- */
+body.acshell-embedded .acshell-sidebar,
+body.acshell-embedded .acshell-topbar,
+body.acshell-embedded .acshell-backdrop {
+  display: none !important;
+}
+body.acshell-embedded {
+  padding-left: 0 !important;
+  padding-top: 0 !important;
+}
+
+/* ---------- Push host app's sticky/fixed top bars below the shell topbar ----------
+   The shell's fixed topbar is 64px tall. Any host element that sticks/fixes to
+   top: 0 (e.g. .v2-cmd-bar in the review apps, Bootstrap .sticky-top/.fixed-top)
+   would otherwise slip underneath it. Only applies when the shell is active. */
+body.acshell-host .v2-cmd-bar,
+body.acshell-host .sticky-top,
+body.acshell-host .fixed-top,
+body.acshell-host .navbar.sticky-top,
+body.acshell-host .navbar.fixed-top {
+  top: 64px !important;
+}

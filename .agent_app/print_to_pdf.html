@@ -1,0 +1,186 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+  <meta charset="UTF-8">
+  <title>UBC Asset Capture Application - Documentation</title>
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&family=Fira+Code:wght@400&display=swap');
+
+    body {
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+      max-width: 900px;
+      margin: 0 auto;
+      padding: 40px 30px;
+      color: #1a1a2e;
+      line-height: 1.65;
+      font-size: 13px;
+      background: #fff;
+    }
+
+    h1 {
+      font-size: 24px;
+      margin-top: 40px;
+      border-bottom: 3px solid #002145;
+      padding-bottom: 8px;
+      color: #002145;
+    }
+
+    h2 {
+      font-size: 18px;
+      margin-top: 30px;
+      color: #002145;
+    }
+
+    h3 {
+      font-size: 15px;
+      margin-top: 24px;
+      color: #333;
+    }
+
+    hr {
+      border: none;
+      border-top: 1px solid #ccc;
+      margin: 30px 0;
+    }
+
+    table {
+      border-collapse: collapse;
+      width: 100%;
+      margin: 12px 0;
+      font-size: 12px;
+    }
+
+    th,
+    td {
+      border: 1px solid #d0d0d0;
+      padding: 6px 10px;
+      text-align: left;
+    }
+
+    th {
+      background: #002145;
+      color: white;
+      font-weight: 600;
+    }
+
+    tr:nth-child(even) {
+      background: #f4f6f9;
+    }
+
+    code {
+      font-family: 'Fira Code', monospace;
+      background: #eef2f7;
+      padding: 2px 5px;
+      border-radius: 3px;
+      font-size: 11.5px;
+    }
+
+    pre {
+      background: #1e293b;
+      color: #e2e8f0;
+      padding: 14px 18px;
+      border-radius: 6px;
+      overflow-x: auto;
+      font-size: 11.5px;
+    }
+
+    pre code {
+      background: none;
+      color: inherit;
+      padding: 0;
+    }
+
+    img {
+      max-width: 100%;
+      height: auto;
+      display: block;
+      margin: 16px auto;
+      border: 1px solid #ddd;
+      border-radius: 4px;
+    }
+
+    ul,
+    ol {
+      padding-left: 20px;
+    }
+
+    li {
+      margin-bottom: 4px;
+    }
+
+    strong {
+      color: #002145;
+    }
+
+    @media print {
+      body {
+        padding: 20px;
+        font-size: 11px;
+      }
+
+      h1 {
+        page-break-before: always;
+      }
+
+      h1:first-of-type {
+        page-break-before: avoid;
+      }
+
+      table {
+        page-break-inside: avoid;
+      }
+
+      pre {
+        page-break-inside: avoid;
+      }
+
+      img {
+        page-break-inside: avoid;
+        max-height: 500px;
+      }
+    }
+
+    #loading {
+      text-align: center;
+      padding: 60px;
+      font-size: 18px;
+      color: #666;
+    }
+  </style>
+</head>
+
+<body>
+  <div id="loading">Loading documentation...</div>
+  <div id="content" style="display:none"></div>
+  <script>
+    async function loadAndRender() {
+      try {
+        const resp = await fetch('UBC_Asset_Technical_Documentation.md');
+        let md = await resp.text();
+
+        // Remove the <details>...</details> blocks (not rendered well in print)
+        md = md.replace(/<details>[\s\S]*?<\/details>/g, '');
+
+        // Convert relative image paths to absolute
+        const basePath = window.location.href.replace(/[^/]*$/, '');
+
+        // Render markdown
+        document.getElementById('content').innerHTML = marked.parse(md);
+        document.getElementById('content').style.display = 'block';
+        document.getElementById('loading').style.display = 'none';
+
+        // After rendering, auto-trigger print dialog
+        setTimeout(() => {
+          window.print();
+        }, 2000);
+      } catch (e) {
+        document.getElementById('loading').textContent = 'Error: ' + e.message;
+      }
+    }
+    loadAndRender();
+  </script>
+</body>
+
+</html>

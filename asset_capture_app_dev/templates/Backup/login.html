@@ -1,0 +1,44 @@
+{% extends "base.html" %}
+{% block title %}Login - Asset Capture{% endblock %}
+
+{% block header_right_extra %}
+  {# This fills the placeholder in the header, only for this page. #}
+  <img src="{{ url_for('static', filename='logos/ubc-facilities_logo.jpg') }}" alt="UBC Facilities Logo" style="height: 50px;">
+{% endblock %}
+
+{% block content %}
+<div class="rounded-xl shadow-md w-full max-w-md mx-auto overflow-hidden bg-white p-6">
+
+  <h2 class="text-xl font-bold text-center mb-4">Asset Capture Login</h2>
+
+  {% with messages = get_flashed_messages(with_categories=true) %}
+    {% if messages %}
+      {% for category, message in messages %}
+        <div class="p-3 mb-4 rounded text-sm bg-red-100 border border-red-200 text-red-800">
+          {{ message }}
+        </div>
+      {% endfor %}
+    {% endif %}
+  {% endwith %}
+
+  <form method="POST" action="{{ url_for('auth.login') }}">
+    <div class="space-y-4">
+      <div>
+        <label for="username" class="block text-sm font-medium mb-1">Username</label>
+        <input type="text" id="username" name="username" class="w-full border rounded px-3 py-2" required>
+      </div>
+      <div>
+        <label for="password" class="block text-sm font-medium mb-1">Password</label>
+        <input type="password" id="password" name="password" class="w-full border rounded px-3 py-2" required>
+      </div>
+      <div class="flex items-center">
+        <input id="remember" name="remember" type="checkbox" class="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500">
+        <label for="remember" class="ml-2 block text-sm text-gray-900">Remember Me</label>
+      </div>
+    </div>
+    <button type="submit" class="mt-6 w-full bg-blue-600 text-white py-2 rounded hover:bg-blue-700">
+      Log In
+    </button>
+  </form>
+</div>
+{% endblock %}

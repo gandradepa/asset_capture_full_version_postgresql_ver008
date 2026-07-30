@@ -1,0 +1,253 @@
+#!/usr/bin/env python3
+"""Audit the SLD extraction feedback corpus and apply the [SLD-005]
+deferral criteria. Read-only; safe to run anytime.
+
+Per integrated_test.md [SLD-005]:
+  - Greenlight v3 (fine-tune)   if ≥50 human_correction events
+  - Stay on prompt improvements if <50 corrections (use field clusters)
+  - Investigate                 if 0 corrections (wiring may not be firing)
+
+Designed to run *on the VM* directly:
+    python3 /home/developer/scripts/audit_sld_corpus.py
+
+Or remotely from a workstation that has SSH access to the VM:
+    ssh developer@142.103.68.1 'python3 /home/developer/scripts/audit_sld_corpus.py'
+
+Paths can be overridden via env vars for use in non-default locations:
+    SLD_FEEDBACK_DIR   default /home/developer/sld_extract_feedback
+    SLD_EXTRACT_LOG    default /home/developer/sld_extract.log
+    SLD_DB             default /home/developer/asset_capture_app_dev/data/QR_codes.db
+"""
+from __future__ import annotations
+
+import collections
+import datetime
+import glob
+import json
+import os
+import sqlite3
+import sys
+
+FB_DIR = os.environ.get("SLD_FEEDBACK_DIR", "/home/developer/sld_extract_feedback")
+LOG_FILE = os.environ.get("SLD_EXTRACT_LOG", "/home/developer/sld_extract.log")
+DB = os.environ.get("SLD_DB", "/home/developer/asset_capture_app_dev/data/QR_codes.db")
+
+GREEN_THRESHOLD = 50  # human_correction events to greenlight v3 fine-tune
+
+
+def fmt_size(n: int) -> str:
+    n = float(n)
+    for unit in ("B", "KB", "MB", "GB"):
+        if n < 1024.0:
+            return f"{n:.1f}{unit}"
+        n /= 1024.0
+    return f"{n:.1f}TB"
+
+
+def section_header(title: str) -> None:
+    print(f"--- {title} ---")
+
+
+def banner(text: str) -> None:
+    print("=" * 64)
+    print(text)
+    print("=" * 64)
+
+
+def main() -> int:
+    banner(
+        "SLD feedback corpus audit\n"
+        f"Date (local): {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
+        f"Date (UTC):   {datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')}\n"
+        f"FB_DIR:       {FB_DIR}\n"
+        f"LOG_FILE:     {LOG_FILE}\n"
+        f"DB:           {DB}"
+    )
+    print()
+
+    # ── Section 1: per-run JSONL files ─────────────────────────────────
+    section_header("1. Per-run feedback files")
+    run_files = sorted(glob.glob(os.path.join(FB_DIR, "sld_*.jsonl")))
+    total_size = sum(os.path.getsize(p) for p in run_files) if run_files else 0
+    print(f"  Run files:                {len(run_files)}")
+    print(f"  Total size:               {fmt_size(total_size)}")
+
+    run_dates: list[str] = []
+    total_model_calls = 0
+    total_tokens = 0
+    wrapper_events: collections.Counter = collections.Counter()
+    runs_failed = 0
+    models_used: collections.Counter = collections.Counter()
+
+    for path in run_files:
+        try:
+            with open(path, encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        ev = json.loads(line)
+                    except Exception:
+                        continue
+                    kind = ev.get("kind", "?")
+                    if kind == "model_call":
+                        total_model_calls += 1
+                        usage = ev.get("response_usage") or {}
+                        tt = usage.get("total_tokens") or 0
+                        if isinstance(tt, (int, float)):
+                            total_tokens += int(tt)
+                        m = ev.get("model")
+                        if m:
+                            models_used[m] += 1
+                    elif kind == "wrapper_event":
+                        wrapper_events[ev.get("subkind", "unknown")] += 1
+                    elif kind == "run_summary":
+                        if ev.get("exit_code") not in (0, None):
+                            runs_failed += 1
+            base = os.path.basename(path)
+            parts = base.split("_")
+            if len(parts) >= 3 and len(parts[1]) == 8 and parts[1].isdigit():
+                run_dates.append(parts[1] + "_" + parts[2])
+        except Exception as exc:  # pragma: no cover - defensive
+            print(f"  [WARN] could not read {path}: {exc}")
+
+    if run_dates:
+        print(f"  Date range:               {min(run_dates)} -> {max(run_dates)}")
+    print(f"  Total model_call events:  {total_model_calls}")
+    print(f"  Total tokens (response_usage.total_tokens): {total_tokens}")
+    if models_used:
+        print("  Models used:              " + ", ".join(f"{m}={n}" for m, n in models_used.most_common()))
+    if wrapper_events:
+        print("  Wrapper events:           " + ", ".join(f"{k}={n}" for k, n in wrapper_events.items()))
+    if runs_failed:
+        print(f"  Runs with non-zero exit:  {runs_failed}")
+
+    # ── Section 2: human corrections ───────────────────────────────────
+    print()
+    section_header("2. Human corrections")
+    corr_path = os.path.join(FB_DIR, "corrections.jsonl")
+    corrections: list[dict] = []
+    if os.path.exists(corr_path):
+        with open(corr_path, encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    corrections.append(json.loads(line))
+                except Exception:
+                    continue
+        print(f"  corrections.jsonl size:   {fmt_size(os.path.getsize(corr_path))}")
+    else:
+        print("  corrections.jsonl size:   (missing)")
+    print(f"  Total human_correction events: {len(corrections)}")
+
+    if corrections:
+        by_field = collections.Counter(c.get("field") for c in corrections)
+        by_building = collections.Counter(c.get("building_code") for c in corrections)
+        by_user = collections.Counter(c.get("user") for c in corrections)
+        print(f"  Distinct fields touched:  {len(by_field)}")
+        print(f"  Distinct buildings:       {len(by_building)}")
+        print(f"  Distinct users:           {len(by_user)}")
+        print("  Top 5 fields:")
+        for field, n in by_field.most_common(5):
+            print(f"    {n:>4}  {field}")
+        patterns: collections.Counter = collections.Counter(
+            (c.get("field"), str(c.get("ai_value")), str(c.get("human_value")))
+            for c in corrections
+        )
+        print("  Top 5 (field, ai_value -> human_value) patterns:")
+        for (f, a, h), n in patterns.most_common(5):
+            a_short = (a[:30] + "...") if a and len(a) > 30 else a
+            h_short = (h[:30] + "...") if h and len(h) > 30 else h
+            print(f"    {n:>4}  [{f}]  {a_short!r} -> {h_short!r}")
+
+    # ── Section 3: main log envelope counts ────────────────────────────
+    print()
+    section_header("3. sld_extract.log envelopes")
+    if os.path.exists(LOG_FILE):
+        starts = ends_ok = ends_err = 0
+        last_start_line = ""
+        with open(LOG_FILE, encoding="utf-8", errors="replace") as f:
+            for line in f:
+                if "--- START sld_extract ---" in line:
+                    starts += 1
+                    last_start_line = line.strip()
+                elif "--- END sld_extract ---" in line:
+                    if "exit=0" in line:
+                        ends_ok += 1
+                    else:
+                        ends_err += 1
+        print(f"  STARTs:                   {starts}")
+        print(f"  ENDs (exit=0):            {ends_ok}")
+        print(f"  ENDs (other):             {ends_err}")
+        if last_start_line:
+            print(f"  Last START line:          {last_start_line}")
+    else:
+        print("  (sld_extract.log does not exist yet)")
+
+    # ── Section 4: DB cross-reference ──────────────────────────────────
+    print()
+    section_header("4. DB cross-reference (electrical_building_schema)")
+    try:
+        conn = sqlite3.connect(DB)
+        n_total = conn.execute('SELECT COUNT(*) FROM electrical_building_schema').fetchone()[0]
+        n_with_run = conn.execute(
+            'SELECT COUNT(*) FROM electrical_building_schema WHERE sld_extract_run_id != ""'
+        ).fetchone()[0]
+        n_distinct_runs = conn.execute(
+            'SELECT COUNT(DISTINCT sld_extract_run_id) FROM electrical_building_schema '
+            'WHERE sld_extract_run_id != ""'
+        ).fetchone()[0]
+        n_with_payload = conn.execute(
+            'SELECT COUNT(*) FROM electrical_building_schema WHERE sld_ai_extract_payload != ""'
+        ).fetchone()[0]
+        conn.close()
+        print(f"  Total rows:                          {n_total}")
+        print(f"  Rows with sld_extract_run_id:        {n_with_run}")
+        print(f"  Rows with sld_ai_extract_payload:    {n_with_payload}")
+        print(f"  Distinct extraction runs (active):   {n_distinct_runs}")
+    except Exception as exc:
+        print(f"  [ERROR] DB query failed: {exc}")
+
+    # ── Section 5: Decision per [SLD-005] deferral criteria ────────────
+    print()
+    section_header("5. Decision per [SLD-005] deferral criteria")
+    n_corr = len(corrections)
+    if n_corr == 0:
+        print("  RECOMMENDATION: INVESTIGATE")
+        print("  Reason: 0 human_correction events. Either no SLD edits happened")
+        print("          since 2026-05-04, or the human_correction wiring is not")
+        print("          firing. Verify by editing one row in the EL review app and")
+        print("          re-running this audit.")
+    elif n_corr < GREEN_THRESHOLD:
+        print(f"  RECOMMENDATION: STAY ON PROMPT IMPROVEMENTS")
+        print(f"  Reason: {n_corr} human_correction events (< {GREEN_THRESHOLD}).")
+        print("  Suggested next steps:")
+        print("    1. Build top-N few-shot examples from the most-frequent")
+        print("       (field, ai_value -> human_value) patterns above; prepend to")
+        print("       SYSTEM_PROMPT in extract_electrical_schema.py.")
+        print("    2. Cluster corrections by 'field' -> craft 'If X is unclear, prefer Y'")
+        print("       rules in the system prompt for the top 3 fields.")
+        print("    3. Update mechanical_dictionary.py for any tag prefixes that")
+        print("       repeatedly miss (would surface as model_call escalations).")
+        print(f"    4. Re-audit when corrections >= {GREEN_THRESHOLD} for v3 reconsideration.")
+    else:
+        print(f"  RECOMMENDATION: GREENLIGHT v3 (FINE-TUNE)")
+        print(f"  Reason: {n_corr} human_correction events (>= {GREEN_THRESHOLD}).")
+        print("  Suggested next steps:")
+        print("    1. Build scripts/build_sld_finetune_corpus.py per [SLD-005].")
+        print("    2. Verify vision FT availability for the production model")
+        print("       (gpt-5.4 family) before launching the train job.")
+        print("    3. If FT unavailable on gpt-5.x, evaluate gpt-4o as a parallel")
+        print("       primary tier on the same corpus.")
+        print("    4. After FT: A/B route by building_code in extract_electrical_schema.py.")
+
+    print()
+    banner("End of audit.")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

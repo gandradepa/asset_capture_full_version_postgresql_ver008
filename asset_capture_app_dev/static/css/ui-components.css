@@ -1,0 +1,521 @@
+/* ---------------------------------------------------------------------------
+   UI/UX Enhancement Components
+   Added as part of UI/UX Improvement Plan
+   --------------------------------------------------------------------------- */
+
+/* ---------------------------------------------------------------------------
+   Step Indicator Component
+   --------------------------------------------------------------------------- */
+.step-indicator {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 0;
+  padding: var(--space-md, 1rem) var(--space-sm, 0.75rem);
+  margin-bottom: var(--space-lg, 1.5rem);
+}
+
+.step-indicator__item {
+  display: flex;
+  align-items: center;
+  gap: 0;
+}
+
+.step-indicator__dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background-color: var(--color-gray-300, #cbd5e1);
+  transition: background-color 200ms ease, transform 200ms ease;
+  flex-shrink: 0;
+}
+
+.step-indicator__dot--active {
+  background-color: var(--color-primary, #2563eb);
+  transform: scale(1.3);
+}
+
+.step-indicator__dot--completed {
+  background-color: var(--color-success, #16a34a);
+}
+
+.step-indicator__label {
+  font-size: var(--font-size-xs, 0.75rem);
+  font-weight: 600;
+  color: var(--color-gray-700, #334155);
+  margin-left: 0.375rem;
+  white-space: nowrap;
+}
+
+.step-indicator__label--active {
+  color: var(--color-primary, #2563eb);
+}
+
+.step-indicator__label--completed {
+  color: var(--color-success, #16a34a);
+}
+
+.step-indicator__connector {
+  width: 32px;
+  height: 2px;
+  background-color: var(--color-gray-300, #cbd5e1);
+  margin: 0 0.5rem;
+  flex-shrink: 0;
+}
+
+.step-indicator__connector--completed {
+  background-color: var(--color-success, #16a34a);
+}
+
+/* ---------------------------------------------------------------------------
+   Toast Notifications
+   --------------------------------------------------------------------------- */
+.toast-container {
+  position: fixed;
+  top: var(--space-md, 1rem);
+  right: var(--space-md, 1rem);
+  left: var(--space-md, 1rem);
+  z-index: 9999;
+  pointer-events: none;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm, 0.75rem);
+}
+
+@media (min-width: 640px) {
+  .toast-container {
+    left: auto;
+    width: 360px;
+  }
+}
+
+.toast {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-sm, 0.75rem);
+  padding: var(--space-md, 1rem);
+  background-color: white;
+  border-radius: var(--radius-lg, 0.75rem);
+  box-shadow: var(--shadow-lg, 0 10px 15px -3px rgb(0 0 0 / 0.1));
+  border-left: 4px solid var(--color-gray-300, #cbd5e1);
+  pointer-events: auto;
+  animation: toast-slide-in 0.3s ease;
+}
+
+.toast--success {
+  border-left-color: var(--color-success, #16a34a);
+  background-color: #f0fdf4;
+}
+
+.toast--error {
+  border-left-color: var(--color-danger, #dc2626);
+  background-color: #fef2f2;
+}
+
+.toast--warning {
+  border-left-color: var(--color-warning, #eab308);
+  background-color: var(--color-warning-bg, #fef3c7);
+}
+
+.toast--info {
+  border-left-color: var(--color-primary, #2563eb);
+  background-color: #eff6ff;
+}
+
+.toast__icon {
+  flex-shrink: 0;
+  width: 20px;
+  height: 20px;
+}
+
+.toast__content {
+  flex: 1;
+  min-width: 0;
+}
+
+.toast__title {
+  font-weight: 600;
+  font-size: var(--font-size-sm, 0.875rem);
+  color: var(--color-gray-900, #0f172a);
+  margin-bottom: 0.125rem;
+}
+
+.toast__message {
+  font-size: var(--font-size-sm, 0.875rem);
+  color: var(--color-gray-700, #334155);
+}
+
+.toast__close {
+  flex-shrink: 0;
+  padding: 0.25rem;
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--color-gray-500, #64748b);
+  transition: color 150ms ease;
+  min-height: auto;
+}
+
+.toast__close:hover {
+  color: var(--color-gray-800, #1e293b);
+  background: none;
+  transform: none;
+  box-shadow: none;
+}
+
+@keyframes toast-slide-in {
+  from {
+    opacity: 0;
+    transform: translateX(100%);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+.toast--exiting {
+  animation: toast-slide-out 0.2s ease forwards;
+}
+
+@keyframes toast-slide-out {
+  from {
+    opacity: 1;
+    transform: translateX(0);
+  }
+
+  to {
+    opacity: 0;
+    transform: translateX(100%);
+  }
+}
+
+/* ---------------------------------------------------------------------------
+   Offline Banner
+   --------------------------------------------------------------------------- */
+.offline-banner {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 9999;
+  padding: 0.5rem 0.75rem;
+  background: #dc2626;
+  color: #fff;
+  text-align: center;
+  font-size: var(--font-size-sm, 0.875rem);
+  font-weight: 700;
+  transform: translateY(-100%);
+  transition: transform 0.2s ease;
+}
+
+.offline-banner.is-visible {
+  transform: translateY(0);
+}
+
+/* ---------------------------------------------------------------------------
+   Enhanced Focus States (Accessibility)
+   --------------------------------------------------------------------------- */
+button:focus-visible,
+.btn:focus-visible,
+a:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring, 0 0 0 3px rgba(37, 99, 235, 0.4));
+}
+
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible {
+  outline: none;
+  border-color: var(--color-primary, #2563eb);
+  box-shadow: var(--focus-ring, 0 0 0 3px rgba(37, 99, 235, 0.4));
+}
+
+/* Checkbox/Radio enhanced hit area */
+input[type="checkbox"],
+input[type="radio"] {
+  cursor: pointer;
+}
+
+input[type="checkbox"]:focus-visible,
+input[type="radio"]:focus-visible {
+  outline: 2px solid var(--color-primary, #2563eb);
+  outline-offset: 2px;
+}
+
+/* ---------------------------------------------------------------------------
+   Status Dot Animation (for Capture page)
+   --------------------------------------------------------------------------- */
+@keyframes status-pulse {
+
+  0%,
+  100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+
+  50% {
+    transform: scale(1.3);
+    opacity: 0.8;
+  }
+}
+
+.status-dot--pulse {
+  animation: status-pulse 0.4s ease;
+}
+
+/* ---------------------------------------------------------------------------
+   Reduced Motion Support
+   --------------------------------------------------------------------------- */
+@media (prefers-reduced-motion: reduce) {
+
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* ---------------------------------------------------------------------------
+   Icon-Only Button
+   --------------------------------------------------------------------------- */
+.btn-icon {
+  width: var(--touch-target-comfortable, 48px);
+  height: var(--touch-target-comfortable, 48px);
+  min-height: var(--touch-target-comfortable, 48px);
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.btn-icon.btn-outline {
+  background-color: white;
+  border: 2px solid var(--color-gray-300, #cbd5e1);
+  color: var(--color-gray-700, #334155);
+}
+
+.btn-icon.btn-outline:hover {
+  background-color: var(--color-gray-100, #f1f5f9);
+  border-color: var(--color-gray-400, #9ca3af);
+}
+
+.btn-icon.btn-outline.active,
+.btn-icon.btn-outline[aria-pressed="true"] {
+  background-color: var(--color-warning, #eab308);
+  border-color: var(--color-warning, #eab308);
+  color: white;
+}
+
+/* ---------------------------------------------------------------------------
+   Divider with Text
+   --------------------------------------------------------------------------- */
+.divider-with-text {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm, 0.75rem);
+  color: var(--color-gray-500, #64748b);
+  font-size: var(--font-size-sm, 0.875rem);
+}
+
+.divider-with-text::before,
+.divider-with-text::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background-color: var(--color-gray-300, #cbd5e1);
+}
+
+.manual-entry-divider {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin: 0.75rem 0 1rem;
+  color: #83796a;
+}
+
+.manual-entry-divider__line {
+  flex: 1 1 0;
+  height: 1px;
+  background-color: #ded7cc;
+}
+
+.manual-entry-divider__text {
+  flex: 0 0 auto;
+  font-size: var(--font-size-sm, 0.875rem);
+  line-height: 1.2;
+  color: #83796a;
+  white-space: nowrap;
+}
+
+/* ---------------------------------------------------------------------------
+   Manual Entry Row (Inline)
+   --------------------------------------------------------------------------- */
+.manual-entry-row {
+  display: flex;
+  gap: var(--space-sm, 0.75rem);
+  align-items: stretch;
+}
+
+.manual-entry-input-wrapper {
+  flex: 1;
+}
+
+.manual-entry-input {
+  width: 100%;
+  min-height: var(--touch-target-comfortable, 48px);
+  padding: 0.75rem 1rem;
+  font-size: var(--font-size-base, 1rem);
+  font-family: inherit;
+  text-align: center;
+  letter-spacing: 0.1em;
+  color: var(--color-gray-900, #0f172a);
+  background-color: white;
+  border: 2px solid var(--color-gray-300, #cbd5e1);
+  border-radius: var(--radius-md, 0.5rem);
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+  -webkit-appearance: none;
+  appearance: none;
+}
+
+.manual-entry-input:focus {
+  outline: none;
+  border-color: var(--color-primary, #2563eb);
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1);
+}
+
+.manual-entry-input::placeholder {
+  color: var(--color-gray-400, #9ca3af);
+  letter-spacing: normal;
+}
+
+.manual-entry-row .btn {
+  min-width: 64px;
+  flex-shrink: 0;
+}
+
+/* ---------------------------------------------------------------------------
+   Scanner Button Toggle State
+   --------------------------------------------------------------------------- */
+.btn-primary.scanning {
+  background-color: var(--color-danger, #dc2626);
+}
+
+.btn-primary.scanning:hover {
+  background-color: #b91c1c;
+}
+
+/* ---------------------------------------------------------------------------
+   Success Page Components
+   --------------------------------------------------------------------------- */
+.success-icon-wrapper {
+  display: flex;
+  justify-content: center;
+}
+
+.success-icon {
+  color: var(--color-success, #16a34a);
+  animation: success-pop 0.4s ease;
+}
+
+@keyframes success-pop {
+  0% {
+    transform: scale(0.5);
+    opacity: 0;
+  }
+
+  70% {
+    transform: scale(1.1);
+  }
+
+  100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
+.asset-summary {
+  background-color: var(--color-gray-50, #f8fafc);
+  border: 1px solid var(--color-gray-200, #e2e8f0);
+  border-radius: var(--radius-lg, 0.75rem);
+  padding: var(--space-md, 1rem);
+}
+
+.asset-summary__qr {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  margin-bottom: var(--space-sm, 0.75rem);
+  padding-bottom: var(--space-sm, 0.75rem);
+  border-bottom: 1px solid var(--color-gray-200, #e2e8f0);
+}
+
+.asset-summary__details {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: var(--space-sm, 0.75rem);
+  font-size: var(--font-size-sm, 0.875rem);
+  color: var(--color-gray-700, #334155);
+}
+
+.success-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+.btn-lg {
+  padding: 1rem 1.5rem;
+  font-size: var(--font-size-base, 1rem);
+  min-height: 52px;
+}
+
+.photo-count {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.375rem 0.75rem;
+  background-color: var(--color-gray-100, #f1f5f9);
+  border-radius: var(--radius-md, 0.5rem);
+  font-size: var(--font-size-sm, 0.875rem);
+}
+
+/* ---------------------------------------------------------------------------
+   Compact Selector Row (Start Page)
+   --------------------------------------------------------------------------- */
+.selector-row {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: var(--space-sm, 0.75rem);
+}
+
+@media (max-width: 480px) {
+  .selector-row {
+    grid-template-columns: 1fr 1fr;
+    gap: var(--space-xs, 0.5rem);
+  }
+
+  .selector-row .field-compact:first-child {
+    grid-column: span 2;
+  }
+}
+
+.field-compact {
+  margin-bottom: 0;
+}
+
+.field-compact label {
+  font-size: var(--font-size-xs, 0.75rem);
+  color: var(--color-gray-600, #475569);
+}
+
+.field-compact select {
+  padding: 0.5rem 0.75rem;
+  font-size: var(--font-size-sm, 0.875rem);
+  min-height: 40px;
+}

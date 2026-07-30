@@ -1,0 +1,340 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="utf-8">
+    <title>{{ title or 'Asset Review Sheet' }} — {{ qr_code }}</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    {% if logo_uri %}<link rel="icon" type="image/jpeg" href="{{ logo_uri }}">{% endif %}
+
+    <style>
+        :root {
+            --navy: #002145;
+            --blue: #0055B7;
+            --line: #d7dce2;
+            --muted: #5a6472;
+            --ink: #1c2430;
+        }
+
+        * { box-sizing: border-box; }
+
+        html, body {
+            margin: 0;
+            padding: 0;
+            background: #e9edf2;
+            font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+            color: var(--ink);
+            font-size: 12px;
+            line-height: 1.35;
+        }
+
+        /* ---- Screen-only toolbar ---- */
+        .toolbar {
+            position: sticky;
+            top: 0;
+            z-index: 10;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: .75rem;
+            padding: .6rem 1rem;
+            background: var(--navy);
+            color: #fff;
+        }
+        .toolbar span { opacity: .85; font-size: 12px; }
+        .toolbar button {
+            display: inline-flex;
+            align-items: center;
+            gap: .4rem;
+            border: 0;
+            border-radius: 6px;
+            padding: .45rem .9rem;
+            background: var(--blue);
+            color: #fff;
+            font-weight: 600;
+            font-size: 12px;
+            cursor: pointer;
+        }
+        .toolbar button:hover { filter: brightness(1.08); }
+
+        /* ---- The sheet ---- */
+        .sheet {
+            width: 215.9mm;            /* Letter width */
+            min-height: 279.4mm;       /* Letter height */
+            margin: 14px auto;
+            padding: 14mm 13mm;
+            background: #fff;
+            box-shadow: 0 2px 14px rgba(0, 0, 0, .15);
+        }
+
+        /* ---- Report header band ---- */
+        .report-header {
+            display: flex;
+            align-items: center;
+            gap: 14px;
+            background: var(--navy);
+            color: #fff;
+            padding: 12px 16px;
+            border-radius: 6px;
+        }
+        .report-header img { height: 38px; border-radius: 4px; background: #fff; padding: 2px; }
+        .report-header .htitle { font-size: 17px; font-weight: 700; letter-spacing: .3px; }
+        .report-header .hsub { font-size: 11px; opacity: .82; margin-top: 1px; }
+        .report-header .spacer { flex: 1; }
+
+        .badge-status {
+            font-size: 11px;
+            font-weight: 700;
+            padding: 5px 12px;
+            border-radius: 999px;
+            text-transform: uppercase;
+            letter-spacing: .4px;
+        }
+        .badge-approved { background: #1e7e34; color: #fff; }
+        .badge-pending { background: #f0ad00; color: #2a2300; }
+
+        /* ---- Meta row ---- */
+        .meta-row {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 6px 18px;
+            margin: 12px 2px 4px;
+            padding-bottom: 10px;
+            border-bottom: 2px solid var(--navy);
+        }
+        .meta-row .m .k { font-size: 9px; text-transform: uppercase; letter-spacing: .5px; color: var(--muted); }
+        .meta-row .m .v { font-size: 13px; font-weight: 600; }
+        .meta-row .m.wide { grid-column: span 2; }
+
+        /* ---- Sections ---- */
+        .section { margin-top: 14px; page-break-inside: avoid; }
+        .section > h2 {
+            font-size: 11px;
+            text-transform: uppercase;
+            letter-spacing: .8px;
+            color: var(--blue);
+            margin: 0 0 7px;
+            padding-bottom: 3px;
+            border-bottom: 1px solid var(--line);
+            font-weight: 700;
+        }
+
+        .cols { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
+
+        .fields { display: grid; grid-template-columns: 130px 1fr; row-gap: 6px; column-gap: 8px; }
+        .fields .k { color: var(--muted); font-size: 11px; }
+        .fields .v { font-weight: 600; min-height: 1em; }
+        .fields .v.empty { color: #aab2bd; font-weight: 400; }
+
+        .desc-box {
+            border: 1px solid var(--line);
+            border-left: 3px solid var(--blue);
+            border-radius: 4px;
+            padding: 8px 10px;
+            font-size: 13px;
+            font-weight: 600;
+        }
+
+        .notes-box {
+            border: 1px solid var(--line);
+            border-left: 3px solid var(--blue);
+            border-radius: 4px;
+            padding: 8px 10px;
+            font-size: 12px;
+            white-space: pre-wrap;
+        }
+        .notes-box.empty { color: #aab2bd; }
+
+        /* ---- Photos ---- */
+        .photos { display: grid; grid-template-columns: 1.45fr 1fr; gap: 12px; align-items: start; }
+        .photo-frame {
+            border: 1px solid var(--line);
+            border-radius: 5px;
+            overflow: hidden;
+            background: #fff;
+        }
+        .photo-frame .cap {
+            font-size: 9px;
+            text-transform: uppercase;
+            letter-spacing: .5px;
+            color: var(--muted);
+            padding: 4px 7px;
+            border-top: 1px solid var(--line);
+            background: #f6f8fa;
+        }
+        .photo-frame img { display: block; width: 100%; object-fit: contain; background: #eef1f4; }
+        .hero img { height: 84mm; }
+        .photo-frame .missing {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: #6c757d;
+            color: #fff;
+            font-size: 11px;
+            letter-spacing: .5px;
+        }
+        .hero .missing { height: 84mm; }
+
+        .thumbs { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+        .thumbs img,
+        .thumbs .missing { height: 36mm; }
+
+        /* ---- Footer ---- */
+        .report-footer {
+            margin-top: 16px;
+            padding-top: 8px;
+            border-top: 1px solid var(--line);
+            font-size: 10px;
+            color: var(--muted);
+            display: flex;
+            justify-content: space-between;
+        }
+
+        /* ---- Print ---- */
+        @page { size: Letter portrait; margin: 12mm; }
+        @media print {
+            html, body { background: #fff; }
+            .toolbar { display: none !important; }
+            .sheet { width: auto; min-height: 0; margin: 0; padding: 0; box-shadow: none; }
+            .report-header, .badge-approved, .badge-pending, .photo-frame .missing {
+                -webkit-print-color-adjust: exact;
+                print-color-adjust: exact;
+            }
+        }
+    </style>
+</head>
+
+<body>
+    {% set ubc_tag = data.get('UBC Asset Tag') or data.get('UBC Tag', '') %}
+
+    <div class="toolbar">
+        <span>Use <strong>Save as PDF</strong> as the destination. Tip: turn off "Headers and footers" for a clean sheet.</span>
+        <button type="button" onclick="window.print()"><svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor" style="vertical-align:-2px;margin-right:.35rem"><path d="M2.5 8a.5.5 0 1 0 0-1 .5.5 0 0 0 0 1z"/><path d="M5 1a2 2 0 0 0-2 2v2H2a2 2 0 0 0-2 2v3a1 1 0 0 0 1 1h1v1a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2v-1h1a1 1 0 0 0 1-1V7a2 2 0 0 0-2-2h-1V3a2 2 0 0 0-2-2H5zM4 3a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2H4V3zm1 5a2 2 0 0 0-2 2v1H1V7a1 1 0 0 1 1-1h12a1 1 0 0 1 1 1v4h-2v-1a2 2 0 0 0-2-2H5zm7 2v3a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1v-3a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1z"/></svg>Print / Save as PDF</button>
+    </div>
+
+    <div class="sheet">
+
+        <div class="report-header">
+            {% if logo_uri %}<img src="{{ logo_uri }}" alt="UBC Facilities">{% endif %}
+            <div>
+                <div class="htitle">Asset Review Sheet — Mechanical</div>
+                <div class="hsub">UBC Facilities · Asset Capture</div>
+            </div>
+            <div class="spacer"></div>
+            {% if approved %}
+            <span class="badge-status badge-approved">✓ Approved</span>
+            {% else %}
+            <span class="badge-status badge-pending">Pending</span>
+            {% endif %}
+        </div>
+
+        <div class="meta-row">
+            <div class="m"><div class="k">QR Code</div><div class="v">{{ qr_code }}</div></div>
+            <div class="m"><div class="k">Building</div><div class="v">{{ building_name or building }}</div></div>
+            <div class="m"><div class="k">AI Confidence</div><div class="v">AI {{ avg_ai_conf_display }}</div></div>
+            <div class="m wide"><div class="k">Location</div><div class="v">{{ location or '—' }}</div></div>
+        </div>
+
+        <div class="section">
+            <h2>Description</h2>
+            <div class="desc-box">{{ data.get('Description') or '—' }}</div>
+        </div>
+
+        <div class="cols">
+            <div class="section">
+                <h2>Identity</h2>
+                <div class="fields">
+                    <div class="k">Manufacturer</div><div class="v {{ 'empty' if not data.get('Manufacturer') }}">{{ data.get('Manufacturer') or '—' }}</div>
+                    <div class="k">Model</div><div class="v {{ 'empty' if not data.get('Model') }}">{{ data.get('Model') or '—' }}</div>
+                    <div class="k">Serial #</div><div class="v {{ 'empty' if not data.get('Serial Number') }}">{{ data.get('Serial Number') or '—' }}</div>
+                    <div class="k">Year</div><div class="v {{ 'empty' if not data.get('Year') }}">{{ data.get('Year') or '—' }}</div>
+                    <div class="k">Installation Date</div><div class="v {{ 'empty' if not installation_date }}">{{ installation_date or '—' }}</div>
+                </div>
+            </div>
+            <div class="section">
+                <h2>Classification</h2>
+                <div class="fields">
+                    <div class="k">UBC Asset Tag</div><div class="v {{ 'empty' if not ubc_tag }}">{{ ubc_tag or '—' }}</div>
+                    <div class="k">Technical Safety BC</div><div class="v {{ 'empty' if not data.get('Technical Safety BC') }}">{{ data.get('Technical Safety BC') or '—' }}</div>
+                    <div class="k">Asset Group</div><div class="v {{ 'empty' if not data.get('Asset Group') }}">{{ data.get('Asset Group') or '—' }}</div>
+                    <div class="k">Attribute</div><div class="v {{ 'empty' if not data.get('Attribute') }}">{{ data.get('Attribute') or '—' }}</div>
+                    <div class="k">Main Asset</div><div class="v {{ 'empty' if not data.get('Main Asset') }}">{{ data.get('Main Asset') or '—' }}</div>
+                </div>
+            </div>
+        </div>
+
+        <div class="section">
+            <h2>Capture Notes</h2>
+            {% set capture_note = (capture_notes or '') | trim %}
+            <div class="notes-box {{ 'empty' if not capture_note }}">{{ capture_note or 'No capture note' }}</div>
+        </div>
+
+        <div class="section">
+            <h2>User Activity Log</h2>
+            <div class="fields" style="grid-template-columns: 130px 1fr 90px 1fr;">
+                <div class="k">Captured by</div><div class="v {{ 'empty' if not capture_info.user }}">{{ capture_info.user or '—' }}</div>
+                <div class="k">Date</div><div class="v {{ 'empty' if not capture_info.date }}">{{ capture_info.date or '—' }}</div>
+                <div class="k">Hour</div><div class="v {{ 'empty' if not capture_info.hour }}">{{ capture_info.hour or '—' }}</div>
+                <div class="k">GPS (lat,long)</div><div class="v {{ 'empty' if not capture_info.gps_coordinates }}">{{ capture_info.gps_coordinates or '—' }}</div>
+            </div>
+        </div>
+
+        <div class="section">
+            <h2>Asset Photos</h2>
+            <div class="photos">
+                {# Hero: Main Picture (-2) #}
+                {% set hero = images.get('-2') %}
+                <div class="photo-frame hero">
+                    {% if hero and hero.exists %}
+                    <img src="{{ hero.url }}" alt="Main Picture">
+                    {% else %}
+                    <div class="missing">Missing</div>
+                    {% endif %}
+                    <div class="cap">Main Picture</div>
+                </div>
+
+                {# 2x2 thumbnails: Asset Plate (-0), UBC Tag (-1), TSBC (-3), Extra Photo (-4) #}
+                <div class="thumbs">
+                    {% for tag, label in [('-0', 'Asset Plate'), ('-1', 'UBC Tag'), ('-3', 'TSBC'), ('-4', 'Extra Photo')] %}
+                    {% set im = images.get(tag) %}
+                    <div class="photo-frame">
+                        {% if im and im.exists %}
+                        <img src="{{ im.url }}" alt="{{ label }}">
+                        {% else %}
+                        <div class="missing">Missing</div>
+                        {% endif %}
+                        <div class="cap">{{ label }}</div>
+                    </div>
+                    {% endfor %}
+                </div>
+            </div>
+        </div>
+
+        <div class="report-footer">
+            <span>Generated {{ generated_on }} · by {{ username }}</span>
+            <span>UBC Facilities Asset Capture</span>
+        </div>
+
+    </div>
+
+    {% if auto_print %}
+    <script>
+        // Print view only: auto-open the browser print dialog once images settle.
+        (function () {
+            var printed = false;
+            function triggerPrint() { if (printed) return; printed = true; window.print(); }
+            window.addEventListener('load', function () {
+                var imgs = Array.prototype.slice.call(document.images);
+                var pending = imgs.filter(function (im) { return !im.complete; });
+                if (pending.length === 0) { setTimeout(triggerPrint, 200); return; }
+                var remaining = pending.length;
+                function done() { if (--remaining <= 0) triggerPrint(); }
+                pending.forEach(function (im) { im.addEventListener('load', done); im.addEventListener('error', done); });
+                setTimeout(triggerPrint, 3000); // fallback if an image never resolves
+            });
+        })();
+    </script>
+    {% endif %}
+</body>
+
+</html>

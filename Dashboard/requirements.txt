@@ -1,0 +1,14 @@
+flask
+gunicorn
+pandas
+numpy==2.2.4
+matplotlib
+markupsafe
+pytesseract
+python-dotenv
+openai
+# Life Cycle Assessment blueprint (in-process) + its Excel->PostgreSQL pipeline.
+sqlalchemy
+psycopg2-binary
+openpyxl
+Pillow

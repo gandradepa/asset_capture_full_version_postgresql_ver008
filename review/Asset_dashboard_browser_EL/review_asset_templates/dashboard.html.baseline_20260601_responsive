@@ -1,0 +1,3926 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <title>{{ page_title or 'Asset Review Dashboard - Electrical' }}</title>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <link rel="icon" href="{{ url_for('static', filename='ubc-facilities_logo.jpg') }}" type="image/jpeg">
+
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdn.datatables.net/1.13.6/css/dataTables.bootstrap5.min.css">
+    <link rel="stylesheet" href="https://cdn.datatables.net/responsive/2.5.0/css/responsive.bootstrap5.min.css">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/noUiSlider/15.8.1/nouislider.min.css">
+    {% if page_title and 'Distribution' in page_title %}
+    <link rel="stylesheet" href="{{ url_for('static', filename='sld/sld.css') }}?v=20260521-pdf-preview-pan">
+    {% endif %}
+
+    <style>
+        :root {
+            --ubc-blue: #002145;
+            --ubc-blue-hover: #0055b7;
+            --stitch-bg: #ffffff;
+            --stitch-border: #e2e8f0;
+            --stitch-text-muted: #64748b;
+            --stitch-primary-bg: #eff6ff;
+            --stitch-primary-text: #3b82f6;
+            --stitch-danger-bg: #fef2f2;
+            --stitch-danger-text: #ef4444;
+            --stitch-warning-bg: #fffbeb;
+            --stitch-warning-text: #f59e0b;
+            --stitch-gray-bg: #f1f5f9;
+            --stitch-gray-text: #475569;
+        }
+
+        body {
+            background-color: #f8fafc;
+            font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+            color: #334155;
+        }
+
+        /* --- STITCH FILTER STYLING START --- */
+        .dashboard-card {
+            background: transparent;
+            border: none;
+            box-shadow: none;
+        }
+
+        .filter-card {
+            background: var(--stitch-bg);
+            border: 1px solid var(--stitch-border);
+            border-radius: 12px;
+            padding: 20px 24px;
+            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+            margin-bottom: 24px;
+        }
+
+        .view-label {
+            font-size: 0.75rem;
+            font-weight: 700;
+            color: #94a3b8;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            margin-right: 12px;
+        }
+
+        .view-pill {
+            display: inline-flex;
+            align-items: center;
+            padding: 6px 16px;
+            border-radius: 20px;
+            font-size: 0.85rem;
+            font-weight: 600;
+            text-decoration: none;
+            transition: all 0.2s ease;
+            border: 1px solid transparent;
+            margin-right: 8px;
+        }
+
+        .view-pill:hover {
+            text-decoration: none;
+            transform: translateY(-1px);
+        }
+
+        .view-pill .badge-count {
+            margin-left: 8px;
+            font-size: 0.75em;
+            padding: 2px 6px;
+            border-radius: 10px;
+            background-color: rgba(255, 255, 255, 0.5);
+        }
+
+        /* All Assets Pill */
+        .view-pill.pill-all {
+            color: var(--stitch-gray-text);
+            background-color: transparent;
+        }
+
+        .view-pill.pill-all.active {
+            background-color: var(--stitch-primary-bg);
+            color: var(--stitch-primary-text);
+            border-color: rgba(59, 130, 246, 0.2);
+        }
+
+        /* Missing Photo Pill */
+        .view-pill.pill-missed {
+            color: var(--stitch-gray-text);
+            background-color: transparent;
+        }
+
+        .view-pill.pill-missed.active {
+            background-color: var(--stitch-gray-bg);
+            color: var(--stitch-gray-text);
+            border-color: rgba(71, 85, 105, 0.2);
+        }
+
+        .confidence-slicer {
+            --confidence-progress: 0;
+            display: flex;
+            flex-wrap: wrap;
+            align-items: flex-start;
+            gap: 0.85rem 1rem;
+            padding: 1.2rem 1.15rem 1.05rem;
+            margin-left: 0;
+            border-radius: 12px;
+            border: 1px solid #f3f4f6;
+            background: #ffffff;
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05), 0 2px 4px -1px rgba(0, 0, 0, 0.03);
+            box-sizing: border-box;
+            flex: 0 1 420px;
+            width: min(420px, 100%);
+            min-width: 320px;
+        }
+
+        .confidence-slicer__title {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.35rem;
+            flex: 1 1 auto;
+            font-size: 13px;
+            font-weight: 700;
+            color: #4b5563;
+            white-space: nowrap;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+
+        .confidence-slicer__title i {
+            display: none;
+        }
+
+        .confidence-slicer__all {
+            margin-left: auto;
+            border: 1px solid #e5e7eb;
+            border-radius: 999px;
+            padding: 0.38rem 0.92rem;
+            background: #ffffff;
+            color: #6b7280;
+            font-size: 12px;
+            font-weight: 600;
+            line-height: 1;
+            box-shadow: none;
+            transition: all 0.2s ease;
+        }
+
+        .confidence-slicer__all:hover {
+            color: #4f3cf0;
+            border-color: #c7d2fe;
+            background: #f5f3ff;
+            box-shadow: none;
+        }
+
+        .confidence-slicer__all.is-active {
+            background: #4f3cf0;
+            color: #ffffff;
+            border-color: #4f3cf0;
+            box-shadow: 0 6px 14px rgba(79, 60, 240, 0.18);
+        }
+
+        .confidence-slicer__rail {
+            position: relative;
+            order: 3;
+            flex: 1 0 100%;
+            min-width: 100%;
+            height: 54px;
+            padding: 0;
+        }
+
+        .confidence-slicer__rail::before,
+        .confidence-slicer__rail::after {
+            content: "";
+            position: absolute;
+            left: 0;
+            top: 6px;
+            height: 6px;
+            border-radius: 999px;
+            transition: width 0.2s ease-in-out, opacity 0.2s ease;
+        }
+
+        .confidence-slicer__rail::before {
+            right: 0;
+            background:
+                linear-gradient(#e5e7eb, #e5e7eb) left center / 100% 6px no-repeat,
+                linear-gradient(#ffffff, #ffffff) 25% center / 2px 6px no-repeat,
+                linear-gradient(#ffffff, #ffffff) 50% center / 2px 6px no-repeat,
+                linear-gradient(#ffffff, #ffffff) 75% center / 2px 6px no-repeat;
+        }
+
+        .confidence-slicer__rail::after {
+            width: calc(var(--confidence-progress) * 1%);
+            background: #4f3cf0;
+        }
+
+        .confidence-slicer.is-all .confidence-slicer__rail::after {
+            opacity: 0;
+        }
+
+        .confidence-slicer__stop {
+            position: absolute;
+            top: 0;
+            z-index: 2;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: flex-start;
+            width: 25%;
+            height: 54px;
+            border: 0;
+            background: transparent;
+            padding: 0;
+            color: #9ca3af;
+            cursor: pointer;
+            transition: color 0.2s ease;
+        }
+
+        .confidence-slicer__stop[data-value="25"] {
+            left: 0;
+        }
+
+        .confidence-slicer__stop[data-value="50"] {
+            left: 25%;
+        }
+
+        .confidence-slicer__stop[data-value="75"] {
+            left: 50%;
+        }
+
+        .confidence-slicer__stop[data-value="100"] {
+            left: 75%;
+        }
+
+        .confidence-slicer__stop::before {
+            content: "";
+            position: absolute;
+            top: 6px;
+            left: 0;
+            width: 2px;
+            height: 6px;
+            background: #ffffff;
+            z-index: 3;
+            opacity: 0;
+        }
+
+        .confidence-slicer__stop:not([data-value="25"])::before {
+            opacity: 1;
+        }
+
+        .confidence-slicer__dot {
+            position: absolute;
+            top: 9px;
+            right: 0;
+            width: 20px;
+            height: 20px;
+            border-radius: 999px;
+            border: 3px solid #4f3cf0;
+            background: #ffffff;
+            box-shadow: 0 2px 5px rgba(79, 60, 240, 0.2), 0 1px 2px rgba(0, 0, 0, 0.1);
+            opacity: 0;
+            pointer-events: none;
+            transform: translate(50%, -50%) scale(0.95);
+            transition: transform 0.15s ease, box-shadow 0.15s ease, opacity 0.15s ease;
+        }
+
+        .confidence-slicer__stop.is-active .confidence-slicer__dot {
+            opacity: 1;
+            transform: translate(50%, -50%) scale(1);
+            box-shadow: 0 4px 8px rgba(79, 60, 240, 0.3), 0 2px 4px rgba(0, 0, 0, 0.1);
+        }
+
+        .confidence-slicer__stop.is-active:hover .confidence-slicer__dot {
+            box-shadow: 0 4px 8px rgba(79, 60, 240, 0.3), 0 2px 4px rgba(0, 0, 0, 0.1);
+        }
+
+        .confidence-slicer__label {
+            width: 100%;
+            margin-top: 26px;
+            text-align: center;
+            font-size: 13px;
+            font-weight: 500;
+            color: #9ca3af;
+            transition: color 0.2s ease;
+        }
+
+        .confidence-slicer__stop.is-active .confidence-slicer__label {
+            color: #4f3cf0;
+            font-weight: 700;
+        }
+
+        .confidence-slicer__badge {
+            display: none;
+        }
+
+        @media (max-width: 991.98px) {
+            .confidence-slicer {
+                min-width: 100%;
+                margin-left: 0;
+            }
+
+            .confidence-slicer__rail {
+                min-width: 100%;
+            }
+        }
+
+        @media (max-width: 575.98px) {
+            .confidence-slicer {
+                padding: 0.8rem;
+                gap: 0.7rem;
+            }
+
+            .confidence-slicer__title {
+                font-size: 12px;
+            }
+
+            .confidence-slicer__label {
+                font-size: 11px;
+                margin-top: 28px;
+            }
+
+            .confidence-slicer__all {
+                padding: 0.34rem 0.72rem;
+            }
+
+            .confidence-slicer__stop {
+                height: 58px;
+            }
+
+            .confidence-slicer__rail {
+                height: 58px;
+            }
+        }
+
+        /* AI Confidence range slider */
+        .filter-col-conf .search-label { margin-bottom: 16px; }
+        .conf-range-wrap { padding: 1.8rem 0.6rem 1.5rem; width: 85%; margin-left: 1rem; }
+        .conf-range-slider.noUi-target {
+            border-radius: 999px;
+            border: none;
+            background: #e5e7eb;
+            box-shadow: none;
+            height: 4px;
+        }
+        .conf-range-slider .noUi-connect { background: #dc3545; }
+        .conf-range-slider .noUi-handle {
+            width: 14px !important;
+            height: 14px !important;
+            top: -5px !important;
+            right: -7px !important;
+            border-radius: 50%;
+            border: none;
+            background: #dc3545;
+            box-shadow: 0 0 0 8px rgba(220, 53, 69, 0.20);
+            cursor: pointer;
+            transition: box-shadow 0.15s ease;
+        }
+        .conf-range-slider .noUi-handle:hover,
+        .conf-range-slider .noUi-handle.noUi-active {
+            box-shadow: 0 0 0 11px rgba(220, 53, 69, 0.32);
+        }
+        .conf-range-slider .noUi-handle::before,
+        .conf-range-slider .noUi-handle::after { display: none; }
+        .conf-range-slider .noUi-tooltip {
+            font-size: 0.72rem;
+            font-weight: 700;
+            padding: 3px 9px;
+            background: #dc3545;
+            color: #fff;
+            border: none;
+            border-radius: 6px;
+            bottom: 150%;
+        }
+        .conf-range-slider .noUi-tooltip::after {
+            content: '';
+            position: absolute;
+            left: 50%;
+            bottom: -4px;
+            transform: translateX(-50%);
+            border: 4px solid transparent;
+            border-top-color: #dc3545;
+            border-bottom: 0;
+        }
+        .conf-range-slider .noUi-pips-horizontal {
+            height: 30px;
+            padding: 6px 0 0;
+            color: #6b7280;
+        }
+        .conf-range-slider .noUi-marker-horizontal.noUi-marker {
+            width: 1px;
+            height: 5px;
+            background: #cbd5e1;
+            margin-left: 0;
+        }
+        .conf-range-slider .noUi-marker-horizontal.noUi-marker-large {
+            height: 7px;
+            background: #94a3b8;
+        }
+        .conf-range-slider .noUi-value {
+            font-size: 0.65rem;
+            font-weight: 500;
+            color: #6b7280;
+            margin-top: 2px;
+        }
+
+        .table td.avg-ai-conf-cell {
+            font-weight: 700;
+            font-variant-numeric: tabular-nums;
+            color: #0f172a;
+        }
+
+        .table td.avg-ai-conf-low {
+            background-color: #fa8282 !important;
+        }
+
+        .table td.avg-ai-conf-medium {
+            background-color: #fcfc9d !important;
+        }
+
+        .table td.avg-ai-conf-high {
+            background-color: #84f58f !important;
+        }
+
+        .table thead th {
+            vertical-align: middle !important;
+        }
+
+        .review-bulk-header {
+            display: flex;
+            min-height: 34px;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            gap: 3px;
+            line-height: 1;
+        }
+
+        .review-bulk-header .form-check-input {
+            margin: 0 !important;
+        }
+
+        .btn-reset {
+            color: var(--stitch-text-muted);
+            font-size: 0.85rem;
+            font-weight: 500;
+            background: none;
+            border: none;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            padding: 6px 12px;
+            border-radius: 6px;
+        }
+
+        .btn-reset:hover {
+            background-color: #f1f5f9;
+            color: #0f172a;
+        }
+
+        .search-label {
+            font-size: 0.75rem;
+            font-weight: 600;
+            color: #64748b;
+            margin-bottom: 6px;
+            display: block;
+        }
+
+        .stitch-input {
+            background-color: #f8fafc;
+            border: 1px solid #e2e8f0;
+            border-radius: 6px;
+            color: #334155;
+            font-size: 0.9rem;
+            padding: 8px 12px;
+            transition: all 0.2s;
+        }
+
+        .stitch-input:focus {
+            background-color: #fff;
+            border-color: #3b82f6;
+            box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+        }
+
+        .filter-col-tag,
+        .filter-col-building {
+            flex: 0 0 auto;
+        }
+
+        @media (min-width: 768px) {
+            .filter-col-tag {
+                flex: 0 0 30%;
+                max-width: 30%;
+            }
+
+            .filter-col-building {
+                flex: 0 0 20%;
+                max-width: 20%;
+            }
+        }
+
+        @media (min-width: 1200px) {
+
+            .filter-col-tag,
+            .filter-col-building {
+                flex: 0 0 15%;
+                max-width: 15%;
+            }
+        }
+
+        /* --- STITCH FILTER STYLING END --- */
+
+        /* User Nav Styling */
+        .user-nav {
+            background-color: #ffffff;
+            border-bottom: 1px solid #e9ecef;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.03);
+        }
+
+        /* Header Styling */
+        .page-header h1 {
+            color: var(--ubc-blue);
+            font-weight: 700;
+            font-size: 1.75rem;
+        }
+
+        /* Modern Tabs */
+        .nav-tabs {
+            border-bottom: none;
+            margin-left: 1rem;
+        }
+
+        .nav-tabs .nav-link {
+            border: none;
+            color: #6c757d;
+            font-weight: 500;
+            padding: 0.75rem 1.5rem;
+            border-radius: 0.5rem 0.5rem 0 0;
+            transition: all 0.2s ease;
+        }
+
+        .nav-tabs .nav-link:hover {
+            color: var(--ubc-blue);
+            background-color: rgba(0, 33, 69, 0.05);
+        }
+
+        .nav-tabs .nav-link.active {
+            color: var(--ubc-blue);
+            background-color: #ffffff;
+            font-weight: 600;
+            border-bottom: 3px solid transparent;
+            box-shadow: 0 -3px 8px rgba(0, 0, 0, 0.05);
+            border-top: 3px solid var(--ubc-blue);
+        }
+
+        /* Notification Dot */
+        .notification-badge {
+            background-color: #dc3545;
+            color: white;
+            border-radius: 20px;
+            padding: 0.25em 0.6em;
+            font-size: 0.7rem;
+            margin-left: 5px;
+            box-shadow: 0 2px 2px rgba(220, 53, 69, 0.3);
+            vertical-align: text-top;
+        }
+
+        /* Table Styling Tweaks */
+        table.dataTable {
+            margin-top: 0 !important;
+            border-collapse: separate;
+            border-spacing: 0;
+            background: white;
+            border-radius: 12px;
+            overflow: hidden;
+            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+            border: 1px solid var(--stitch-border);
+        }
+
+        .dataTables_wrapper .dataTables_length,
+        .dataTables_wrapper .dataTables_filter {
+            padding: 1rem 1rem 0.5rem 1rem;
+        }
+
+        .table-dark th {
+            background-color: var(--ubc-blue) !important;
+            border-color: #0d3663;
+        }
+
+        td {
+            vertical-align: middle;
+        }
+
+        /* Interaction Cells */
+        td.approved-cell,
+        td.sdi-cell {
+            cursor: pointer;
+            user-select: none;
+            transition: background-color 0.2s;
+            font-size: 1.2rem;
+            line-height: 1;
+        }
+
+        td.manual-entry-cell {
+            background-color: #fff8e1 !important;
+            color: #856404;
+        }
+
+        td.approved-cell:hover {
+            background-color: #e9ecef;
+            border-radius: 4px;
+        }
+
+        td.approved-cell:focus {
+            outline: 2px solid var(--ubc-blue-hover);
+            outline-offset: -2px;
+        }
+
+        .el-required-check-trigger {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.45rem;
+            padding: 0.18rem 0.55rem;
+            border-radius: 999px;
+            color: var(--stitch-text-muted);
+            font-size: 0.875rem;
+            line-height: 1.2;
+            transition: background-color 0.2s ease, color 0.2s ease, box-shadow 0.2s ease;
+        }
+
+        .el-required-check-trigger:hover,
+        .el-required-check-trigger:focus {
+            color: var(--ubc-blue-hover);
+            text-decoration: none;
+            background: rgba(0, 33, 69, 0.05);
+            box-shadow: inset 0 0 0 1px rgba(0, 33, 69, 0.08);
+        }
+
+        .el-required-qr-value {
+            letter-spacing: 0.01em;
+        }
+
+        .el-traffic-light {
+            --traffic-bg: rgba(148, 163, 184, 0.18);
+            --traffic-fg: #64748b;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 1.25rem;
+            height: 1.25rem;
+            border-radius: 999px;
+            background: var(--traffic-bg);
+            color: var(--traffic-fg);
+            box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.55), 0 0 0 1px rgba(148, 163, 184, 0.12);
+            flex: 0 0 auto;
+        }
+
+        .el-traffic-light i {
+            font-size: 0.52rem;
+        }
+
+        .el-traffic-light--green {
+            --traffic-bg: rgba(34, 197, 94, 0.16);
+            --traffic-fg: #16a34a;
+        }
+
+        .el-traffic-light--yellow {
+            --traffic-bg: rgba(216, 247, 59, 0.24);
+            --traffic-fg: #d8f73b;
+        }
+
+        .el-traffic-light--red {
+            --traffic-bg: rgba(239, 68, 68, 0.16);
+            --traffic-fg: #dc2626;
+        }
+
+        .traffic-filter {
+            position: relative;
+        }
+
+        .traffic-filter__button {
+            width: 100%;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 0.5rem;
+            text-align: left;
+            background-color: #f8fafc;
+            border: 1px solid #e2e8f0;
+            border-radius: 6px;
+            color: #334155;
+            font-size: 0.9rem;
+            padding: 8px 12px;
+            transition: all 0.2s;
+        }
+
+        .traffic-filter__button:hover {
+            background-color: #fff;
+            border-color: #cbd5e1;
+            color: #0f172a;
+        }
+
+        .traffic-filter__button:focus,
+        .traffic-filter__button.show {
+            background-color: #fff;
+            border-color: #3b82f6;
+            box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+            color: #0f172a;
+        }
+
+        .traffic-filter__button::after {
+            margin-left: auto;
+            flex: 0 0 auto;
+        }
+
+        .traffic-filter__current {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.45rem;
+            min-height: 1rem;
+        }
+
+        .traffic-filter__menu {
+            min-width: 100%;
+            padding: 0.35rem;
+            border-radius: 12px;
+            border: 1px solid #e2e8f0;
+            box-shadow: 0 10px 30px rgba(15, 23, 42, 0.12);
+        }
+
+        .traffic-filter__option {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            min-height: 2.2rem;
+            border-radius: 8px;
+            padding: 0.45rem 0.6rem;
+        }
+
+        .traffic-filter__option[data-value=""] {
+            justify-content: flex-start;
+            color: #475569;
+        }
+
+        .traffic-filter__option:hover,
+        .traffic-filter__option:focus {
+            background-color: #f8fafc;
+            color: inherit;
+        }
+
+        .traffic-filter__option.active,
+        .traffic-filter__option:active {
+            background-color: #e2e8f0;
+            color: inherit;
+        }
+
+        .traffic-ball {
+            width: 0.95rem;
+            height: 0.95rem;
+            border-radius: 999px;
+            display: inline-block;
+            box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.45), 0 0 0 1px rgba(15, 23, 42, 0.08);
+        }
+
+        .traffic-ball--green {
+            background: #16a34a;
+        }
+
+        .traffic-ball--yellow {
+            background: #d8f73b;
+        }
+
+        .traffic-ball--red {
+            background: #dc2626;
+        }
+
+        .traffic-filter__all-text {
+            color: #475569;
+        }
+
+        .el-required-popover {
+            --bs-popover-zindex: 10050;
+            z-index: 10050;
+            max-width: 340px;
+        }
+
+        .el-required-popover .popover-header {
+            font-size: 0.9rem;
+            font-weight: 700;
+        }
+
+        .el-required-checklist {
+            min-width: 260px;
+        }
+
+        .el-required-summary {
+            font-size: 0.8rem;
+            font-weight: 700;
+            color: #475569;
+            margin-bottom: 0.5rem;
+        }
+
+        .el-required-asset-group {
+            font-size: 0.75rem;
+            color: var(--stitch-text-muted);
+            margin-bottom: 0.5rem;
+        }
+
+        .el-required-note {
+            font-size: 0.75rem;
+            color: #b45309;
+            background: #fffbeb;
+            border: 1px solid #fde68a;
+            border-radius: 8px;
+            padding: 0.4rem 0.55rem;
+            margin-bottom: 0.55rem;
+        }
+
+        .el-required-items {
+            margin: 0;
+            padding: 0;
+            list-style: none;
+        }
+
+        .el-required-item {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            font-size: 0.82rem;
+            color: #334155;
+            padding: 0.18rem 0;
+        }
+
+        .el-required-item i {
+            font-size: 0.9rem;
+            flex: 0 0 auto;
+        }
+
+        footer {
+            color: #adb5bd;
+        }
+
+        /* =========================================================
+         * v2 REDESIGN — additive only. All existing styles above
+         * are preserved so nothing in the JS / DataTables / filters
+         * breaks. New chrome below: command bar, KPI strip, pill tabs.
+         * ========================================================= */
+        :root {
+            --v2-radius-sm: 6px;
+            --v2-radius-md: 10px;
+            --v2-radius-lg: 16px;
+            --v2-radius-pill: 999px;
+            --v2-shadow-1: 0 1px 3px rgba(0, 0, 0, 0.06), 0 1px 2px rgba(0, 0, 0, 0.04);
+            --v2-shadow-2: 0 4px 12px rgba(0, 0, 0, 0.08), 0 2px 4px rgba(0, 0, 0, 0.04);
+        }
+
+        body {
+            background: #f0f4fb;
+        }
+
+        /* ---------- Top command bar ---------- */
+        .v2-cmd-bar {
+            position: sticky;
+            top: 0;
+            z-index: 1040;
+            background: #ffffff;
+            border-bottom: 1px solid #e2e8f0;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.03);
+            margin-bottom: 0;
+        }
+        .v2-cmd-bar__inner {
+            display: flex;
+            align-items: center;
+            gap: 16px;
+            padding: 12px 24px;
+            min-height: 72px;
+            flex-wrap: wrap;
+        }
+        .v2-cmd-bar__logo {
+            height: 56px;
+            width: auto;
+            max-width: 120px;
+            object-fit: contain;
+            border-radius: var(--v2-radius-sm);
+            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.10);
+            flex-shrink: 0;
+        }
+        .v2-cmd-bar__titles {
+            flex: 1 1 0;
+            min-width: 200px;
+        }
+        .v2-cmd-bar__title {
+            font-size: 1.5rem;
+            font-weight: 700;
+            color: var(--ubc-blue);
+            letter-spacing: -0.01em;
+            line-height: 1.15;
+            margin: 0;
+        }
+        .v2-cmd-bar__subtitle {
+            font-size: 0.78rem;
+            color: #64748b;
+            font-weight: 400;
+            margin-top: 2px;
+        }
+        .v2-cmd-bar__controls {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            flex-wrap: wrap;
+            flex-shrink: 0;
+        }
+        .v2-building-select {
+            background: #f8fafc;
+            border: 1px solid #e2e8f0;
+            border-radius: var(--v2-radius-sm);
+            color: #1e293b;
+            font-size: 0.85rem;
+            font-weight: 500;
+            padding: 7px 30px 7px 10px;
+            max-width: 240px;
+            min-width: 200px;
+            appearance: none;
+            background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 16 16'%3E%3Cpath fill='%2364748b' d='M7.247 11.14 2.451 5.658C1.885 5.013 2.345 4 3.204 4h9.592a1 1 0 0 1 .753 1.659l-4.796 5.48a1 1 0 0 1-1.506 0z'/%3E%3C/svg%3E");
+            background-repeat: no-repeat;
+            background-position: right 10px center;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        .v2-building-select:focus {
+            outline: none;
+            background-color: #fff;
+            border-color: #3b82f6;
+            box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.10);
+        }
+        .v2-header-btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 6px 14px;
+            border-radius: var(--v2-radius-sm);
+            font-size: 0.82rem;
+            font-weight: 500;
+            cursor: pointer;
+            text-decoration: none;
+            transition: all 0.15s;
+            box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+            background: #ffffff;
+            line-height: 1.4;
+            white-space: nowrap;
+        }
+        .v2-header-btn--primary {
+            color: var(--ubc-blue-hover);
+            border: 1px solid var(--ubc-blue-hover);
+        }
+        .v2-header-btn--primary:hover {
+            background: var(--ubc-blue-hover);
+            color: #ffffff;
+        }
+        .v2-header-btn--secondary {
+            color: #6c757d;
+            border: 1px solid #6c757d;
+        }
+        .v2-header-btn--secondary:hover {
+            background: #6c757d;
+            color: #ffffff;
+        }
+        .v2-user-btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 6px 12px 6px 6px;
+            border-radius: var(--v2-radius-sm);
+            background: #ffffff;
+            border: 1px solid #e2e8f0;
+            color: #1e293b;
+            font-size: 0.85rem;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.15s;
+            box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+        }
+        .v2-user-btn:hover {
+            background: #f8fafc;
+            border-color: #cbd5e1;
+        }
+        .v2-user-avatar {
+            width: 26px;
+            height: 26px;
+            border-radius: 50%;
+            background: #6c757d;
+            color: #ffffff;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 12px;
+        }
+
+        /* ---------- KPI strip ---------- */
+        .v2-kpi-strip {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 12px;
+            padding: 16px 0;
+        }
+        .v2-kpi-card {
+            position: relative;
+            overflow: hidden;
+            background: #ffffff;
+            border-radius: var(--v2-radius-md);
+            border: 1px solid #e2e8f0;
+            padding: 14px 16px;
+            display: flex;
+            align-items: center;
+            gap: 14px;
+            box-shadow: var(--v2-shadow-1);
+            transition: box-shadow 0.2s, transform 0.2s;
+        }
+        .v2-kpi-card:hover {
+            box-shadow: var(--v2-shadow-2);
+            transform: translateY(-1px);
+        }
+        .v2-kpi-accent-bar {
+            position: absolute;
+            left: 0;
+            top: 0;
+            bottom: 0;
+            width: 3px;
+        }
+        .v2-kpi-card--blue .v2-kpi-accent-bar { background: #3b82f6; }
+        .v2-kpi-card--green .v2-kpi-accent-bar { background: #10b981; }
+        .v2-kpi-card--amber .v2-kpi-accent-bar { background: #f59e0b; }
+        .v2-kpi-card--red .v2-kpi-accent-bar { background: #ef4444; }
+        .v2-kpi-icon {
+            width: 40px;
+            height: 40px;
+            border-radius: var(--v2-radius-sm);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 18px;
+            flex-shrink: 0;
+        }
+        .v2-kpi-icon--blue { background: #eff6ff; color: #3b82f6; }
+        .v2-kpi-icon--green { background: #ecfdf5; color: #10b981; }
+        .v2-kpi-icon--amber { background: #fffbeb; color: #f59e0b; }
+        .v2-kpi-icon--red { background: #fef2f2; color: #ef4444; }
+        .v2-kpi-value {
+            font-size: 1.6rem;
+            font-weight: 700;
+            color: #1e293b;
+            letter-spacing: -0.03em;
+            line-height: 1;
+        }
+        .v2-kpi-label {
+            font-size: 0.72rem;
+            font-weight: 600;
+            color: #94a3b8;
+            text-transform: uppercase;
+            letter-spacing: 0.04em;
+            margin-top: 3px;
+        }
+        @media (max-width: 767px) {
+            .v2-kpi-strip { grid-template-columns: repeat(2, 1fr); }
+        }
+
+        /* ---------- Pill-style tab switcher ---------- */
+        .v2-tab-bar {
+            background: #ffffff;
+            border: 1px solid #e2e8f0;
+            border-bottom: none;
+            border-radius: var(--v2-radius-md) var(--v2-radius-md) 0 0;
+            padding: 0 16px;
+            box-shadow: var(--v2-shadow-1);
+            overflow-x: auto;
+            scrollbar-width: none;
+        }
+        .v2-tab-bar::-webkit-scrollbar { display: none; }
+        .nav-tabs.v2-tabs {
+            border-bottom: none;
+            margin-left: 0;
+            display: flex;
+            gap: 2px;
+            padding: 8px 0 0;
+            white-space: nowrap;
+            flex-wrap: nowrap;
+        }
+        .nav-tabs.v2-tabs .nav-link {
+            border: none !important;
+            border-bottom: 3px solid transparent !important;
+            border-radius: var(--v2-radius-md) var(--v2-radius-md) 0 0 !important;
+            padding: 10px 18px 11px !important;
+            font-size: 0.85rem;
+            font-weight: 600;
+            color: #64748b !important;
+            background: transparent !important;
+            box-shadow: none !important;
+            transition: color 0.15s, background 0.15s, border-color 0.15s;
+        }
+        .nav-tabs.v2-tabs .nav-link:hover {
+            color: var(--ubc-blue) !important;
+            background: rgba(0, 33, 69, 0.04) !important;
+        }
+        .nav-tabs.v2-tabs .nav-link.active {
+            color: var(--ubc-blue) !important;
+            background: rgba(0, 33, 69, 0.05) !important;
+            border-bottom-color: var(--ubc-blue) !important;
+            border-top: none !important;
+        }
+        .nav-tabs.v2-tabs .notification-badge {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            min-width: 20px;
+            height: 20px;
+            padding: 0 6px;
+            border-radius: var(--v2-radius-pill);
+            font-size: 0.7rem;
+            font-weight: 700;
+            background: #fee2e2;
+            color: #dc2626;
+            box-shadow: none;
+            margin-left: 6px;
+            vertical-align: baseline;
+        }
+        .nav-tabs.v2-tabs .nav-link.active .notification-badge {
+            background: var(--ubc-blue);
+            color: #ffffff;
+        }
+
+        /* ---------- Filter card visual polish ---------- */
+        .filter-card {
+            border-radius: var(--v2-radius-lg);
+            box-shadow: var(--v2-shadow-1);
+            margin-top: 0;
+        }
+
+        /* ---------- Footer polish ---------- */
+        footer {
+            text-align: center;
+            font-size: 0.78rem;
+            line-height: 1.6;
+            padding: 24px 24px 32px;
+            margin-top: 16px;
+            border-top: 1px solid #e2e8f0;
+        }
+
+        /* ---------- Confidence slicer — pill variant (in filter row) ---------- */
+        /* Reuses the existing .confidence-slicer__all / __stop classes so the
+           JS click handlers and is-active toggling continue to work. The
+           --pills modifier replaces the rail/dot visuals with simple pills. */
+        .confidence-slicer--pills {
+            --confidence-progress: 0;
+            display: flex !important;
+            flex-wrap: wrap !important;
+            align-items: center !important;
+            gap: 4px !important;
+            padding: 0 !important;
+            margin: 0 !important;
+            border: none !important;
+            background: transparent !important;
+            box-shadow: none !important;
+            box-sizing: border-box !important;
+            flex: 1 1 auto !important;
+            width: 100% !important;
+            min-width: 0 !important;
+            max-width: none !important;
+        }
+        .confidence-slicer--pills .confidence-slicer__title,
+        .confidence-slicer--pills .confidence-slicer__badge {
+            display: none !important;
+        }
+        .confidence-slicer--pills .confidence-slicer__rail {
+            position: static !important;
+            display: contents !important;
+            flex: none !important;
+            min-width: 0 !important;
+            height: auto !important;
+            padding: 0 !important;
+            order: initial !important;
+        }
+        .confidence-slicer--pills .confidence-slicer__rail::before,
+        .confidence-slicer--pills .confidence-slicer__rail::after {
+            display: none !important;
+            content: none !important;
+        }
+        .confidence-slicer--pills .confidence-slicer__all,
+        .confidence-slicer--pills .confidence-slicer__stop {
+            position: static !important;
+            width: auto !important;
+            height: auto !important;
+            display: inline-flex !important;
+            flex-direction: row !important;
+            align-items: center !important;
+            justify-content: center !important;
+            gap: 0 !important;
+            padding: 6px 11px !important;
+            margin: 0 !important;
+            border-radius: var(--v2-radius-pill) !important;
+            font-size: 0.75rem !important;
+            font-weight: 600 !important;
+            line-height: 1 !important;
+            border: 1px solid #e2e8f0 !important;
+            color: #64748b !important;
+            background: #ffffff !important;
+            cursor: pointer !important;
+            transition: all 0.15s !important;
+            white-space: nowrap !important;
+            flex: 0 1 auto !important;
+            box-shadow: none !important;
+        }
+        .confidence-slicer--pills .confidence-slicer__all::before,
+        .confidence-slicer--pills .confidence-slicer__stop::before,
+        .confidence-slicer--pills .confidence-slicer__stop::after {
+            display: none !important;
+            content: none !important;
+        }
+        .confidence-slicer--pills .confidence-slicer__all:hover,
+        .confidence-slicer--pills .confidence-slicer__stop:hover {
+            border-color: var(--ubc-blue-hover) !important;
+            color: var(--ubc-blue) !important;
+            background: #ffffff !important;
+        }
+        .confidence-slicer--pills .confidence-slicer__all.is-active,
+        .confidence-slicer--pills .confidence-slicer__stop.is-active {
+            background: var(--ubc-blue) !important;
+            color: #ffffff !important;
+            border-color: var(--ubc-blue) !important;
+            box-shadow: 0 1px 4px rgba(0, 33, 69, 0.18) !important;
+        }
+        .confidence-slicer--pills .confidence-slicer__dot {
+            display: none !important;
+        }
+        .confidence-slicer--pills .confidence-slicer__label {
+            position: static !important;
+            display: inline !important;
+            width: auto !important;
+            margin: 0 !important;
+            font-size: 0.75rem !important;
+            font-weight: 600 !important;
+            color: inherit !important;
+            text-align: center !important;
+        }
+        .confidence-slicer--pills .confidence-slicer__stop.is-active .confidence-slicer__label {
+            color: #ffffff !important;
+        }
+
+        /* ---------- Table header — UBC official blue (#002145) ---------- */
+        /* Bootstrap 5.3 .table-dark uses --bs-table-* variables; override
+           them so the dashboard tables always show the UBC palette. */
+        table.dataTable thead.table-dark,
+        .table .table-dark,
+        .table-dark {
+            --bs-table-color: #ffffff;
+            --bs-table-bg: #002145;
+            --bs-table-border-color: #0d3663;
+            --bs-table-striped-bg: #002145;
+            --bs-table-striped-color: #ffffff;
+            --bs-table-active-bg: #0d3663;
+            --bs-table-active-color: #ffffff;
+            --bs-table-hover-bg: #0d3663;
+            --bs-table-hover-color: #ffffff;
+        }
+        table.dataTable thead.table-dark th,
+        table.dataTable thead.table-dark td,
+        .table-dark > :not(caption) > * > *,
+        .table-dark th,
+        .table-dark td {
+            background-color: #002145 !important;
+            color: #ffffff !important;
+            border-color: #0d3663 !important;
+        }
+        /* Sort icons / DataTables arrows readable on UBC blue */
+        table.dataTable thead .sorting::after,
+        table.dataTable thead .sorting_asc::after,
+        table.dataTable thead .sorting_desc::after,
+        table.dataTable thead .sorting::before,
+        table.dataTable thead .sorting_asc::before,
+        table.dataTable thead .sorting_desc::before {
+            color: rgba(255, 255, 255, 0.65) !important;
+            opacity: 1 !important;
+        }
+
+        /* ---------- Review button — navy with eye icon ---------- */
+        .v2-btn-review {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 5px 14px;
+            border-radius: var(--v2-radius-sm);
+            background: var(--ubc-blue);
+            color: #ffffff;
+            font-size: 0.78rem;
+            font-weight: 600;
+            text-decoration: none;
+            line-height: 1.4;
+            transition: background 0.15s, transform 0.1s, box-shadow 0.15s;
+            box-shadow: 0 1px 2px rgba(0, 0, 0, 0.10);
+            border: none;
+            white-space: nowrap;
+        }
+        .v2-btn-review:hover {
+            background: var(--ubc-blue-hover);
+            color: #ffffff;
+            transform: translateY(-1px);
+            box-shadow: 0 3px 6px rgba(0, 33, 69, 0.25);
+        }
+        .v2-btn-review:active {
+            transform: translateY(0);
+        }
+        .v2-btn-review i {
+            font-size: 0.85rem;
+        }
+
+        /* ---------- Photo column — soft pastel pills ---------- */
+        .v2-photo-pill {
+            display: inline-flex;
+            align-items: center;
+            gap: 5px;
+            padding: 3px 10px;
+            border-radius: var(--v2-radius-pill);
+            font-size: 0.78rem;
+            font-weight: 700;
+            font-variant-numeric: tabular-nums;
+            line-height: 1.4;
+        }
+        .v2-photo-pill--ok {
+            background: #dcfce7;
+            color: #166534;
+        }
+        .v2-photo-pill--miss {
+            background: #fee2e2;
+            color: #991b1b;
+        }
+        .v2-photo-pill i {
+            font-size: 0.9rem;
+        }
+        .v2-photo-extra-chip {
+            display: inline-flex;
+            align-items: center;
+            margin-left: 4px;
+            padding: 2px 7px;
+            border-radius: var(--v2-radius-pill);
+            font-size: 0.72rem;
+            font-weight: 600;
+            font-variant-numeric: tabular-nums;
+            line-height: 1.3;
+            background: #e5e7eb;
+            color: #4b5563;
+            cursor: default;
+        }
+
+        /* ---------- Avg AI Conf — soft pill instead of full-cell highlight ---------- */
+        /* Reset the original harsh cell-wide background; the band class now
+           lives on an inner <span class="avg-ai-conf-pill ..."> wrapper. */
+        table.dataTable td.avg-ai-conf-cell,
+        .table td.avg-ai-conf-cell {
+            background-color: transparent !important;
+            background: transparent !important;
+        }
+        .avg-ai-conf-pill {
+            display: inline-block;
+            min-width: 56px;
+            padding: 3px 12px;
+            border-radius: var(--v2-radius-pill);
+            font-size: 0.78rem;
+            font-weight: 700;
+            font-variant-numeric: tabular-nums;
+            text-align: center;
+            line-height: 1.4;
+        }
+        .avg-ai-conf-pill.avg-ai-conf-low {
+            background: #fee2e2;
+            color: #991b1b;
+        }
+        .avg-ai-conf-pill.avg-ai-conf-medium {
+            background: #fef9c3;
+            color: #854d0e;
+        }
+        .avg-ai-conf-pill.avg-ai-conf-high {
+            background: #dcfce7;
+            color: #166534;
+        }
+
+        /* ---------- Avg AI Conf / Comp Score - green gradient gauge with marker ---------- */
+        .ai-conf-meter {
+            display: inline-flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 3px;
+            line-height: 1;
+        }
+        .ai-conf-bar {
+            position: relative;
+            width: 110px;
+            height: 12px;
+            border-radius: 999px;
+            border: 1px solid rgba(21, 128, 61, 0.45);
+            box-sizing: border-box;
+            background: linear-gradient(to right, #dcfce7 0%, #16a34a 100%);
+            box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.05);
+        }
+        .ai-conf-marker {
+            position: absolute;
+            top: -7px;
+            transform: translateX(-50%);
+            width: 0;
+            height: 0;
+            border-left: 5px solid transparent;
+            border-right: 5px solid transparent;
+            border-top: 7px solid #1f2937;
+            pointer-events: none;
+        }
+        .ai-conf-value {
+            font-size: 0.7rem;
+            font-weight: 600;
+            color: #475569;
+            font-variant-numeric: tabular-nums;
+        }
+
+        /* ─── Embedded mode (iframe inside central dashboard) ─── */
+        /* Keep .v2-cmd-bar visible — building selector and controls are essential.
+           The logo, titles, and user dropdown are suppressed by Jinja2 conditionals.
+           The back-to-main-dashboard button is rendered inline with other controls. */
+        body.embedded-mode .v2-cmd-bar__controls { flex: 1 1 auto; justify-content: flex-end; }
+
+        .embedded-back-btn {
+            position: fixed; top: 0.5rem; left: 0.5rem; z-index: 9999;
+            background: #002145; color: #fff; font-size: 0.75rem; font-weight: 600;
+            padding: 0.3rem 0.75rem; border-radius: 6px; text-decoration: none;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.25); display: none;
+        }
+        .embedded-back-btn:hover { background: #0055b7; color: #fff; }
+
+    </style>
+    {% include "_shell.html" %}
+</head>
+
+<body class="py-2 {% if g.embedded %}embedded-mode{% endif %}">
+    {% macro render_el_qr_cell(item) -%}
+    {% set checklist = item.el_required_fields %}
+    <td class="text-center">
+        <button type="button"
+            class="btn btn-link border-0 p-0 text-decoration-none font-monospace el-required-check-trigger"
+            data-bs-toggle="popover"
+            data-bs-trigger="hover focus"
+            data-bs-custom-class="el-required-popover"
+            data-checklist-target="el-required-{{ item.doc_id }}"
+            data-bs-title="Required Fields - {{ checklist.ok_count }}/{{ checklist.total_count }} - {{ checklist.traffic_light_label }}"
+            aria-label="Show required fields checklist for QR {{ item.qr_code }}. Status: {{ checklist.traffic_light_label }}">
+            <span class="el-required-qr-value">{{ item.qr_code }}</span>
+            <span class="el-traffic-light el-traffic-light--{{ checklist.traffic_light }}"
+                title="{{ checklist.traffic_light_label }}"
+                aria-hidden="true">
+                <i class="bi bi-circle-fill"></i>
+            </span>
+            <span class="visually-hidden">{{ checklist.traffic_light_label }}</span>
+        </button>
+        <div id="el-required-{{ item.doc_id }}" class="d-none">
+            <div class="el-required-checklist">
+                <div class="el-required-summary">{{ checklist.ok_count }}/{{ checklist.total_count }} required fields filled</div>
+                {% if checklist.asset_group %}
+                <div class="el-required-asset-group">Asset Group: {{ checklist.asset_group }}</div>
+                {% endif %}
+                <div class="el-required-asset-group">Traffic Light: {{ checklist.traffic_light_label }}</div>
+                {% if not checklist.has_sdi_row %}
+                <div class="el-required-note">No sdi_dataset_EL row found.</div>
+                {% endif %}
+                <ul class="el-required-items">
+                    {% for check in checklist.checklist %}
+                    <li class="el-required-item">
+                        <i class="bi {{ 'bi-check-circle-fill text-success' if check.filled else 'bi-x-circle-fill text-danger' }}"
+                            aria-hidden="true"></i>
+                        <span>{{ check.field }}</span>
+                    </li>
+                    {% endfor %}
+                </ul>
+            </div>
+        </div>
+    </td>
+    {%- endmacro %}
+
+    {% macro render_traffic_filter(filter_id) -%}
+    <div class="traffic-filter">
+        <label for="{{ filter_id }}-button" class="search-label">Attribute Status</label>
+        <select id="{{ filter_id }}" class="d-none" aria-hidden="true">
+            <option value="">All Statuses</option>
+            <option value="green">Green</option>
+            <option value="yellow">Yellow</option>
+            <option value="red">Red</option>
+        </select>
+        <div class="dropdown">
+            <button id="{{ filter_id }}-button"
+                type="button"
+                class="btn traffic-filter__button dropdown-toggle"
+                data-bs-toggle="dropdown"
+                aria-expanded="false"
+                aria-label="Attribute Status filter">
+                <span class="traffic-filter__current">
+                    <span class="traffic-filter__all-text">All Statuses</span>
+                </span>
+            </button>
+            <ul class="dropdown-menu traffic-filter__menu">
+                <li>
+                    <button type="button" class="dropdown-item traffic-filter__option active" data-value="">
+                        <span class="traffic-filter__all-text">All Statuses</span>
+                    </button>
+                </li>
+                <li>
+                    <button type="button" class="dropdown-item traffic-filter__option" data-value="green" aria-label="Green">
+                        <span class="traffic-ball traffic-ball--green" aria-hidden="true"></span>
+                        <span class="visually-hidden">Green</span>
+                    </button>
+                </li>
+                <li>
+                    <button type="button" class="dropdown-item traffic-filter__option" data-value="yellow" aria-label="Yellow">
+                        <span class="traffic-ball traffic-ball--yellow" aria-hidden="true"></span>
+                        <span class="visually-hidden">Yellow</span>
+                    </button>
+                </li>
+                <li>
+                    <button type="button" class="dropdown-item traffic-filter__option" data-value="red" aria-label="Red">
+                        <span class="traffic-ball traffic-ball--red" aria-hidden="true"></span>
+                        <span class="visually-hidden">Red</span>
+                    </button>
+                </li>
+            </ul>
+        </div>
+    </div>
+    {%- endmacro %}
+
+    <header class="v2-cmd-bar">
+        <div class="v2-cmd-bar__inner">
+            {% if not g.embedded %}
+            <a href="{{ url_for('main.landing') }}" class="d-inline-flex align-items-center text-decoration-none" style="flex-shrink:0;">
+                <img src="{{ url_for('static', filename='ubc-facilities_logo.jpg') }}" alt="UBC Logo" class="v2-cmd-bar__logo">
+            </a>
+
+            <div class="v2-cmd-bar__titles">
+                <a href="{{ url_for('main.landing') }}" class="text-decoration-none" style="color:inherit;">
+                    <h1 class="v2-cmd-bar__title" id="main-title">{{ page_title or 'Asset Review Dashboard' }}</h1>
+                </a>
+                <div class="v2-cmd-bar__subtitle">Maintenance Planning Department &bull; Electrical{% if page_title and 'Distribution' in page_title %} - Distribution{% endif %}</div>
+            </div>
+            {% endif %}
+
+            <div class="v2-cmd-bar__controls">
+                <select id="global-building-selector" class="v2-building-select" aria-label="Select building">
+                    <option value="">-- Select a building --</option>
+                    {% for b in buildings_list %}
+                    <option value="{{ b.code }}" {% if b.code == selected_building_code %}selected{% endif %}>
+                        {{ b.display }}
+                    </option>
+                    {% endfor %}
+                </select>
+
+                {% if archive_filter_active %}
+                <a href="{{ url_for(base_route, archive='false', tab=active_tab, filter_building=selected_building_code or '', approved=approved_filter_raw) }}"
+                   class="v2-header-btn v2-header-btn--secondary" title="Show Archive">
+                    <i class="bi bi-archive"></i>
+                    <span class="d-none d-sm-inline">Show Archive</span>
+                </a>
+                {% else %}
+                <a href="{{ url_for(base_route, archive='true', tab=active_tab, filter_building=selected_building_code or '', approved=approved_filter_raw) }}"
+                   class="v2-header-btn v2-header-btn--secondary" title="Hide Archive">
+                    <i class="bi bi-archive-fill"></i>
+                    <span class="d-none d-sm-inline">Hide Archive</span>
+                </a>
+                {% endif %}
+
+                {% if back_url %}
+                <a href="{{ back_url }}" class="v2-header-btn v2-header-btn--primary" title="Back to Dashboard">
+                    <i class="bi bi-arrow-left"></i>
+                    <span class="d-none d-md-inline">Back to Dashboard</span>
+                </a>
+                {% endif %}
+
+                <button id="show-user-activity-btn" type="button" class="v2-header-btn v2-header-btn--secondary" title="User Activity">
+                    <i class="bi bi-people"></i>
+                    <span class="d-none d-md-inline">User Activity</span>
+                </button>
+
+                {% if current_user.is_authenticated and not g.embedded %}
+                <div class="dropdown">
+                    <button class="v2-user-btn dropdown-toggle" type="button" data-bs-toggle="dropdown" aria-expanded="false">
+                        <span class="v2-user-avatar"><i class="bi bi-person-fill" style="font-size:12px;"></i></span>
+                        <span class="d-none d-md-inline">Welcome, <strong>{{ username }}</strong></span>
+                    </button>
+                    <ul class="dropdown-menu dropdown-menu-end shadow border-0 mt-2">
+                        <li><a class="dropdown-item text-danger" href="{{ url_for('auth.logout') }}"><i
+                                    class="bi bi-box-arrow-right me-2"></i>Logout</a></li>
+                    </ul>
+                </div>
+                {% endif %}
+            </div>
+        </div>
+    </header>
+
+    <div class="container-fluid px-4 pt-3">
+
+        {% if selected_building_code %}
+        {% set v2_total_new      = (data_new      | default([])) | length %}
+        {% set v2_total_update   = (data_update   | default([])) | length %}
+        {% set v2_total_manual   = (data_manual   | default([])) | length %}
+        {% set v2_total          = card_total_assets | default(v2_total_new + v2_total_update + v2_total_manual) %}
+        {% set v2_pending        = card_pending_review | default((count_unapproved_new or 0) + (count_unapproved_update or 0) + (count_unapproved_manual or 0)) %}
+        {% set v2_missing        = card_missed | default((count_missed_new or 0) + (count_missed_update or 0) + (count_missed_manual or 0)) %}
+        {% set v2_approved       = card_approved | default(v2_total - v2_pending if v2_total >= v2_pending else 0) %}
+        <div class="v2-kpi-strip">
+            <div class="v2-kpi-card v2-kpi-card--blue">
+                <div class="v2-kpi-accent-bar"></div>
+                <div class="v2-kpi-icon v2-kpi-icon--blue"><i class="bi bi-grid-3x3-gap-fill"></i></div>
+                <div>
+                    <div class="v2-kpi-value">{{ v2_total }}</div>
+                    <div class="v2-kpi-label">Total Assets</div>
+                </div>
+            </div>
+            <div class="v2-kpi-card v2-kpi-card--green">
+                <div class="v2-kpi-accent-bar"></div>
+                <div class="v2-kpi-icon v2-kpi-icon--green"><i class="bi bi-patch-check-fill"></i></div>
+                <div>
+                    <div class="v2-kpi-value">{{ v2_approved }}</div>
+                    <div class="v2-kpi-label">Approved</div>
+                </div>
+            </div>
+            <div class="v2-kpi-card v2-kpi-card--amber">
+                <div class="v2-kpi-accent-bar"></div>
+                <div class="v2-kpi-icon v2-kpi-icon--amber"><i class="bi bi-hourglass-split"></i></div>
+                <div>
+                    <div class="v2-kpi-value">{{ v2_pending }}</div>
+                    <div class="v2-kpi-label">Pending Review</div>
+                </div>
+            </div>
+            <div class="v2-kpi-card v2-kpi-card--red">
+                <div class="v2-kpi-accent-bar"></div>
+                <div class="v2-kpi-icon v2-kpi-icon--red"><i class="bi bi-camera-video-off-fill"></i></div>
+                <div>
+                    <div class="v2-kpi-value">{{ v2_missing }}</div>
+                    <div class="v2-kpi-label">Missing Photo</div>
+                </div>
+            </div>
+        </div>
+        {% endif %}
+
+        <div class="v2-tab-bar">
+        <ul class="nav nav-tabs v2-tabs" id="dashboardTabs" role="tablist">
+            <li class="nav-item" role="presentation">
+                <button class="nav-link {% if active_tab == 'new' %}active{% endif %}" id="tab-new-btn"
+                    data-bs-toggle="tab" data-bs-target="#tab-new" type="button" role="tab" aria-controls="tab-new"
+                    aria-selected="{{ 'true' if active_tab == 'new' else 'false' }}" data-tab="new">
+                    <i class="bi bi-plus-circle me-1"></i> New Assets
+                    {% if count_unapproved_new > 0 %}
+                    <span class="notification-badge">{{ count_unapproved_new }}</span>
+                    {% endif %}
+                </button>
+            </li>
+            <li class="nav-item d-none" role="presentation">
+                <button class="nav-link {% if active_tab == 'update' %}active{% endif %}" id="tab-update-btn"
+                    data-bs-toggle="tab" data-bs-target="#tab-update" type="button" role="tab"
+                    aria-controls="tab-update" aria-selected="{{ 'true' if active_tab == 'update' else 'false' }}"
+                    data-tab="update">
+                    <i class="bi bi-arrow-repeat me-1"></i> Update Existing
+                    {% if count_unapproved_update > 0 %}
+                    <span class="notification-badge">{{ count_unapproved_update }}</span>
+                    {% endif %}
+                </button>
+            </li>
+            <li class="nav-item" role="presentation">
+                <button class="nav-link {% if active_tab == 'manual' %}active{% endif %}" id="tab-manual-btn"
+                    data-bs-toggle="tab" data-bs-target="#tab-manual" type="button" role="tab"
+                    aria-controls="tab-manual" aria-selected="{{ 'true' if active_tab == 'manual' else 'false' }}"
+                    data-tab="manual">
+                    <i class="bi bi-pencil-square me-1"></i> Manual Entry
+                    {% if count_unapproved_manual > 0 %}
+                    <span class="notification-badge">{{ count_unapproved_manual }}</span>
+                    {% endif %}
+                </button>
+            </li>
+            {% if page_title and 'Distribution' in page_title %}
+            <li class="nav-item" role="presentation">
+                <button class="nav-link {% if active_tab == 'sld' %}active{% endif %}" id="tab-sld-btn"
+                    data-bs-toggle="tab" data-bs-target="#tab-sld" type="button" role="tab"
+                    aria-controls="tab-sld" aria-selected="{{ 'true' if active_tab == 'sld' else 'false' }}"
+                    data-tab="sld">
+                    <i class="bi bi-diagram-3 me-1"></i> Single Line Diagram
+                </button>
+            </li>
+            {% endif %}
+        </ul>
+        </div>
+
+        <div class="dashboard-card mb-5">
+            <div class="tab-content" id="dashboardTabContent">
+
+                <div class="tab-pane fade {% if active_tab == 'new' %}show active{% endif %}" id="tab-new"
+                    role="tabpanel" aria-labelledby="tab-new-btn">
+                    {% if not selected_building_code %}
+                    <div class="empty-state-building p-5 text-center text-muted">
+                        <i class="bi bi-building-fill-exclamation" style="font-size:2.5rem;display:block;"></i>
+                        <h5 class="mt-2">Please select a building</h5>
+                        <p class="mb-0">Pick a building from the selector above to load assets for this tab.</p>
+                    </div>
+                    {% else %}
+
+                    <div class="filter-card">
+                        <div
+                            class="d-flex flex-column flex-lg-row align-items-start align-items-lg-center justify-content-between mb-4 gap-3">
+                            <div class="d-flex flex-wrap flex-lg-nowrap align-items-center gap-2 flex-grow-1">
+                                <span class="view-label">VIEWS:</span>
+
+                                <a href="{{ url_for(base_route, tab='new', process='0', filter_building=selected_building_code or '', archive=('true' if archive_filter_active else 'false')) }}"
+                                    class="view-pill pill-all {% if not missed_filter and archive_filter_active %}active{% endif %}">
+                                    <i class="bi bi-grid-fill me-2"></i> All Assets
+                                </a>
+
+                                <a href="{{ url_for(base_route, missed='true', tab='new', process='0', filter_building=selected_building_code or '', archive=('true' if archive_filter_active else 'false')) }}"
+                                    class="view-pill pill-missed btn-missed {% if missed_filter == 'true' %}active{% endif %}">
+                                    <i class="bi bi-image me-2"></i> Missing Photo
+                                    <span class="badge-count quick-filter-badge">{{ count_missed_new }}</span>
+                                </a>
+
+                            </div>
+
+                            <div class="d-flex align-items-center gap-2">
+                                <button type="button" class="btn-reset ms-2" onclick="exportFilteredXlsx('new')"
+                                    data-bs-toggle="tooltip" title="Export filtered rows to Excel">
+                                    <i class="bi bi-file-earmark-excel-fill"></i> Excel
+                                </button>
+                                <button type="button" class="btn-reset ms-2" onclick="resetFilters('new')"
+                                    data-bs-toggle="tooltip" title="Reset All Filters">
+                                    <i class="bi bi-funnel-fill"></i> Reset
+                                </button>
+                            </div>
+                        </div>
+
+                        <div class="row g-3">
+                            <div class="col-12 col-md-3 col-xl-1">
+                                <label for="filter-qr-new" class="search-label">Search QR Code</label>
+                                <div class="input-group">
+                                    <span class="input-group-text bg-light border-end-0 text-muted"><i
+                                            class="bi bi-qr-code"></i></span>
+                                    <input type="text" id="filter-qr-new"
+                                        class="form-control stitch-input border-start-0 ps-0"
+                                        placeholder="Search QR...">
+                                </div>
+                            </div>
+                            <div class="col-12 col-md-3 col-xl-1">
+                                <label for="filter-date-new" class="search-label">Capture Date</label>
+                                <div class="input-group">
+                                    <span class="input-group-text bg-light border-end-0 text-muted"><i
+                                            class="bi bi-calendar-date"></i></span>
+                                    <input type="date" id="filter-date-new"
+                                        class="form-control stitch-input border-start-0 ps-0">
+                                </div>
+                            </div>
+                            <div class="col-12 col-md-4 col-xl-2">
+                                <label for="filter-captured-by-new" class="search-label">Captured By</label>
+                                <select id="filter-captured-by-new" class="form-select stitch-input">
+                                    <option value="">All</option>
+                                </select>
+                            </div>
+                            <div class="col-12 col-md-6 col-xl-2 filter-col-tag">
+                                <label for="filter-tag-new" class="search-label">UBC Asset Tag</label>
+                                <div class="input-group">
+                                    <span class="input-group-text bg-light border-end-0 text-muted"><i
+                                            class="bi bi-tag"></i></span>
+                                    <input type="text" id="filter-tag-new"
+                                        class="form-control stitch-input border-start-0 ps-0" placeholder="Tag ID...">
+                                </div>
+                            </div>
+                            <div class="col-12 col-md-4 col-xl-2">
+                                <label for="filter-group-new" class="search-label">Asset Group</label>
+                                <select id="filter-group-new" class="form-select stitch-input">
+                                    <option value="">All Groups</option>
+                                </select>
+                            </div>
+                            <div class="col-12 col-md-4 col-xl-2 filter-col-building" style="display:none;">
+                                <label for="filter-building-new" class="search-label">Building</label>
+                                <select id="filter-building-new" class="form-select stitch-input">
+                                    <option value="">All Buildings</option>
+                                </select>
+                            </div>
+                            <div class="col-12 col-md-4 col-xl-2">
+                                <label for="filter-approved-new" class="search-label">Review Status</label>
+                                <select id="filter-approved-new" class="form-select stitch-input">
+                                    <option value="" {% if approved_filter_raw=="all" %}selected{% endif %}>All
+                                        Statuses</option>
+                                    <option value="True" {% if approved_filter=="True" %}selected{% endif %}>
+                                        Approved</option>
+                                    <option value="False" {% if approved_filter=="False" and approved_filter_raw !="all"
+                                        %}selected{% endif %}>Pending</option>
+                                </select>
+                            </div>
+                            <div class="col-12 col-md-4 col-xl-1">
+                                {{ render_traffic_filter('filter-traffic-new') }}
+                            </div>
+                            <div class="col-12 col-md-12 col-xl-3 filter-col-conf">
+                                <label class="search-label d-block">AI Confidence</label>
+                                <div class="conf-range-wrap">
+                                    <div id="confSlider-new" class="conf-range-slider"></div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <table id="assetTableNew_v3" class="table table-striped table-hover dt-responsive nowrap w-100">
+                        <thead class="table-dark">
+                            <tr>
+                                <th class="text-center">QR Code</th>
+                                <th class="text-center">Capture Date</th>
+                                <th class="text-center">Building</th>
+                                <th>Space</th>
+                                <th>Description</th>
+                                <th>UBC Asset Tag</th>
+                                <th>Supply From</th>
+                                <th class="text-center">Amperage Rating</th>
+                                <th>Volts</th>
+                                <th>Location</th>
+                                                                <th class="text-center">AI Status</th>
+                                <th class="text-center">Avg AI Conf</th>
+                                <th class="text-center">Comp Score</th>
+                                <th>Asset Group</th>
+                                <th class="text-center align-middle" style="min-width: 80px;"><div class="review-bulk-header"><span>Manual</span><input class="form-check-input select-all-manual" type="checkbox" title="Toggle all filtered Manual states"></div></th>
+                                <th class="text-center align-middle" style="min-width: 90px;"><div class="review-bulk-header"><span>Approved</span><input class="form-check-input select-all-approved" type="checkbox" title="Toggle all filtered Approved states"></div></th>
+                                <th class="text-center">Photo</th>
+                                <th class="text-center" data-priority="1">Review</th>
+                                <th class="text-center">Captured By</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for item in data_new %}
+                            <tr data-missed-photo="{{ '1' if item['Missed Photo'] == 'YES' else '0' }}"
+                                data-avg-conf="{{ item['Avg_ai_conf'] if item['Avg_ai_conf'] is not none else '' }}"
+                                data-traffic-light="{{ item.el_required_fields.traffic_light }}"
+                                data-traffic-label="{{ item.el_required_fields.traffic_light_label }}">
+                                {{ render_el_qr_cell(item) }}
+                                <td class="text-center">{{ item['Capture Date'] }}</td>
+                                <td class="text-center"><span class="badge bg-secondary">{{ item.building }}</span>
+                                </td>
+                                <td>{{ item['Space'] }}</td>
+                                <td>{{ item['Description'] }}</td>
+                                <td class="fw-bold text-primary">{{ item['UBC Asset Tag'] }}</td>
+                                <td>{{ item['Supply From'] }}</td>
+                                <td class="text-center">{{ item['Ampere'] }}</td>
+                                <td>{{ item['Volts'] }}</td>
+                                <td>{{ item['Location'] }}</td>
+                                <td class="ai-status-cell text-center" style="cursor: pointer; user-select: none;"
+                                    data-docid="{{ item.doc_id }}" data-val="{{ item.ai_status }}"
+                                    title="Toggle AI Status">
+                                    {% if item.ai_status == '1' %}✅{% else %}☐{% endif %}
+                                </td>
+                                <td class="text-center avg-ai-conf-cell"
+                                    data-order="{{ item['Avg_ai_conf'] if item['Avg_ai_conf'] is not none else -1 }}">
+                                    {% if item['Avg_ai_conf'] is not none %}
+                                    <div class="ai-conf-meter" title="AI confidence: {{ item['Avg_ai_conf_display'] }}">
+                                        <div class="ai-conf-bar">
+                                            <div class="ai-conf-marker" style="left: {{ item['Avg_ai_conf'] }}%;"></div>
+                                        </div>
+                                        <div class="ai-conf-value">{{ item['Avg_ai_conf_display'] }}</div>
+                                    </div>
+                                    {% else %}
+                                    <span class="text-muted">{{ item['Avg_ai_conf_display'] }}</span>
+                                    {% endif %}
+                                </td>
+                                <td class="text-center avg-ai-conf-cell"
+                                    data-order="{{ item['Comp_score'] if item['Comp_score'] is not none else -1 }}">
+                                    {% if item['Comp_score'] is not none %}
+                                    <div class="ai-conf-meter" title="Completeness score: {{ item['Comp_score_display'] }}">
+                                        <div class="ai-conf-bar">
+                                            <div class="ai-conf-marker" style="left: {{ item['Comp_score'] }}%;"></div>
+                                        </div>
+                                        <div class="ai-conf-value">{{ item['Comp_score_display'] }}</div>
+                                    </div>
+                                    {% else %}
+                                    <span class="text-muted">{{ item['Comp_score_display'] }}</span>
+                                    {% endif %}
+                                </td>
+                                <td>{{ item['Asset Group'] }}</td>
+                                <td class="sdi-cell manual-entry-cell text-center" style="cursor: pointer;"
+                                    data-docid="{{ item.doc_id }}" data-val="{{ item.ExcludeSDI }}"
+                                    title="Toggle Manual Entry">
+                                    {% if item.ExcludeSDI == 1 %}✅{% else %}☐{% endif %}
+                                </td>
+                                {% set approved_val = item['Approved']|string|trim %}
+                                {% set approved_bool = 'True' if approved_val == 'True' else 'False' %}
+                                <td class="approved-cell text-center fs-5" tabindex="0" role="button"
+                                    data-docid="{{ item.doc_id }}" data-search="{{ approved_bool }}"
+                                    title="Toggle Approved">
+                                    <span class="d-none">{{ approved_bool }}</span>{% if approved_val == 'True' %}✅{%
+                                    else %}☐{% endif %}
+                                </td>
+                                <td class="text-center">
+                                    {% if item['Missed Photo'] == 'YES' %}
+                                    <span class="v2-photo-pill v2-photo-pill--miss" data-bs-toggle="tooltip"
+                                        title="Missing: {{ item['Missing List'] }}">
+                                        <i class="bi bi-camera-video-off"></i>{{ item['Photos Summary'] }}
+                                    </span>
+                                    {% else %}
+                                    <span class="v2-photo-pill v2-photo-pill--ok"
+                                        data-bs-toggle="tooltip" title="All present">
+                                        <i class="bi bi-check-lg"></i>{{ item['Photos Summary'] }}
+                                    </span>
+                                    {% endif %}
+                                    {% if item['Extra Photo'] %}
+                                    <span class="v2-photo-extra-chip" data-bs-toggle="tooltip"
+                                        title="Extra Photo present">+1</span>
+                                    {% endif %}
+                                </td>
+                                <td class="text-center">
+                                    <a class="v2-btn-review"
+                                        href="{{ url_for('main.review', doc_id=item.doc_id, tab='new', process='0', base_route=base_route) }}"><i class="bi bi-eye"></i>Review</a>
+                                </td>
+                                <td class="text-center">{{ item.captured_by }}</td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                    {% endif %}
+                </div>
+
+                <div class="tab-pane fade {% if active_tab == 'update' %}show active{% endif %}" id="tab-update"
+                    role="tabpanel" aria-labelledby="tab-update-btn">
+                    {% if not selected_building_code %}
+                    <div class="empty-state-building p-5 text-center text-muted">
+                        <i class="bi bi-building-fill-exclamation" style="font-size:2.5rem;display:block;"></i>
+                        <h5 class="mt-2">Please select a building</h5>
+                        <p class="mb-0">Pick a building from the selector above to load assets for this tab.</p>
+                    </div>
+                    {% else %}
+                    <div class="filter-card">
+                        <div
+                            class="d-flex flex-column flex-lg-row align-items-start align-items-lg-center justify-content-between mb-4 gap-3">
+                            <div class="d-flex flex-wrap flex-lg-nowrap align-items-center gap-2 flex-grow-1">
+                                <span class="view-label">VIEWS:</span>
+
+                                <a href="{{ url_for(base_route, tab='update', process='1', filter_building=selected_building_code or '', archive=('true' if archive_filter_active else 'false')) }}"
+                                    class="view-pill pill-all {% if not missed_filter and archive_filter_active %}active{% endif %}">
+                                    <i class="bi bi-grid-fill me-2"></i> All Assets
+                                </a>
+
+                                <a href="{{ url_for(base_route, missed='true', tab='update', process='1', filter_building=selected_building_code or '', archive=('true' if archive_filter_active else 'false')) }}"
+                                    class="view-pill pill-missed btn-missed {% if missed_filter == 'true' %}active{% endif %}">
+                                    <i class="bi bi-image me-2"></i> Missing Photo
+                                    <span class="badge-count quick-filter-badge">{{ count_missed_update }}</span>
+                                </a>
+
+                            </div>
+
+                            <div class="d-flex align-items-center gap-2">
+                                <button type="button" class="btn-reset ms-2" onclick="exportFilteredXlsx('update')"
+                                    data-bs-toggle="tooltip" title="Export filtered rows to Excel">
+                                    <i class="bi bi-file-earmark-excel-fill"></i> Excel
+                                </button>
+                                <button type="button" class="btn-reset ms-2" onclick="resetFilters('update')"
+                                    data-bs-toggle="tooltip" title="Reset All Filters">
+                                    <i class="bi bi-funnel-fill"></i> Reset
+                                </button>
+                            </div>
+                        </div>
+
+                        <div class="row g-3">
+                            <div class="col-12 col-md-3 col-xl-1">
+                                <label for="filter-qr-update" class="search-label">Search QR Code</label>
+                                <div class="input-group">
+                                    <span class="input-group-text bg-light border-end-0 text-muted"><i
+                                            class="bi bi-qr-code"></i></span>
+                                    <input type="text" id="filter-qr-update"
+                                        class="form-control stitch-input border-start-0 ps-0"
+                                        placeholder="Search QR...">
+                                </div>
+                            </div>
+                            <div class="col-12 col-md-3 col-xl-1">
+                                <label for="filter-date-update" class="search-label">Capture Date</label>
+                                <div class="input-group">
+                                    <span class="input-group-text bg-light border-end-0 text-muted"><i
+                                            class="bi bi-calendar-date"></i></span>
+                                    <input type="date" id="filter-date-update"
+                                        class="form-control stitch-input border-start-0 ps-0">
+                                </div>
+                            </div>
+                            <div class="col-12 col-md-4 col-xl-2">
+                                <label for="filter-captured-by-update" class="search-label">Captured By</label>
+                                <select id="filter-captured-by-update" class="form-select stitch-input">
+                                    <option value="">All</option>
+                                </select>
+                            </div>
+                            <div class="col-12 col-md-6 col-xl-2 filter-col-tag">
+                                <label for="filter-tag-update" class="search-label">UBC Asset Tag</label>
+                                <div class="input-group">
+                                    <span class="input-group-text bg-light border-end-0 text-muted"><i
+                                            class="bi bi-tag"></i></span>
+                                    <input type="text" id="filter-tag-update"
+                                        class="form-control stitch-input border-start-0 ps-0" placeholder="Tag ID...">
+                                </div>
+                            </div>
+                            <div class="col-12 col-md-4 col-xl-2">
+                                <label for="filter-group-update" class="search-label">Asset Group</label>
+                                <select id="filter-group-update" class="form-select stitch-input">
+                                    <option value="">All Groups</option>
+                                </select>
+                            </div>
+                            <div class="col-12 col-md-4 col-xl-2 filter-col-building" style="display:none;">
+                                <label for="filter-building-update" class="search-label">Building</label>
+                                <select id="filter-building-update" class="form-select stitch-input">
+                                    <option value="">All Buildings</option>
+                                </select>
+                            </div>
+                            <div class="col-12 col-md-4 col-xl-2">
+                                <label for="filter-approved-update" class="search-label">Review Status</label>
+                                <select id="filter-approved-update" class="form-select stitch-input">
+                                    <option value="" {% if approved_filter_raw=="all" %}selected{% endif %}>All
+                                        Statuses</option>
+                                    <option value="True" {% if approved_filter=="True" %}selected{% endif %}>
+                                        Approved</option>
+                                    <option value="False" {% if approved_filter=="False" and approved_filter_raw !="all"
+                                        %}selected{% endif %}>Pending</option>
+                                </select>
+                            </div>
+                            <div class="col-12 col-md-4 col-xl-1">
+                                {{ render_traffic_filter('filter-traffic-update') }}
+                            </div>
+                            <div class="col-12 col-md-12 col-xl-3 filter-col-conf">
+                                <label class="search-label d-block">AI Confidence</label>
+                                <div class="conf-range-wrap">
+                                    <div id="confSlider-update" class="conf-range-slider"></div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <table id="assetTableUpdate_v3" class="table table-striped table-hover dt-responsive nowrap w-100">
+                        <thead class="table-dark">
+                            <tr>
+                                <th class="text-center">QR Code</th>
+                                <th class="text-center">Capture Date</th>
+                                <th class="text-center">Building</th>
+                                <th>Space</th>
+                                <th>Description</th>
+                                <th>UBC Asset Tag</th>
+                                <th>Supply From</th>
+                                <th class="text-center">Amperage Rating</th>
+                                <th>Volts</th>
+                                <th>Location</th>
+                                                                <th class="text-center">AI Status</th>
+                                <th class="text-center">Avg AI Conf</th>
+                                <th class="text-center">Comp Score</th>
+                                <th>Asset Group</th>
+                                <th class="text-center align-middle" style="min-width: 80px;"><div class="review-bulk-header"><span>Manual</span><input class="form-check-input select-all-manual" type="checkbox" title="Toggle all filtered Manual states"></div></th>
+                                <th class="text-center align-middle" style="min-width: 90px;"><div class="review-bulk-header"><span>Approved</span><input class="form-check-input select-all-approved" type="checkbox" title="Toggle all filtered Approved states"></div></th>
+                                <th class="text-center">Photo</th>
+                                <th class="text-center" data-priority="1">Review</th>
+                                <th class="text-center">Captured By</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for item in data_update %}
+                            <tr data-missed-photo="{{ '1' if item['Missed Photo'] == 'YES' else '0' }}"
+                                data-avg-conf="{{ item['Avg_ai_conf'] if item['Avg_ai_conf'] is not none else '' }}"
+                                data-traffic-light="{{ item.el_required_fields.traffic_light }}"
+                                data-traffic-label="{{ item.el_required_fields.traffic_light_label }}">
+                                {{ render_el_qr_cell(item) }}
+                                <td class="text-center">{{ item['Capture Date'] }}</td>
+                                <td class="text-center"><span class="badge bg-secondary">{{ item.building }}</span>
+                                </td>
+                                <td>{{ item['Space'] }}</td>
+                                <td>{{ item['Description'] }}</td>
+                                <td class="fw-bold text-primary">{{ item['UBC Asset Tag'] }}</td>
+                                <td>{{ item['Supply From'] }}</td>
+                                <td class="text-center">{{ item['Ampere'] }}</td>
+                                <td>{{ item['Volts'] }}</td>
+                                <td>{{ item['Location'] }}</td>
+                                <td class="ai-status-cell text-center" style="cursor: pointer; user-select: none;"
+                                    data-docid="{{ item.doc_id }}" data-val="{{ item.ai_status }}"
+                                    title="Toggle AI Status">
+                                    {% if item.ai_status == '1' %}✅{% else %}☐{% endif %}
+                                </td>
+                                <td class="text-center avg-ai-conf-cell"
+                                    data-order="{{ item['Avg_ai_conf'] if item['Avg_ai_conf'] is not none else -1 }}">
+                                    {% if item['Avg_ai_conf'] is not none %}
+                                    <div class="ai-conf-meter" title="AI confidence: {{ item['Avg_ai_conf_display'] }}">
+                                        <div class="ai-conf-bar">
+                                            <div class="ai-conf-marker" style="left: {{ item['Avg_ai_conf'] }}%;"></div>
+                                        </div>
+                                        <div class="ai-conf-value">{{ item['Avg_ai_conf_display'] }}</div>
+                                    </div>
+                                    {% else %}
+                                    <span class="text-muted">{{ item['Avg_ai_conf_display'] }}</span>
+                                    {% endif %}
+                                </td>
+                                <td class="text-center avg-ai-conf-cell"
+                                    data-order="{{ item['Comp_score'] if item['Comp_score'] is not none else -1 }}">
+                                    {% if item['Comp_score'] is not none %}
+                                    <div class="ai-conf-meter" title="Completeness score: {{ item['Comp_score_display'] }}">
+                                        <div class="ai-conf-bar">
+                                            <div class="ai-conf-marker" style="left: {{ item['Comp_score'] }}%;"></div>
+                                        </div>
+                                        <div class="ai-conf-value">{{ item['Comp_score_display'] }}</div>
+                                    </div>
+                                    {% else %}
+                                    <span class="text-muted">{{ item['Comp_score_display'] }}</span>
+                                    {% endif %}
+                                </td>
+                                <td>{{ item['Asset Group'] }}</td>
+                                <td class="sdi-cell manual-entry-cell text-center" data-docid="{{ item.doc_id }}"
+                                    data-val="{{ item.ExcludeSDI }}" title="Toggle Manual Entry">
+                                    {% if item.ExcludeSDI == 1 %}✅{% else %}☐{% endif %}
+                                </td>
+                                {% set approved_val = item['Approved']|string|trim %}
+                                {% set approved_bool = 'True' if approved_val == 'True' else 'False' %}
+                                <td class="approved-cell text-center fs-5" tabindex="0" role="button"
+                                    data-docid="{{ item.doc_id }}" data-search="{{ approved_bool }}"
+                                    title="Toggle Approved">
+                                    <span class="d-none">{{ approved_bool }}</span>{% if approved_val == 'True' %}✅{%
+                                    else %}☐{% endif %}
+                                </td>
+                                <td class="text-center">
+                                    {% if item['Missed Photo'] == 'YES' %}
+                                    <span class="v2-photo-pill v2-photo-pill--miss" data-bs-toggle="tooltip"
+                                        title="Missing: {{ item['Missing List'] }}">
+                                        <i class="bi bi-camera-video-off"></i>{{ item['Photos Summary'] }}
+                                    </span>
+                                    {% else %}
+                                    <span class="v2-photo-pill v2-photo-pill--ok"
+                                        data-bs-toggle="tooltip" title="All present">
+                                        <i class="bi bi-check-lg"></i>{{ item['Photos Summary'] }}
+                                    </span>
+                                    {% endif %}
+                                    {% if item['Extra Photo'] %}
+                                    <span class="v2-photo-extra-chip" data-bs-toggle="tooltip"
+                                        title="Extra Photo present">+1</span>
+                                    {% endif %}
+                                </td>
+                                <td class="text-center">
+                                    <a class="v2-btn-review"
+                                        href="{{ url_for('main.review', doc_id=item.doc_id, tab='update', process='1', base_route=base_route) }}"><i class="bi bi-eye"></i>Review</a>
+                                </td>
+                                <td class="text-center">{{ item.captured_by }}</td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                    {% endif %}
+                </div>
+
+                <div class="tab-pane fade {% if active_tab == 'manual' %}show active{% endif %}" id="tab-manual"
+                    role="tabpanel" aria-labelledby="tab-manual-btn">
+                    {% if not selected_building_code %}
+                    <div class="empty-state-building p-5 text-center text-muted">
+                        <i class="bi bi-building-fill-exclamation" style="font-size:2.5rem;display:block;"></i>
+                        <h5 class="mt-2">Please select a building</h5>
+                        <p class="mb-0">Pick a building from the selector above to load assets for this tab.</p>
+                    </div>
+                    {% else %}
+                    <div class="filter-card">
+                        <div
+                            class="d-flex flex-column flex-lg-row align-items-start align-items-lg-center justify-content-between mb-4 gap-3">
+                            <div class="d-flex flex-wrap flex-lg-nowrap align-items-center gap-2 flex-grow-1">
+                                <span class="view-label">VIEWS:</span>
+
+                                <a href="{{ url_for(base_route, tab='manual', process='2', filter_building=selected_building_code or '', archive=('true' if archive_filter_active else 'false')) }}"
+                                    class="view-pill pill-all {% if not missed_filter and archive_filter_active %}active{% endif %}">
+                                    <i class="bi bi-grid-fill me-2"></i> All Assets
+                                </a>
+
+                                <a href="{{ url_for(base_route, missed='true', tab='manual', process='2', filter_building=selected_building_code or '', archive=('true' if archive_filter_active else 'false')) }}"
+                                    class="view-pill pill-missed btn-missed {% if missed_filter == 'true' %}active{% endif %}">
+                                    <i class="bi bi-image me-2"></i> Missing Photo
+                                    <span class="badge-count quick-filter-badge">{{ count_missed_manual }}</span>
+                                </a>
+
+                            </div>
+
+                            <div class="d-flex align-items-center gap-2">
+                                <button type="button" class="btn-reset ms-2" onclick="exportFilteredXlsx('manual')"
+                                    data-bs-toggle="tooltip" title="Export filtered rows to Excel">
+                                    <i class="bi bi-file-earmark-excel-fill"></i> Excel
+                                </button>
+                                <button type="button" class="btn-reset ms-2" onclick="resetFilters('manual')"
+                                    data-bs-toggle="tooltip" title="Reset All Filters">
+                                    <i class="bi bi-funnel-fill"></i> Reset
+                                </button>
+                            </div>
+                        </div>
+
+                        <div class="row g-3">
+                            <div class="col-12 col-md-3 col-xl-1">
+                                <label for="filter-qr-manual" class="search-label">Search QR Code</label>
+                                <div class="input-group">
+                                    <span class="input-group-text bg-light border-end-0 text-muted"><i
+                                            class="bi bi-qr-code"></i></span>
+                                    <input type="text" id="filter-qr-manual"
+                                        class="form-control stitch-input border-start-0 ps-0"
+                                        placeholder="Search QR...">
+                                </div>
+                            </div>
+                            <div class="col-12 col-md-3 col-xl-1">
+                                <label for="filter-date-manual" class="search-label">Capture Date</label>
+                                <div class="input-group">
+                                    <span class="input-group-text bg-light border-end-0 text-muted"><i
+                                            class="bi bi-calendar-date"></i></span>
+                                    <input type="date" id="filter-date-manual"
+                                        class="form-control stitch-input border-start-0 ps-0">
+                                </div>
+                            </div>
+                            <div class="col-12 col-md-4 col-xl-2">
+                                <label for="filter-captured-by-manual" class="search-label">Captured By</label>
+                                <select id="filter-captured-by-manual" class="form-select stitch-input">
+                                    <option value="">All</option>
+                                </select>
+                            </div>
+                            <div class="col-12 col-md-6 col-xl-2 filter-col-tag">
+                                <label for="filter-tag-manual" class="search-label">UBC Asset Tag</label>
+                                <div class="input-group">
+                                    <span class="input-group-text bg-light border-end-0 text-muted"><i
+                                            class="bi bi-tag"></i></span>
+                                    <input type="text" id="filter-tag-manual"
+                                        class="form-control stitch-input border-start-0 ps-0" placeholder="Tag ID...">
+                                </div>
+                            </div>
+                            <div class="col-12 col-md-4 col-xl-2">
+                                <label for="filter-group-manual" class="search-label">Asset Group</label>
+                                <select id="filter-group-manual" class="form-select stitch-input">
+                                    <option value="">All Groups</option>
+                                </select>
+                            </div>
+                            <div class="col-12 col-md-4 col-xl-2 filter-col-building" style="display:none;">
+                                <label for="filter-building-manual" class="search-label">Building</label>
+                                <select id="filter-building-manual" class="form-select stitch-input">
+                                    <option value="">All Buildings</option>
+                                </select>
+                            </div>
+                            <div class="col-12 col-md-4 col-xl-2">
+                                <label for="filter-approved-manual" class="search-label">Review Status</label>
+                                <select id="filter-approved-manual" class="form-select stitch-input">
+                                    <option value="" {% if approved_filter_raw=="all" or approved_filter_raw is none
+                                        %}selected{% endif %}>All Statuses</option>
+                                    <option value="True" {% if approved_filter=="True" %}selected{% endif %}>
+                                        Approved</option>
+                                    <option value="False" {% if approved_filter=="False" and approved_filter_raw not in
+                                        ['all', None] %}selected{% endif %}>Pending</option>
+                                </select>
+                            </div>
+                            <div class="col-12 col-md-4 col-xl-1">
+                                {{ render_traffic_filter('filter-traffic-manual') }}
+                            </div>
+                            <div class="col-12 col-md-12 col-xl-3 filter-col-conf">
+                                <label class="search-label d-block">AI Confidence</label>
+                                <div class="conf-range-wrap">
+                                    <div id="confSlider-manual" class="conf-range-slider"></div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <table id="assetTableManual_v3" class="table table-striped table-hover dt-responsive nowrap w-100">
+                        <thead class="table-dark">
+                            <tr>
+                                <th class="text-center">QR Code</th>
+                                <th class="text-center">Capture Date</th>
+                                <th class="text-center">Building</th>
+                                <th>Space</th>
+                                <th>Description</th>
+                                <th>UBC Asset Tag</th>
+                                <th>Supply From</th>
+                                <th class="text-center">Amperage Rating</th>
+                                <th>Volts</th>
+                                <th>Location</th>
+                                                                <th class="text-center">AI Status</th>
+                                <th class="text-center">Avg AI Conf</th>
+                                <th class="text-center">Comp Score</th>
+                                <th>Asset Group</th>
+                                <th class="text-center align-middle" style="min-width: 80px;"><div class="review-bulk-header"><span>Manual</span><input class="form-check-input select-all-manual" type="checkbox" title="Toggle all filtered Manual states"></div></th>
+                                <th class="text-center align-middle" style="min-width: 90px;"><div class="review-bulk-header"><span>Approved</span><input class="form-check-input select-all-approved" type="checkbox" title="Toggle all filtered Approved states"></div></th>
+                                <th class="text-center">Photo</th>
+                                <th class="text-center" data-priority="1">Review</th>
+                                <th class="text-center">Captured By</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for item in data_manual %}
+                            <tr data-missed-photo="{{ '1' if item['Missed Photo'] == 'YES' else '0' }}"
+                                data-avg-conf="{{ item['Avg_ai_conf'] if item['Avg_ai_conf'] is not none else '' }}"
+                                data-traffic-light="{{ item.el_required_fields.traffic_light }}"
+                                data-traffic-label="{{ item.el_required_fields.traffic_light_label }}">
+                                {{ render_el_qr_cell(item) }}
+                                <td class="text-center">{{ item['Capture Date'] }}</td>
+                                <td class="text-center"><span class="badge bg-secondary">{{ item.building }}</span>
+                                </td>
+                                <td>{{ item['Space'] }}</td>
+                                <td>{{ item['Description'] }}</td>
+                                <td class="fw-bold text-primary">{{ item['UBC Asset Tag'] }}</td>
+                                <td>{{ item['Supply From'] }}</td>
+                                <td class="text-center">{{ item['Ampere'] }}</td>
+                                <td>{{ item['Volts'] }}</td>
+                                <td>{{ item['Location'] }}</td>
+                                <td class="ai-status-cell text-center" style="cursor: pointer; user-select: none;"
+                                    data-docid="{{ item.doc_id }}" data-val="{{ item.ai_status }}"
+                                    title="Toggle AI Status">
+                                    {% if item.ai_status == '1' %}✅{% else %}☐{% endif %}
+                                </td>
+                                <td class="text-center avg-ai-conf-cell"
+                                    data-order="{{ item['Avg_ai_conf'] if item['Avg_ai_conf'] is not none else -1 }}">
+                                    {% if item['Avg_ai_conf'] is not none %}
+                                    <div class="ai-conf-meter" title="AI confidence: {{ item['Avg_ai_conf_display'] }}">
+                                        <div class="ai-conf-bar">
+                                            <div class="ai-conf-marker" style="left: {{ item['Avg_ai_conf'] }}%;"></div>
+                                        </div>
+                                        <div class="ai-conf-value">{{ item['Avg_ai_conf_display'] }}</div>
+                                    </div>
+                                    {% else %}
+                                    <span class="text-muted">{{ item['Avg_ai_conf_display'] }}</span>
+                                    {% endif %}
+                                </td>
+                                <td class="text-center avg-ai-conf-cell"
+                                    data-order="{{ item['Comp_score'] if item['Comp_score'] is not none else -1 }}">
+                                    {% if item['Comp_score'] is not none %}
+                                    <div class="ai-conf-meter" title="Completeness score: {{ item['Comp_score_display'] }}">
+                                        <div class="ai-conf-bar">
+                                            <div class="ai-conf-marker" style="left: {{ item['Comp_score'] }}%;"></div>
+                                        </div>
+                                        <div class="ai-conf-value">{{ item['Comp_score_display'] }}</div>
+                                    </div>
+                                    {% else %}
+                                    <span class="text-muted">{{ item['Comp_score_display'] }}</span>
+                                    {% endif %}
+                                </td>
+                                <td>{{ item['Asset Group'] }}</td>
+                                <td class="sdi-cell manual-entry-cell text-center" data-docid="{{ item.doc_id }}"
+                                    data-val="{{ item.ExcludeSDI }}" title="Toggle Manual Entry">
+                                    {% if item.ExcludeSDI == 1 %}✅{% else %}☐{% endif %}
+                                </td>
+                                {% set approved_val = item['Approved']|string|trim %}
+                                {% set approved_bool = 'True' if approved_val == 'True' else 'False' %}
+                                <td class="approved-cell text-center fs-5" tabindex="0" role="button"
+                                    data-docid="{{ item.doc_id }}" data-search="{{ approved_bool }}"
+                                    title="Toggle Approved">
+                                    <span class="d-none">{{ approved_bool }}</span>{% if approved_val == 'True' %}✅{%
+                                    else %}☐{% endif %}
+                                </td>
+                                <td class="text-center">
+                                    {% if item['Missed Photo'] == 'YES' %}
+                                    <span class="v2-photo-pill v2-photo-pill--miss" data-bs-toggle="tooltip"
+                                        title="Missing: {{ item['Missing List'] }}">
+                                        <i class="bi bi-camera-video-off"></i>{{ item['Photos Summary'] }}
+                                    </span>
+                                    {% else %}
+                                    <span class="v2-photo-pill v2-photo-pill--ok"
+                                        data-bs-toggle="tooltip" title="All present">
+                                        <i class="bi bi-check-lg"></i>{{ item['Photos Summary'] }}
+                                    </span>
+                                    {% endif %}
+                                    {% if item['Extra Photo'] %}
+                                    <span class="v2-photo-extra-chip" data-bs-toggle="tooltip"
+                                        title="Extra Photo present">+1</span>
+                                    {% endif %}
+                                </td>
+                                <td class="text-center">
+                                    <a class="v2-btn-review"
+                                        href="{{ url_for('main.review', doc_id=item.doc_id, tab='manual', process='2', base_route=base_route) }}"><i class="bi bi-eye"></i>Review</a>
+                                </td>
+                                <td class="text-center">{{ item.captured_by }}</td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                    {% endif %}
+                </div>
+
+                {% if page_title and 'Distribution' in page_title %}
+                <div class="tab-pane fade {% if active_tab == 'sld' %}show active{% endif %}" id="tab-sld"
+                    role="tabpanel" aria-labelledby="tab-sld-btn">
+                    {% if not selected_building_code %}
+                    <div class="empty-state-building p-5 text-center text-muted">
+                        <i class="bi bi-building-fill-exclamation" style="font-size:2.5rem;display:block;"></i>
+                        <h5 class="mt-2">Please select a building</h5>
+                        <p class="mb-0">Pick a building from the selector above to load the Single Line Diagram.</p>
+                    </div>
+                    {% else %}
+                    {% include "sld/sld_panel.html" %}
+                    {% endif %}
+                </div>
+                {% endif %}
+            </div>
+
+        </div>
+    </div>
+
+    <!-- User Activity View (hidden by default) -->
+    <div id="user-activity-view" class="container-fluid px-4" style="display: none;">
+        <div
+            class="d-flex flex-column flex-md-row align-items-center align-items-md-start justify-content-between mb-4 page-header">
+            <div class="d-flex align-items-center">
+                <a href="{{ url_for('main.landing') }}" class="me-md-3 mb-3 mb-md-0">
+                    <img src="{{ url_for('static', filename='ubc-facilities_logo.jpg') }}" alt="UBC Logo"
+                        class="rounded shadow-sm" style="height: 64px;">
+                </a>
+                <div class="text-center text-md-start">
+                    <h1 class="mb-1" style="color: var(--ubc-blue);">User Activity Log - Electrical</h1>
+                    <p class="text-muted mb-0"><small>Maintenance Planning Department &bull; Electrical</small></p>
+                </div>
+            </div>
+            <button id="back-to-main-btn" class="btn btn-outline-secondary mt-3 mt-md-0">
+                <i class="bi bi-arrow-left me-1"></i>Back to Dashboard
+            </button>
+        </div>
+
+        <div class="filter-card">
+            <div class="d-flex flex-wrap align-items-center gap-3">
+                <div class="d-flex align-items-center gap-2">
+                    <label for="ua-user-filter" class="search-label mb-0" style="white-space: nowrap;">User:</label>
+                    <select id="ua-user-filter" class="form-select form-select-sm stitch-input"
+                        style="min-width: 150px;">
+                        <option value="">All Users</option>
+                    </select>
+                </div>
+                <div class="d-flex align-items-center gap-2">
+                    <label for="ua-qr-filter" class="search-label mb-0" style="white-space: nowrap;">QR Code:</label>
+                    <input type="text" id="ua-qr-filter" class="form-control form-control-sm stitch-input"
+                        placeholder="Search QR..." style="min-width: 150px;">
+                </div>
+                <div class="d-flex align-items-center gap-2">
+                    <label for="ua-date-filter" class="search-label mb-0" style="white-space: nowrap;">Date:</label>
+                    <input type="date" id="ua-date-filter" class="form-control form-control-sm stitch-input"
+                        style="min-width: 150px;">
+                </div>
+                <button id="ua-reset-filters" class="btn btn-sm btn-reset">
+                    <i class="bi bi-funnel-fill me-1"></i>Reset
+                </button>
+            </div>
+        </div>
+
+        <div class="table-responsive">
+            <table class="table table-hover" id="ua-table"
+                style="background: white; border-radius: 12px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.05); border: 1px solid var(--stitch-border);">
+                <thead class="table-dark">
+                    <tr>
+                        <th>QR Code</th>
+                        <th>User</th>
+                        <th>Date</th>
+                        <th>Hour</th>
+                    </tr>
+                </thead>
+                <tbody id="ua-table-body">
+                    <tr>
+                        <td colspan="4" class="text-center text-muted py-4">Click "User Activity" to load data</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <footer class="text-center mt-5 mb-4 text-muted small">
+        &copy; 2025 University of British Columbia - Maintenance Planning Department.<br>All rights reserved.
+    </footer>
+
+    <div class="modal fade" id="planonModal" tabindex="-1" aria-labelledby="planonModalLabel" aria-hidden="true">
+        <div class="modal-dialog modal-dialog-centered">
+            <div class="modal-content">
+                <div class="modal-header bg-warning-subtle">
+                    <h5 class="modal-title text-warning-emphasis" id="planonModalLabel"><i
+                            class="bi bi-exclamation-triangle-fill"></i> Action Not Allowed</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    The asset was exported to Planon, so you cannot process it again.
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="modal fade" id="infoModal" tabindex="-1" aria-labelledby="infoModalLabel" aria-hidden="true">
+        <div class="modal-dialog modal-dialog-centered">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="infoModalLabel">Notification</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body" id="infoModalBody"></div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="modal fade" id="confirmModal" tabindex="-1" aria-labelledby="confirmModalLabel" aria-hidden="true">
+        <div class="modal-dialog modal-dialog-centered">
+            <div class="modal-content">
+                <div class="modal-header d-flex align-items-center justify-content-between">
+                    <h5 class="modal-title fw-semibold" id="confirmModalLabel">Confirm Action</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body" id="confirmModalBody"></div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="button" class="btn btn-primary" id="confirmModalOk">OK</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/jquery@3.7.1/dist/jquery.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="https://cdn.datatables.net/1.13.6/js/jquery.dataTables.min.js"></script>
+    <script src="https://cdn.datatables.net/1.13.6/js/dataTables.bootstrap5.min.js"></script>
+    <script src="https://cdn.datatables.net/responsive/2.5.0/js/dataTables.responsive.min.js"></script>
+    <script src="https://cdn.datatables.net/responsive/2.5.0/js/responsive.bootstrap5.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/noUiSlider/15.8.1/nouislider.min.js"></script>
+    {% if page_title and 'Distribution' in page_title %}
+    <script src="https://d3js.org/d3.v7.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/exceljs@4.4.0/dist/exceljs.min.js"></script>
+    <!-- FileSaver.js (used for the SLD xlsx export). Edge's iframe download
+         path mishandles raw blob URLs for Office MIME types; FileSaver handles
+         the cross-browser save-as dance reliably. -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/FileSaver.js/2.0.5/FileSaver.min.js"></script>
+    <script src="{{ url_for('static', filename='sld/sld.js') }}?v=20260521-pdf-preview-pan"></script>
+    {% endif %}
+
+    <script>
+        window.resetFilters = function (tabName) {
+            // Build a clean query string so the server returns an unfiltered dataset
+            var params = new URLSearchParams(window.location.search || '');
+            var tab = tabName || params.get('tab') || 'new';
+            var globalBuildingSel = document.getElementById('global-building-selector');
+            var currentBuilding = ((globalBuildingSel && globalBuildingSel.value)
+                || params.get('filter_building')
+                || params.get('building')
+                || '').trim();
+            params.set('tab', tab);
+            params.set('process', tab === 'update' ? '1' : (tab === 'manual' ? '2' : '0'));
+            ['flagged', 'modified', 'missed', 'archive', 'building', 'approved', 'filter_qr', 'filter_tag', 'filter_group', 'filter_building', 'filter_approved', 'filter_date', 'filter_captured_by', 'conf_min', 'conf_max', 'traffic_light']
+                .forEach(function (key) { params.delete(key); });
+            if (currentBuilding) {
+                params.set('building', currentBuilding);
+                params.set('filter_building', currentBuilding);
+            }
+
+            // Clear persisted table state to drop any client-side searches (e.g., QR search)
+            if (window.$ && $.fn.dataTable) {
+                try { $.fn.dataTable.tables({ api: true }).state.clear(); } catch (e) { }
+            }
+            try { localStorage.removeItem('dashboardQuery'); } catch (e) { }
+
+            var suffix = tab === 'update' ? '-update' : (tab === 'manual' ? '-manual' : '-new');
+            var tableId = 'assetTable' + (tab === 'new' ? 'New' : (tab === 'update' ? 'Update' : 'Manual')) + '_v2';
+            var table = (window.tables || {})[tableId];
+
+            // Clear filter inputs for immediate UI feedback while the page reloads
+            $('#filter-qr' + suffix).val('');
+            $('#filter-date' + suffix).val('');
+            $('#filter-tag' + suffix).val('');
+            $('#filter-group' + suffix).val('');
+            $('#filter-building' + suffix).val(currentBuilding);
+            $('#filter-captured-by' + suffix).val('');
+            $('#filter-traffic' + suffix).val('');
+            if (window.syncTrafficFilterDropdowns) window.syncTrafficFilterDropdowns(document);
+            if (tab === 'manual') {
+                $('#filter-approved' + suffix).val(''); // Default to "All" for Manual
+            } else {
+                $('#filter-approved' + suffix).val('False'); // Default to "Pending" for others
+            }
+
+            // Clear DataTable column searches and global search
+            if (table) {
+                table.columns().search('');
+                table.search('').draw();
+            }
+
+            window.confRangeMin = 0;
+            window.confRangeMax = 100;
+            ['new', 'update', 'manual'].forEach(function(t) {
+                var el = document.getElementById('confSlider-' + t);
+                if (el && el.noUiSlider) el.noUiSlider.set([0, 100]);
+            });
+
+            // Update review links (to clear filter params)
+            if (window.updateReviewLinks) window.updateReviewLinks(tableId);
+
+            // Reload dashboard without table filters while preserving the current page scope.
+            var query = params.toString();
+            window.location.assign(window.location.pathname + (query ? '?' + query : ''));
+        };
+
+        function updateDashboardQuery(tabName) {
+            var params = new URLSearchParams(window.location.search || "");
+            var tab = tabName || params.get('tab') || 'new';
+            params.set('tab', tab);
+            params.set('process', tab === 'update' ? '1' : (tab === 'manual' ? '2' : '0'));
+            params.delete('flagged');
+            params.delete('modified');
+            // archive intentionally preserved across filter/tab changes so a
+            // "Show Archive" view survives a Review Status / tab change.
+
+            var suffix = tab === 'update' ? '-update' : (tab === 'manual' ? '-manual' : '-new');
+            var qrVal = ($('#filter-qr' + suffix).val() || '').trim();
+            var dateVal = $('#filter-date' + suffix).val();
+            var tagVal = ($('#filter-tag' + suffix).val() || '').trim();
+            var groupVal = $('#filter-group' + suffix).val() || '';
+            var capturedByVal = $('#filter-captured-by' + suffix).val() || '';
+            if (dateVal) params.set('filter_date', dateVal); else params.delete('filter_date');
+            if (qrVal) params.set('filter_qr', qrVal); else params.delete('filter_qr');
+            if (tagVal) params.set('filter_tag', tagVal); else params.delete('filter_tag');
+            if (groupVal) params.set('filter_group', groupVal); else params.delete('filter_group');
+            if (capturedByVal) params.set('filter_captured_by', capturedByVal); else params.delete('filter_captured_by');
+
+            var approvedSel = '#filter-approved' + suffix;
+            var trafficSel = '#filter-traffic' + suffix;
+
+            // Building is driven by the global selector, not per-tab. Fall back to existing URL param.
+            var globalSel = document.getElementById('global-building-selector');
+            var building = (globalSel && globalSel.value) || params.get('filter_building') || params.get('building') || '';
+            var approved = $(approvedSel).val();
+            var trafficLight = normalizeTrafficLightFilterValue($(trafficSel).val());
+
+            if (building) {
+                params.set('building', building);
+                params.set('filter_building', building);
+            } else {
+                params.delete('building');
+                params.delete('filter_building');
+            }
+            if (approved === '') {
+                params.set('approved', 'all');
+                params.set('filter_approved', 'all');
+            } else if (approved) {
+                params.set('approved', approved);
+                params.set('filter_approved', approved);
+            } else {
+                params.delete('approved');
+                params.delete('filter_approved');
+            }
+            if (trafficLight) params.set('traffic_light', trafficLight); else params.delete('traffic_light');
+            var rMin = Math.round(window.confRangeMin || 0);
+            var rMax = Math.round(window.confRangeMax !== undefined ? window.confRangeMax : 100);
+            if (rMin !== 0 || rMax !== 100) {
+                params.set('conf_min', rMin);
+                params.set('conf_max', rMax);
+            } else {
+                params.delete('conf_min');
+                params.delete('conf_max');
+            }
+
+            var q = '?' + params.toString();
+            try { localStorage.setItem('dashboardQuery', q); } catch (e) { }
+            return q;
+        }
+
+        function getDashboardQueryParam(params, primaryKey, fallbackKey) {
+            if (params.has(primaryKey)) return params.get(primaryKey) || '';
+            if (fallbackKey && params.has(fallbackKey)) return params.get(fallbackKey) || '';
+            return null;
+        }
+
+        var TRAFFIC_LIGHT_OPTIONS = ['green', 'yellow', 'red'];
+        window.confRangeMin = {{ conf_min if conf_min is not none else 0 }};
+        window.confRangeMax = {{ conf_max if conf_max is not none else 100 }};
+
+        function normalizeTrafficLightFilterValue(value) {
+            if (value === undefined || value === null || value === '') return '';
+            var normalized = String(value).trim().toLowerCase();
+            return TRAFFIC_LIGHT_OPTIONS.indexOf(normalized) !== -1 ? normalized : '';
+        }
+
+        function renderTrafficFilterContent(value) {
+            var normalized = normalizeTrafficLightFilterValue(value);
+            if (!normalized) {
+                return '<span class="traffic-filter__all-text">All Statuses</span>';
+            }
+            var label = normalized.charAt(0).toUpperCase() + normalized.slice(1);
+            return '<span class="traffic-ball traffic-ball--' + normalized + '" aria-hidden="true"></span>'
+                + '<span class="visually-hidden">' + label + '</span>';
+        }
+
+        function syncTrafficFilterDropdown($select) {
+            if (!$select || !$select.length) return;
+            var $container = $select.closest('.traffic-filter');
+            if (!$container.length) return;
+
+            var normalized = normalizeTrafficLightFilterValue($select.val());
+            $container.find('.traffic-filter__current').html(renderTrafficFilterContent(normalized));
+            $container.find('.traffic-filter__option').removeClass('active').attr('aria-current', 'false');
+            $container.find('.traffic-filter__option').each(function () {
+                var $option = $(this);
+                var optionValue = normalizeTrafficLightFilterValue($option.data('value'));
+                var isActive = optionValue === normalized || (!optionValue && !normalized);
+                $option.toggleClass('active', isActive).attr('aria-current', isActive ? 'true' : 'false');
+            });
+        }
+
+        function syncTrafficFilterDropdowns(scope) {
+            var $root = scope ? $(scope) : $(document);
+            $root.find('select[id^="filter-traffic-"]').each(function () {
+                syncTrafficFilterDropdown($(this));
+            });
+        }
+
+        window.syncTrafficFilterDropdowns = syncTrafficFilterDropdowns;
+
+        function getDashboardFilterSuffix(tableId) {
+            return tableId === 'assetTableUpdate_v3' ? '-update' : (tableId === 'assetTableManual_v3' ? '-manual' : '-new');
+        }
+
+        function getActiveDashboardTab() {
+            return (document.querySelector('#dashboardTabs .nav-link.active')?.dataset.tab) || 'new';
+        }
+
+        function syncAllConfSliders(sourceTab) {
+            ['new', 'update', 'manual'].forEach(function(tab) {
+                if (tab === sourceTab) return;
+                var el = document.getElementById('confSlider-' + tab);
+                if (el && el.noUiSlider) el.noUiSlider.set([window.confRangeMin, window.confRangeMax]);
+            });
+        }
+
+        function updateAllReviewLinks() {
+            Object.keys(window.tables || {}).forEach(function (tableId) {
+                updateReviewLinks(tableId);
+            });
+        }
+
+        function updateDashboardNavLinks() {
+            var rMin = Math.round(window.confRangeMin || 0);
+            var rMax = Math.round(window.confRangeMax !== undefined ? window.confRangeMax : 100);
+            $('.filter-card a.view-pill[href]').each(function () {
+                var $link = $(this);
+                var href = $link.attr('href');
+                if (!href) return;
+
+                var baseUrl = href.split('?')[0];
+                var params = new URLSearchParams(href.includes('?') ? href.split('?')[1] : '');
+                if (rMin !== 0 || rMax !== 100) {
+                    params.set('conf_min', rMin);
+                    params.set('conf_max', rMax);
+                } else {
+                    params.delete('conf_min');
+                    params.delete('conf_max');
+                }
+
+                var query = params.toString();
+                $link.attr('href', query ? baseUrl + '?' + query : baseUrl);
+            });
+        }
+
+        function redrawAllAssetTables() {
+            Object.keys(window.tables || {}).forEach(function (tableId) {
+                window.tables[tableId].draw();
+            });
+        }
+
+        function initBootstrapTooltips(scope) {
+            if (!window.bootstrap || !bootstrap.Tooltip) return;  // Bootstrap CDN unavailable — skip gracefully
+            var root = scope || document;
+            var tooltipEls = [].slice.call(root.querySelectorAll('[data-bs-toggle="tooltip"]'));
+            tooltipEls.forEach(function (el) {
+                var existing = bootstrap.Tooltip.getInstance(el);
+                if (existing) existing.dispose();
+                new bootstrap.Tooltip(el);
+            });
+        }
+
+        function initChecklistPopovers(scope) {
+            if (!window.bootstrap || !bootstrap.Popover) return;  // Bootstrap CDN unavailable — skip gracefully
+            var root = scope || document;
+            var popoverEls = [].slice.call(root.querySelectorAll('.el-required-check-trigger'));
+            popoverEls.forEach(function (el) {
+                var existing = bootstrap.Popover.getInstance(el);
+                if (existing) existing.dispose();
+
+                var contentId = el.getAttribute('data-checklist-target');
+                var contentEl = contentId ? document.getElementById(contentId) : null;
+                new bootstrap.Popover(el, {
+                    html: true,
+                    trigger: 'hover focus',
+                    placement: 'auto',
+                    container: 'body',
+                    customClass: 'el-required-popover',
+                    content: contentEl ? contentEl.innerHTML : '<div class="text-muted small">No checklist available.</div>'
+                });
+            });
+        }
+
+        function initDashboardOverlays(scope) {
+            initBootstrapTooltips(scope);
+            initChecklistPopovers(scope);
+        }
+
+        function applyApprovedShadow($select) {
+            // Shadow removed in new design for cleaner look, but logic kept to prevent errors
+        }
+
+        (function () {
+            var initialTab = (document.querySelector('#dashboardTabs .nav-link.active')?.dataset.tab) || 'new';
+            updateDashboardQuery(initialTab);
+        })();
+
+        document.addEventListener('DOMContentLoaded', function () {
+            initDashboardOverlays(document);
+            syncTrafficFilterDropdowns(document);
+
+            var tabLinks = document.querySelectorAll('#dashboardTabs .nav-link');
+            tabLinks.forEach(function (link) {
+                link.addEventListener('shown.bs.tab', function (ev) {
+                    var tabName = ev.target.dataset.tab || 'new';
+                    syncTrafficFilterDropdowns(document);
+                    var q = updateDashboardQuery(tabName);
+                    window.history.replaceState({}, '', window.location.pathname + q);
+
+                    try {
+                        $.fn.dataTable.tables({ visible: true, api: true }).columns.adjust().responsive.recalc();
+                    } catch (e) { }
+                    initDashboardOverlays(document);
+                });
+            });
+        });
+
+        $(document).ready(function () {
+            var isDistributionDashboard = {{ 'true' if page_title and 'Distribution' in page_title else 'false' }};
+
+            // Indices (Revised after Attribute column dropped — shifted down by 1
+            // for every column previously at idx 11+).
+            var colQR = 0;
+            var colCaptureDate = 1;
+            var colBuilding = 2;
+            var colTag = 5;        // UBC Asset Tag
+            var colAmperage = 7;
+            var colVolts = 8;
+            var colLocation = 9;
+            var colAssetGroup = 13; // Asset Group follows Avg AI Conf and Comp Score
+            var colApproved = 15;
+            var colAction = 17;
+            var colCapturedBy = 18;
+            var distributionHiddenColumns = [colAmperage, colVolts, colLocation];
+
+            $.fn.dataTable.ext.search.push(function (settings, data, dataIndex) {
+                var col = colApproved;
+                var search = settings.aoPreSearchCols[col].sSearch;
+                if (!search) return true;
+                var td = settings.aoData[dataIndex].anCells[col];
+                var val = $(td).attr('data-search') || '';
+                var regex = settings.aoPreSearchCols[col].bRegex ? new RegExp(search) : null;
+                if (regex) return regex.test(val);
+                return (val.indexOf(search) !== -1);
+            });
+
+            $.fn.dataTable.ext.search.push(function (settings, data, dataIndex) {
+                var tableId = settings.nTable && settings.nTable.id;
+                if (!tableId || tableId.indexOf('assetTable') !== 0) return true;
+                var rMin = window.confRangeMin || 0;
+                var rMax = window.confRangeMax !== undefined ? window.confRangeMax : 100;
+                if (rMin === 0 && rMax === 100) return true;
+                var row = settings.aoData[dataIndex] && settings.aoData[dataIndex].nTr;
+                var rawScore = row ? (row.getAttribute('data-avg-conf') || '') : '';
+                var numericScore = parseFloat(rawScore);
+                if (!Number.isFinite(numericScore)) return false;
+                return numericScore >= rMin && numericScore <= rMax;
+            });
+
+            $.fn.dataTable.ext.search.push(function (settings, data, dataIndex) {
+                if (!settings.nTable || !/^assetTable/.test(settings.nTable.id || '')) return true;
+                var suffix = getDashboardFilterSuffix(settings.nTable.id || '');
+                var trafficFilter = normalizeTrafficLightFilterValue($('#filter-traffic' + suffix).val());
+                if (!trafficFilter) return true;
+
+                var row = settings.aoData[dataIndex] && settings.aoData[dataIndex].nTr;
+                var trafficValue = row ? String(row.getAttribute('data-traffic-light') || '').trim().toLowerCase() : '';
+                return trafficValue === trafficFilter;
+            });
+
+            function initAssetTable(tableId, buildingSelector, approvedSelector, tagSelector, groupSelector, qrSelector, trafficSelector) {
+                // Assuming dateSelector ID matches tableId suffix pattern: #filter-date-new, etc.
+                var dateSelector = qrSelector.replace('qr', 'date');
+                var capturedBySelector = qrSelector.replace('qr', 'captured-by');
+                var tabName = tableId === 'assetTableUpdate_v3' ? 'update' : (tableId === 'assetTableManual_v3' ? 'manual' : 'new');
+
+                var columnDefs = [
+                    { orderable: false, targets: [colApproved, colAction] },
+                    { targets: colCapturedBy, visible: false, searchable: true }
+                ];
+
+                if (isDistributionDashboard) {
+                    columnDefs.push({ targets: distributionHiddenColumns, visible: false, searchable: true });
+                }
+
+                var table = $('#' + tableId).DataTable({
+                    pageLength: 15,
+                    order: [],
+                    stateSave: true,
+                    stateDuration: -1,
+                    responsive: true,
+                    dom: '<"d-flex justify-content-between align-items-center"l>rt<"d-flex flex-column flex-md-row justify-content-between align-items-center p-3 border-top"ip>',
+                    columnDefs: columnDefs,
+                    stateLoadParams: function (settings, data) {
+                        if (!isDistributionDashboard || !data || !data.columns) return;
+                        distributionHiddenColumns.forEach(function (idx) {
+                            if (data.columns[idx]) data.columns[idx].visible = false;
+                        });
+                    },
+                });
+
+                if (isDistributionDashboard) {
+                    distributionHiddenColumns.forEach(function (idx) {
+                        table.column(idx).visible(false, false);
+                    });
+                    table.columns.adjust().responsive.recalc();
+                }
+
+                var $building = $(buildingSelector);
+                var $approved = $(approvedSelector);
+                var $tag = $(tagSelector);
+                var $group = $(groupSelector);
+                var $qr = $(qrSelector);
+                var $date = $(dateSelector);
+                var $traffic = $(trafficSelector);
+                var $capturedBy = $(capturedBySelector);
+                applyApprovedShadow($approved);
+
+                function syncDashboardHistory() {
+                    if (tabName !== getActiveDashboardTab()) return '';
+                    var q = updateDashboardQuery(tabName);
+                    window.history.replaceState({}, '', window.location.pathname + q);
+                    return q;
+                }
+
+                function applyTableFiltersFromInputs() {
+                    var buildingVal = $building.val();
+                    var approvedVal = $approved.val();
+                    var qrVal = ($qr.val() || '').trim();
+                    var tagVal = ($tag.val() || '').trim();
+                    var groupVal = $group.val();
+                    var dateVal = $date.val();
+                    var capturedByVal = $capturedBy.val();
+
+                    table.column(colBuilding).search(buildingVal ? '^' + $.fn.dataTable.util.escapeRegex(buildingVal) + '$' : '', true, false);
+                    table.column(colApproved).search(approvedVal ? approvedVal : '', true, false);
+                    table.column(colQR).search(qrVal);
+                    table.column(colTag).search(tagVal);
+                    table.column(colAssetGroup).search(groupVal ? '^' + $.fn.dataTable.util.escapeRegex(groupVal) + '$' : '', true, false);
+                    table.column(colCaptureDate).search(dateVal || '');
+                    table.column(colCapturedBy).search(capturedByVal ? '^' + $.fn.dataTable.util.escapeRegex(capturedByVal) + '$' : '', true, false);
+                }
+
+                function populateDropdowns() {
+                    // Building
+                    var currentB = $building.val();
+                    $building.find('option:not(:first)').remove();
+                    var uniquesB = {};
+                    table.column(colBuilding, { search: 'applied' }).data().each(function (val) {
+                        var textVal = $(val).text() || val;
+                        textVal = (textVal || '').toString().trim();
+                        if (textVal) uniquesB[textVal] = true;
+                    });
+                    Object.keys(uniquesB).sort().forEach(function (v) {
+                        $building.append(new Option(v, v));
+                    });
+                    if (currentB && uniquesB[currentB]) $building.val(currentB);
+
+                    // Asset Group
+                    var currentG = $group.val();
+                    $group.find('option:not(:first)').remove();
+                    var uniquesG = {};
+                    table.column(colAssetGroup, { search: 'applied' }).data().each(function (val) {
+                        val = (val || '').toString().trim();
+                        if (val) uniquesG[val] = true;
+                    });
+                    Object.keys(uniquesG).sort().forEach(function (v) {
+                        $group.append(new Option(v, v));
+                    });
+                    if (currentG && uniquesG[currentG]) $group.val(currentG);
+
+                    // Captured By
+                    var currentCB = $capturedBy.val();
+                    $capturedBy.find('option:not(:first)').remove();
+                    var uniquesCB = {};
+                    table.column(colCapturedBy, { search: 'applied' }).data().each(function (val) {
+                        val = (val || '').toString().trim();
+                        if (val) uniquesCB[val] = true;
+                    });
+                    Object.keys(uniquesCB).sort().forEach(function (v) {
+                        $capturedBy.append(new Option(v, v));
+                    });
+                    if (currentCB && uniquesCB[currentCB]) $capturedBy.val(currentCB);
+                }
+                populateDropdowns();
+
+                // Restore State
+                var state = table.state.loaded();
+                var approvedStateSearch = '';
+                var params = new URLSearchParams(window.location.search || '');
+                var trafficParam = normalizeTrafficLightFilterValue(params.get('traffic_light'));
+                $traffic.val(trafficParam || '');
+                if (state && state.columns) {
+                    var bSearch = state.columns[colBuilding]?.search?.search || '';
+                    if (bSearch.startsWith('^') && bSearch.endsWith('$')) {
+                        bSearch = bSearch.slice(1, -1);
+                        try { bSearch = $.fn.dataTable.util.unescapeRegex(bSearch); } catch (e) { }
+                    }
+                    if (bSearch) $building.val(bSearch);
+
+                    var aSearch = state.columns[colApproved]?.search?.search || '';
+                    approvedStateSearch = aSearch;
+                    if (aSearch === '^True$') $approved.val('True');
+                    else if (aSearch === '^False$') $approved.val('False');
+
+                    var dSearch = state.columns[colCaptureDate]?.search?.search || '';
+                    if (dSearch) $date.val(dSearch);
+
+                    var qSearch = state.columns[colQR]?.search?.search || '';
+                    if (qSearch) $qr.val(qSearch);
+
+                    var tSearch = state.columns[colTag]?.search?.search || '';
+                    if (tSearch) $tag.val(tSearch);
+
+                    var gSearch = state.columns[colAssetGroup]?.search?.search || '';
+                    if (gSearch.startsWith('^') && gSearch.endsWith('$')) {
+                        gSearch = gSearch.slice(1, -1);
+                        try { gSearch = $.fn.dataTable.util.unescapeRegex(gSearch); } catch (e) { }
+                    }
+                    if (gSearch) $group.val(gSearch);
+
+                    var cbSearch = state.columns[colCapturedBy]?.search?.search || '';
+                    if (cbSearch.startsWith('^') && cbSearch.endsWith('$')) {
+                        cbSearch = cbSearch.slice(1, -1);
+                        try { cbSearch = $.fn.dataTable.util.unescapeRegex(cbSearch); } catch (e) { }
+                    }
+                    if (cbSearch) $capturedBy.val(cbSearch);
+                }
+
+                var buildingParam = getDashboardQueryParam(params, 'filter_building', 'building');
+                if (buildingParam !== null) $building.val(buildingParam);
+
+                var approvedParam = getDashboardQueryParam(params, 'filter_approved', 'approved');
+                if (approvedParam !== null) {
+                    $approved.val(approvedParam === 'all' ? '' : approvedParam);
+                }
+
+                var dateParam = getDashboardQueryParam(params, 'filter_date');
+                if (dateParam !== null) $date.val(dateParam);
+
+                var qrParam = getDashboardQueryParam(params, 'filter_qr');
+                if (qrParam !== null) $qr.val(qrParam);
+
+                var tagParam = getDashboardQueryParam(params, 'filter_tag');
+                if (tagParam !== null) $tag.val(tagParam);
+
+                var groupParam = getDashboardQueryParam(params, 'filter_group');
+                if (groupParam !== null) $group.val(groupParam);
+
+                var capturedByParam = getDashboardQueryParam(params, 'filter_captured_by');
+                if (capturedByParam !== null) $capturedBy.val(capturedByParam);
+
+                var hasApprovedState = (approvedStateSearch === '^True$' || approvedStateSearch === '^False$');
+                if (!hasApprovedState && approvedParam === null) {
+                    $approved.val('False');
+                }
+                applyTableFiltersFromInputs();
+                table.draw();
+                syncDashboardHistory();
+                applyApprovedShadow($approved);
+                syncTrafficFilterDropdown($traffic);
+
+                table.on('draw', function () {
+                    populateDropdowns();
+                    initDashboardOverlays(table.table().container());
+                    syncTrafficFilterDropdowns(document);
+                });
+
+                // Listeners
+                $building.on('change', function () {
+                    var val = $(this).val();
+                    table.column(colBuilding).search(val ? '^' + $.fn.dataTable.util.escapeRegex(val) + '$' : '', true, false).draw();
+                    syncDashboardHistory();
+                });
+
+                $approved.on('change', function () {
+                    var v = $(this).val();
+                    table.column(colApproved).search(v ? v : '', true, false).draw();
+                    var q = updateDashboardQuery(tabName);
+                    applyApprovedShadow($approved);
+                    window.location.href = window.location.pathname + q;
+                });
+
+                $tag.on('keyup change', function () {
+                    var val = $(this).val();
+                    table.column(colTag).search(val).draw();
+                    syncDashboardHistory();
+                });
+
+                $qr.on('keyup change', function () {
+                    var val = $(this).val();
+                    table.column(colQR).search(val).draw();
+                    syncDashboardHistory();
+                });
+
+                $date.on('change', function () {
+                    var val = $(this).val();
+                    table.column(colCaptureDate).search(val).draw();
+                    syncDashboardHistory();
+                });
+
+                $group.on('change', function () {
+                    var val = $(this).val();
+                    table.column(colAssetGroup).search(val ? '^' + $.fn.dataTable.util.escapeRegex(val) + '$' : '', true, false).draw();
+                    syncDashboardHistory();
+                });
+
+                $capturedBy.on('change', function () {
+                    var val = $(this).val();
+                    table.column(colCapturedBy).search(val ? '^' + $.fn.dataTable.util.escapeRegex(val) + '$' : '', true, false).draw();
+                    syncDashboardHistory();
+                });
+
+                $traffic.on('change', function () {
+                    syncTrafficFilterDropdown($traffic);
+                    table.draw();
+                    syncDashboardHistory();
+                });
+
+                function updateQuickFilterCounts(dt) {
+                    var rows = dt.rows({ search: 'applied' }).nodes();
+                    var countMiss = 0;
+                    $(rows).each(function () {
+                        var $row = $(this);
+                        if ($row.attr('data-missed-photo') === '1') countMiss++;
+                    });
+
+                    var container = $(dt.table().container()).closest('.tab-pane');
+                    container.find('.btn-missed .badge-count').text(countMiss);
+                }
+
+                table.on('draw', function () {
+                    updateQuickFilterCounts(table);
+                });
+
+                updateQuickFilterCounts(table);
+
+                // Update Review links with current filter values on draw
+                table.on('draw', function () {
+                    updateReviewLinks(tableId);
+                });
+                // Initial update
+                updateReviewLinks(tableId);
+
+                return table;
+            }
+
+
+            // Function to update all Review links with current filter values
+            function updateReviewLinks(tableId) {
+                var tabName = tableId === 'assetTableUpdate_v3' ? 'update' : (tableId === 'assetTableManual_v3' ? 'manual' : 'new');
+                var suffix = tabName === 'update' ? '-update' : (tabName === 'manual' ? '-manual' : '-new');
+
+                var filterQr = $('#filter-qr' + suffix).val() || '';
+                var filterTag = $('#filter-tag' + suffix).val() || '';
+                var filterGroup = $('#filter-group' + suffix).val() || '';
+                var filterBuilding = $('#filter-building' + suffix).val() || '';
+                var filterApproved = $('#filter-approved' + suffix).val() || '';
+                var filterDate = $('#filter-date' + suffix).val() || '';
+                var filterTraffic = normalizeTrafficLightFilterValue($('#filter-traffic' + suffix).val());
+                var rMin = Math.round(window.confRangeMin || 0);
+                var rMax = Math.round(window.confRangeMax !== undefined ? window.confRangeMax : 100);
+
+                // Update all Review links in this table
+                $('#' + tableId + ' tbody a.btn-primary').each(function () {
+                    var $link = $(this);
+                    var href = $link.attr('href');
+                    if (!href) return;
+
+                    // Parse existing URL
+                    var baseUrl = href.split('?')[0];
+                    var params = new URLSearchParams(href.includes('?') ? href.split('?')[1] : '');
+
+                    // Set filter parameters
+                    if (filterQr) params.set('filter_qr', filterQr); else params.delete('filter_qr');
+                    if (filterTag) params.set('filter_tag', filterTag); else params.delete('filter_tag');
+                    if (filterGroup) params.set('filter_group', filterGroup); else params.delete('filter_group');
+                    if (filterBuilding) params.set('filter_building', filterBuilding); else params.delete('filter_building');
+                    if (filterApproved === '') params.set('filter_approved', 'all');
+                    else if (filterApproved) params.set('filter_approved', filterApproved);
+                    else params.delete('filter_approved');
+                    if (filterTraffic) params.set('traffic_light', filterTraffic); else params.delete('traffic_light');
+                    if (filterDate) params.set('filter_date', filterDate); else params.delete('filter_date');
+                    if (rMin !== 0 || rMax !== 100) {
+                        params.set('conf_min', rMin);
+                        params.set('conf_max', rMax);
+                    } else {
+                        params.delete('conf_min');
+                        params.delete('conf_max');
+                    }
+
+                    // Rebuild URL
+                    var newHref = baseUrl + '?' + params.toString();
+                    $link.attr('href', newHref);
+                });
+            }
+            // Expose globally so resetFilters (outside this scope) can call it
+            window.updateReviewLinks = updateReviewLinks;
+
+            var tables = {};
+            // Guard each DataTables init: a DataTables fatal (e.g. a column-count mismatch)
+            // must NOT abort this startup block, or the Approved/Manual toggle handlers
+            // below would never bind. A failed table degrades to a plain HTML table; the
+            // toggles still work.
+            try {
+                if (document.getElementById('assetTableNew_v3')) {
+                    tables.assetTableNew_v3 = initAssetTable('assetTableNew_v3', '#filter-building-new', '#filter-approved-new', '#filter-tag-new', '#filter-group-new', '#filter-qr-new', '#filter-traffic-new');
+                }
+            } catch (e) { console.error('initAssetTable(New) failed:', e); }
+            try {
+                if (document.getElementById('assetTableUpdate_v3')) {
+                    tables.assetTableUpdate_v3 = initAssetTable('assetTableUpdate_v3', '#filter-building-update', '#filter-approved-update', '#filter-tag-update', '#filter-group-update', '#filter-qr-update', '#filter-traffic-update');
+                }
+            } catch (e) { console.error('initAssetTable(Update) failed:', e); }
+            try {
+                if (document.getElementById('assetTableManual_v3')) {
+                    tables.assetTableManual_v3 = initAssetTable('assetTableManual_v3', '#filter-building-manual', '#filter-approved-manual', '#filter-tag-manual', '#filter-group-manual', '#filter-qr-manual', '#filter-traffic-manual');
+                }
+            } catch (e) { console.error('initAssetTable(Manual) failed:', e); }
+            window.tables = tables;
+
+            // Global building selector — navigates with filter_building + preserves active tab
+            (function () {
+                var globalSel = document.getElementById('global-building-selector');
+                if (!globalSel) return;
+                globalSel.addEventListener('change', function () {
+                    var p = new URLSearchParams(window.location.search);
+                    if (this.value) {
+                        p.set('filter_building', this.value);
+                        p.set('building', this.value);
+                    } else {
+                        p.delete('filter_building');
+                        p.delete('building');
+                    }
+                    var activeBtn = document.querySelector('#dashboardTabs .nav-link.active');
+                    var activeTab = activeBtn && activeBtn.dataset && activeBtn.dataset.tab;
+                    if (activeTab) { p.set('tab', activeTab); }
+                    // Drop per-tab filters so a building switch gives a clean view
+                    ['filter_qr', 'filter_tag', 'filter_group', 'filter_date', 'traffic_light'].forEach(function (k) { p.delete(k); });
+                    // Clear DataTables saved state so stale column searches don't override the new building
+                    try {
+                        if (window.$ && $.fn.dataTable) {
+                            $.fn.dataTable.tables({ api: true }).state.clear();
+                        }
+                    } catch (e) { /* noop */ }
+                    try { localStorage.removeItem('dashboardQuery'); } catch (e) { /* noop */ }
+                    var target = window.location.pathname + (p.toString() ? '?' + p.toString() : '');
+                    window.location.assign(target);
+                });
+            })();
+
+            $(document).on('click', '.traffic-filter__option', function () {
+                var $option = $(this);
+                var $container = $option.closest('.traffic-filter');
+                var $select = $container.find('select[id^="filter-traffic-"]');
+                if (!$select.length) return;
+
+                var value = normalizeTrafficLightFilterValue($option.data('value'));
+                $select.val(value).trigger('change');
+            });
+
+            syncTrafficFilterDropdowns(document);
+
+            // Initialise noUiSlider on all three tab containers
+            var confTooltipFormat = { to: function(v) { return Math.round(v) + '%'; }, from: function(v) { return parseFloat(v); } };
+            ['new', 'update', 'manual'].forEach(function(tab) {
+                var el = document.getElementById('confSlider-' + tab);
+                if (!el || typeof noUiSlider === 'undefined') return;
+                noUiSlider.create(el, {
+                    start: [window.confRangeMin, window.confRangeMax],
+                    connect: true,
+                    range: { min: 0, max: 100 },
+                    step: 1,
+                    tooltips: [confTooltipFormat, confTooltipFormat],
+                    format: {
+                        to: function(v) { return Math.round(v); },
+                        from: function(v) { return parseFloat(v); }
+                    },
+                    pips: {
+                        mode: 'values',
+                        values: [0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100],
+                        density: 100,
+                        format: { to: function(v) { return Math.round(v); }, from: function(v) { return parseFloat(v); } }
+                    }
+                });
+                el.noUiSlider.on('change', function(values) {
+                    window.confRangeMin = Number(values[0]);
+                    window.confRangeMax = Number(values[1]);
+                    syncAllConfSliders(tab);
+                    redrawAllAssetTables();
+                    updateAllReviewLinks();
+                    updateDashboardNavLinks();
+                    var q = updateDashboardQuery(getActiveDashboardTab());
+                    window.history.replaceState({}, '', window.location.pathname + q);
+                });
+            });
+            updateAllReviewLinks();
+            updateDashboardNavLinks();
+
+
+
+            // Resilient modal creation: a blocked/slow Bootstrap CDN must NOT abort the
+            // rest of this startup block, which binds the Approved/Manual toggle handlers
+            // below. If Bootstrap is unavailable, modals degrade to native alert()/confirm()
+            // and the toggles keep working.
+            function safeModal(el) {
+                try {
+                    if (el && window.bootstrap && bootstrap.Modal) return new bootstrap.Modal(el);
+                } catch (e) { console.error('Modal init failed (Bootstrap unavailable?):', e); }
+                return null;
+            }
+            var planonModal = safeModal(document.getElementById('planonModal'));
+            var infoModal = safeModal(document.getElementById('infoModal'));
+            var infoModalTitle = document.getElementById('infoModalLabel');
+            var infoModalBody = document.getElementById('infoModalBody');
+
+            function showModal(title, message) {
+                if (infoModal && infoModalTitle && infoModalBody) {
+                    infoModalTitle.textContent = title;
+                    infoModalBody.textContent = message;
+                    infoModal.show();
+                } else {
+                    alert(title + "\n\n" + message);
+                }
+            }
+
+            var _confirmCallback = null;
+            var _confirmModalEl = document.getElementById('confirmModal');
+            var _confirmModal = safeModal(_confirmModalEl);
+
+            if (_confirmModalEl) {
+                _confirmModalEl.querySelector('#confirmModalOk').addEventListener('click', function () {
+                    if (_confirmModal) _confirmModal.hide();
+                    if (typeof _confirmCallback === 'function') _confirmCallback();
+                    _confirmCallback = null;
+                });
+                _confirmModalEl.addEventListener('hidden.bs.modal', function () {
+                    _confirmCallback = null;
+                });
+            }
+
+            function showConfirm(title, message, onConfirm) {
+                if (!_confirmModal) {
+                    if (confirm(message)) onConfirm();
+                    return;
+                }
+                _confirmCallback = onConfirm;
+                document.getElementById('confirmModalLabel').textContent = title;
+                document.getElementById('confirmModalBody').textContent = message;
+                _confirmModal.show();
+            }
+
+            $('#assetTableNew_v3, #assetTableUpdate_v3, #assetTableManual_v3').on('click keypress', '.approved-cell', function (ev) {
+                if (ev.type === 'keypress' && ev.key !== ' ' && ev.key !== 'Enter') return;
+                ev.preventDefault();
+
+                var cell = $(this);
+                var docId = cell.data('docid');
+                var tr = cell.closest('tr');
+                var qrCode = tr.find('td:first .el-required-qr-value').text().trim();
+                var reviewButton = tr.find('a.btn-primary');
+                var isCurrentlyApproved = cell.attr('data-search') === 'True';
+                var tableId = cell.closest('table').attr('id');
+                var tableInstance = tables[tableId];
+
+                if (isCurrentlyApproved) {
+                    $.get('/check_sdi/' + qrCode, function (response) {
+                        if (response.exists) {
+                            if (planonModal) { planonModal.show(); }
+                            else { showModal('Exported to Planon', 'This asset was exported to Planon, so it cannot be changed.'); }
+                        } else {
+                            toggleApprovedStatus(docId, cell, reviewButton, tableInstance, tr);
+                        }
+                    }).fail(function (xhr) {
+                        if (xhr.status === 403) {
+                            showModal("Access Denied", "You do not have permission to perform this action. Contact your administrator.");
+                        } else {
+                            showModal('Server Error', "Could not check the asset's export status.");
+                        }
+                    });
+
+                } else {
+                    toggleApprovedStatus(docId, cell, reviewButton, tableInstance, tr);
+                }
+            });
+
+            function toggleApprovedStatus(docId, cell, reviewButton, tableInstance, tr) {
+                $.post('/toggle_approved/' + docId, function (resp) {
+                    if (resp.success) {
+                        if (resp.new_value === "True") {
+                            cell.html('<span class="d-none">True</span>✅');
+                            cell.attr('data-search', 'True');
+                        } else {
+                            cell.html('<span class="d-none">False</span>☐');
+                            cell.attr('data-search', 'False');
+                        }
+                        if (tableInstance) {
+                            tableInstance.row(tr).invalidate().draw(false);
+                        }
+                    } else {
+                        showModal('Update Failed', resp.error || "Could not update status.");
+                    }
+                }).fail(function (xhr) {
+                    if (xhr.status === 403) {
+                        showModal("Access Denied", "You do not have permission to perform this action. Contact your administrator.");
+                    } else {
+                        showModal('Server Error', 'Failed to update Approved status.');
+                    }
+                });
+            }
+
+
+
+
+            $(document).on('click', '.ai-status-cell', function () {
+                var cell = $(this);
+                var docId = cell.data('docid');
+
+                // --- ADDED CHECK: Prevent editing if Approved ---
+                var tr = cell.closest('tr');
+                var approvedVal = tr.find('.approved-cell').attr('data-search');
+                if (approvedVal === 'True') {
+                    showModal("Action Not Allowed", "You cannot modify the AI Status of an approved asset.");
+                    return;
+                }
+                // ------------------------------------------------
+
+                if (!docId) {
+                    showModal("Error", "Missing doc ID for AI Status toggle.");
+                    return;
+                }
+                if (cell.data('busy')) return;
+                cell.data('busy', true);
+
+                var tableId = cell.closest('table').attr('id');
+                var tableInstance = tables[tableId];
+                // var tr = cell.closest('tr'); // Already defined above
+
+                $.ajax({
+                    url: '/toggle_ai_status/' + docId,
+                    method: 'POST',
+                    dataType: 'json'
+                }).done(function (resp) {
+                    if (resp && resp.success) {
+                        if (resp.new_value == '1') {
+                            cell.html('✅');
+                            cell.attr('data-val', '1');
+                        } else {
+                            cell.html('☐');
+                            cell.attr('data-val', '0');
+                        }
+                        if (tableInstance) {
+                            tableInstance.row(tr).invalidate().draw(false);
+                        }
+                    } else {
+                        showModal("Error", (resp && resp.error) || "Could not update AI Status.");
+                    }
+                }).fail(function (xhr) {
+                    if (xhr.status === 403) {
+                        showModal("Access Denied", "You do not have permission to perform this action. Contact your administrator.");
+                    } else {
+                        showModal("Server Error", "Failed to toggle AI Status.");
+                    }
+                }).always(function () {
+                    cell.data('busy', false);
+                });
+            });
+
+            $('#assetTableNew_v3, #assetTableUpdate_v3, #assetTableManual_v3').on('click', '.sdi-cell', function () {
+                var cell = $(this);
+                var docId = cell.data('docid');
+
+                // --- ADDED CHECK: Prevent editing if Approved ---
+                var tr = cell.closest('tr');
+                var approvedVal = tr.find('.approved-cell').attr('data-search');
+                if (approvedVal === 'True') {
+                    showModal("Action Not Allowed", "You cannot modify the Manual Entry status of an approved asset.");
+                    return;
+                }
+                // ------------------------------------------------
+
+                var tableId = cell.closest('table').attr('id');
+                var tableInstance = tables[tableId];
+                // var tr = cell.closest('tr'); // Already defined above
+
+                $.post('/toggle_sdi/' + docId, function (resp) {
+                    if (resp.success) {
+                        if (resp.new_value == 1) {
+                            cell.html('✅');
+                            cell.attr('data-val', '1');
+                        } else {
+                            cell.html('☐');
+                            cell.attr('data-val', '0');
+                        }
+                        if (tableInstance) {
+                            tableInstance.row(tr).invalidate().draw(false);
+                        }
+                    } else {
+                        showModal("Error", resp.error || "Could not update Manual Entry status.");
+                    }
+                }).fail(function (xhr) {
+                    if (xhr.status === 403) {
+                        showModal("Access Denied", "You do not have permission to perform this action. Contact your administrator.");
+                    } else {
+                        showModal("Server Error", "Failed to toggle Manual Entry status.");
+                    }
+                });
+            });
+
+            // Batch header toggles apply to the current filtered DataTables rows.
+            $(document).on('click', '.select-all-manual, .select-all-approved', function (ev) {
+                ev.stopPropagation();
+            });
+
+            function setManualCellState(cell, newValue) {
+                if (newValue == 1) {
+                    cell.html('&#x2705;');
+                    cell.attr('data-val', '1');
+                } else {
+                    cell.html('&#x2610;');
+                    cell.attr('data-val', '0');
+                }
+            }
+
+            function setApprovedCellState(cell, newValue) {
+                if (newValue === "True") {
+                    cell.html('<span class="d-none">True</span>&#x2705;');
+                    cell.attr('data-search', 'True');
+                } else {
+                    cell.html('<span class="d-none">False</span>&#x2610;');
+                    cell.attr('data-search', 'False');
+                }
+            }
+
+            function getRowQrCode(tr) {
+                var qr = tr.find('td:first .el-required-qr-value').text().trim();
+                return qr || tr.find('td:first').text().trim();
+            }
+
+            $(document).on('change', '.select-all-manual', function () {
+                var isChecked = $(this).is(':checked');
+                var tableId = $(this).closest('table').attr('id');
+                var tableInstance = tables[tableId];
+                if (!tableInstance) return;
+
+                var rows = tableInstance.rows({ search: 'applied' }).nodes();
+                var updates = [];
+                $(rows).each(function () {
+                    var tr = $(this);
+                    var cell = tr.find('.manual-entry-cell');
+                    if (!cell.length) return;
+                    var isManual = cell.attr('data-val') == '1';
+                    var approvedVal = tr.find('.approved-cell').attr('data-search');
+                    if (approvedVal === 'True') return;
+
+                    if (isManual !== isChecked) {
+                        updates.push({ docId: cell.data('docid'), cell: cell, tr: tr });
+                    }
+                });
+
+                if (updates.length === 0) return;
+
+                var $checkbox = $(this);
+                $checkbox.prop('checked', !isChecked);
+                showConfirm("Confirm Bulk Action", "Are you sure you want to " + (isChecked ? "Select" : "Unselect") + " Manual for " + updates.length + " filtered assets?", function () {
+                    $checkbox.prop('checked', isChecked);
+                    $checkbox.prop('disabled', true);
+
+                    var i = 0;
+                    function processNext() {
+                        if (i >= updates.length) {
+                            tableInstance.draw(false);
+                            $checkbox.prop('disabled', false);
+                            return;
+                        }
+
+                        var update = updates[i];
+                        $.post('/toggle_sdi/' + update.docId, function (resp) {
+                            if (resp.success) {
+                                setManualCellState(update.cell, resp.new_value);
+                                tableInstance.row(update.tr).invalidate();
+                            }
+                        }).always(function () {
+                            i++;
+                            processNext();
+                        });
+                    }
+
+                    processNext();
+                });
+            });
+
+            $(document).on('change', '.select-all-approved', function () {
+                var isChecked = $(this).is(':checked');
+                var tableId = $(this).closest('table').attr('id');
+                var tableInstance = tables[tableId];
+                if (!tableInstance) return;
+
+                var rows = tableInstance.rows({ search: 'applied' }).nodes();
+                var updates = [];
+                $(rows).each(function () {
+                    var tr = $(this);
+                    var cell = tr.find('.approved-cell');
+                    if (!cell.length) return;
+                    var isRowApproved = cell.attr('data-search') === 'True';
+                    if (isRowApproved !== isChecked) {
+                        updates.push({ docId: cell.data('docid'), cell: cell, tr: tr });
+                    }
+                });
+
+                if (updates.length === 0) return;
+
+                var $checkbox = $(this);
+                $checkbox.prop('checked', !isChecked);
+                showConfirm("Confirm Bulk Action", "Are you sure you want to " + (isChecked ? "Select" : "Unselect") + " Approved for " + updates.length + " filtered assets?", function () {
+                    $checkbox.prop('checked', isChecked);
+                    $checkbox.prop('disabled', true);
+
+                    var i = 0;
+                    var failures = [];
+                    function processNext() {
+                        if (i >= updates.length) {
+                            tableInstance.draw(false);
+                            $checkbox.prop('disabled', false);
+                            if (failures.length) {
+                                var anyAuth = failures.some(function (f) { return f.status === 401 || f.status === 403; });
+                                var first = failures[0];
+                                var msg = failures.length + ' of ' + updates.length + ' asset(s) could not be updated.';
+                                if (anyAuth) {
+                                    msg += ' Access was denied — your session may have expired. Log out and back in, then try again.';
+                                } else {
+                                    msg += ' First error: ' + (first.error || 'unknown') + (first.status ? ' (HTTP ' + first.status + ')' : '');
+                                }
+                                showModal('Bulk Approve — Some Updates Failed', msg);
+                            }
+                            return;
+                        }
+
+                        var update = updates[i];
+                        if (!isChecked) {
+                            $.get('/check_sdi/' + getRowQrCode(update.tr), function (response) {
+                                if (response.exists) {
+                                    i++;
+                                    processNext();
+                                } else {
+                                    executeToggleApproved(update);
+                                }
+                            }).fail(function (xhr) {
+                                failures.push({ docId: update.docId, status: xhr.status, error: (xhr.responseJSON && xhr.responseJSON.error) || ('check_sdi HTTP ' + xhr.status) });
+                                i++;
+                                processNext();
+                            });
+                        } else {
+                            executeToggleApproved(update);
+                        }
+                    }
+
+                    function executeToggleApproved(update) {
+                        $.post('/toggle_approved/' + update.docId, function (resp) {
+                            if (resp && resp.success) {
+                                setApprovedCellState(update.cell, resp.new_value);
+                                tableInstance.row(update.tr).invalidate();
+                            } else {
+                                failures.push({ docId: update.docId, error: (resp && resp.error) || 'Update failed' });
+                            }
+                        }).fail(function (xhr) {
+                            failures.push({ docId: update.docId, status: xhr.status, error: (xhr.responseJSON && xhr.responseJSON.error) || ('HTTP ' + xhr.status) });
+                        }).always(function () {
+                            i++;
+                            processNext();
+                        });
+                    }
+
+                    processNext();
+                });
+            });
+        });
+
+        // ===== USER ACTIVITY VIEW FUNCTIONALITY =====
+        var userActivityData = [];
+        var userActivityUsers = [];
+        var visibleQRCodes = [];
+
+        function getVisibleQRCodes() {
+            // Get QR codes from the currently active tab's table only
+            var qrCodes = [];
+
+            // Find the active tab-pane
+            var activeTabPane = document.querySelector('.tab-pane.show.active');
+            if (!activeTabPane) {
+                // Fallback: try to find any visible table
+                activeTabPane = document.querySelector('.tab-pane:not([style*="display: none"])');
+            }
+
+            if (activeTabPane) {
+                // Find the table within the active tab
+                var table = activeTabPane.querySelector('table');
+                if (table) {
+                    // Get all tbody rows and extract QR code from first cell
+                    var rows = table.querySelectorAll('tbody tr');
+                    rows.forEach(function (row) {
+                        var firstCell = row.querySelector('td:first-child');
+                        if (firstCell) {
+                            // Extract text content (QR code), removing any HTML tags
+                            var qr = firstCell.textContent.trim();
+                            if (qr && qrCodes.indexOf(qr) === -1) {
+                                qrCodes.push(qr);
+                            }
+                        }
+                    });
+                }
+            }
+
+            return qrCodes;
+        }
+
+
+        function loadUserActivityData() {
+            var tableBody = document.getElementById('ua-table-body');
+            if (!tableBody) return;
+
+            tableBody.innerHTML = '<tr><td colspan="4" class="text-center py-4"><div class="spinner-border spinner-border-sm text-primary me-2"></div>Loading...</td></tr>';
+
+            // Collect QR codes from currently visible dashboard rows
+            visibleQRCodes = getVisibleQRCodes();
+
+            $.ajax({
+                url: '/api/user-activity',
+                method: 'POST',
+                contentType: 'application/json',
+                data: JSON.stringify({ qr_codes: visibleQRCodes }),
+                success: function (result) {
+                    userActivityData = result.data || [];
+                    userActivityUsers = result.users || [];
+
+                    // Populate user dropdown
+                    var userFilter = document.getElementById('ua-user-filter');
+                    if (userFilter) {
+                        userFilter.innerHTML = '<option value="">All Users</option>';
+                        userActivityUsers.forEach(function (u) {
+                            userFilter.innerHTML += '<option value="' + u + '">' + u + '</option>';
+                        });
+                    }
+
+                    renderUserActivityTable();
+                },
+                error: function (xhr) {
+                    var errMsg = 'Error loading data';
+                    try {
+                        var resp = xhr.responseJSON;
+                        if (resp && resp.error) errMsg = resp.error;
+                    } catch (e) { }
+                    tableBody.innerHTML = '<tr><td colspan="4" class="text-center text-danger py-4">' + errMsg + '</td></tr>';
+                }
+            });
+        }
+
+        function renderUserActivityTable() {
+            var tableBody = document.getElementById('ua-table-body');
+            var userFilter = document.getElementById('ua-user-filter');
+            var qrFilter = document.getElementById('ua-qr-filter');
+            var dateFilter = document.getElementById('ua-date-filter');
+
+            if (!tableBody) return;
+
+            var selectedUser = userFilter ? userFilter.value : '';
+            var qrSearch = qrFilter ? qrFilter.value.toLowerCase().trim() : '';
+            var dateSearch = dateFilter ? (dateFilter.value || '').trim() : '';
+
+            var filtered = userActivityData.filter(function (row) {
+                if (selectedUser && row.user !== selectedUser) return false;
+                if (qrSearch && row.qr_code.toLowerCase().indexOf(qrSearch) === -1) return false;
+                if (dateSearch && row.date !== dateSearch) return false;
+                return true;
+            });
+
+            if (filtered.length === 0) {
+                tableBody.innerHTML = '<tr><td colspan="4" class="text-center text-muted py-4">No data found</td></tr>';
+                return;
+            }
+
+            var html = '';
+            filtered.forEach(function (row) {
+                html += '<tr>' +
+                    '<td class="fw-medium">' + (row.qr_code || '') + '</td>' +
+                    '<td>' + (row.user || '') + '</td>' +
+                    '<td>' + (row.date || '') + '</td>' +
+                    '<td>' + (row.hour || '') + '</td>' +
+                    '</tr>';
+            });
+            tableBody.innerHTML = html;
+        }
+
+        // Event listeners for User Activity view
+        var userFilter = document.getElementById('ua-user-filter');
+        var qrFilter = document.getElementById('ua-qr-filter');
+        var dateFilter = document.getElementById('ua-date-filter');
+        var resetBtn = document.getElementById('ua-reset-filters');
+        var showBtn = document.getElementById('show-user-activity-btn');
+        var backBtn = document.getElementById('back-to-main-btn');
+        var mainContainer = document.querySelector('.container-fluid.px-4:not(#user-activity-view)');
+        var userActivityView = document.getElementById('user-activity-view');
+        var v2CmdBar = document.querySelector('.v2-cmd-bar');
+
+        if (userFilter) userFilter.addEventListener('change', renderUserActivityTable);
+        if (qrFilter) qrFilter.addEventListener('input', renderUserActivityTable);
+        if (dateFilter) dateFilter.addEventListener('change', renderUserActivityTable);
+
+        if (resetBtn) {
+            resetBtn.addEventListener('click', function () {
+                if (userFilter) userFilter.value = '';
+                if (qrFilter) qrFilter.value = '';
+                if (dateFilter) dateFilter.value = '';
+                renderUserActivityTable();
+            });
+        }
+
+        if (showBtn) {
+            showBtn.addEventListener('click', function () {
+                if (mainContainer) mainContainer.style.display = 'none';
+                if (v2CmdBar) v2CmdBar.style.display = 'none';
+                if (userActivityView) userActivityView.style.display = 'block';
+                loadUserActivityData();
+            });
+        }
+
+        window.exportFilteredXlsx = async function (tab) {
+            var tableId = ({ new: 'assetTableNew_v3', update: 'assetTableUpdate_v3', manual: 'assetTableManual_v3' })[tab];
+            var dt = window.tables && window.tables[tableId];
+            if (!dt) { alert('Table not initialised yet.'); return; }
+            var qrCodes = [];
+            dt.rows({ search: 'applied' }).nodes().each(function (tr) {
+                var v = tr.querySelector('.el-required-qr-value');
+                var qr = (v ? v.textContent : (tr.cells[0] && tr.cells[0].textContent) || '').trim();
+                if (qr) qrCodes.push(qr);
+            });
+            if (!qrCodes.length) { alert('No rows match the current filter.'); return; }
+            var building = (document.getElementById('global-building-selector') || {}).value || '';
+            var btn = document.querySelector('button[onclick="exportFilteredXlsx(\'' + tab + '\')"]');
+            var prevHtml = btn ? btn.innerHTML : null;
+            if (btn) { btn.disabled = true; btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Exporting...'; }
+            try {
+                var resp = await fetch('{{ url_for("main.export_review_xlsx") }}', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ tab: tab, building: building, qr_codes: qrCodes })
+                });
+                if (!resp.ok) { alert('Export failed: HTTP ' + resp.status); return; }
+                var blob = await resp.blob();
+                var cd = resp.headers.get('Content-Disposition') || '';
+                var match = cd.match(/filename="?([^";]+)"?/);
+                var fname = match ? match[1] : 'Review_EL.xlsx';
+                var url = URL.createObjectURL(blob);
+                var a = document.createElement('a');
+                a.href = url; a.download = fname;
+                document.body.appendChild(a); a.click(); a.remove();
+                URL.revokeObjectURL(url);
+            } catch (err) {
+                alert('Export failed: ' + err);
+            } finally {
+                if (btn) { btn.disabled = false; btn.innerHTML = prevHtml; }
+            }
+        };
+
+        if (backBtn) {
+            backBtn.addEventListener('click', function () {
+                if (userActivityView) userActivityView.style.display = 'none';
+                if (v2CmdBar) v2CmdBar.style.display = '';
+                if (mainContainer) mainContainer.style.display = 'block';
+            });
+        }
+    </script>
+
+    <script>
+    (function () {
+        const params = new URLSearchParams(window.location.search);
+        if (params.get('embedded') !== 'true') return;
+
+        // Preserve ?embedded=true on all internal link clicks
+        document.addEventListener('click', function (e) {
+            const a = e.target.closest('a[href]');
+            if (!a) return;
+            const href = a.getAttribute('href');
+            if (!href || href.startsWith('#') || href.startsWith('http') || href.startsWith('mailto')) return;
+            if (href.includes('embedded=true')) return;
+            a.setAttribute('href', href + (href.includes('?') ? '&' : '?') + 'embedded=true');
+        });
+
+        // Tell the parent Dashboard which EL URL we're on so a parent refresh
+        // restores us to /review-distribution (or wherever) instead of falling
+        // back to the iframe's data-src landing page.
+        if (window.parent && window.parent !== window) {
+            try {
+                window.parent.postMessage({
+                    type: 'review-iframe-nav',
+                    iframe: 'iframe-review-el',
+                    href: window.location.href
+                }, '*');
+            } catch (e) { /* cross-origin postMessage failed; harmless */ }
+        }
+    })();
+    </script>
+
+</body>
+
+</html>

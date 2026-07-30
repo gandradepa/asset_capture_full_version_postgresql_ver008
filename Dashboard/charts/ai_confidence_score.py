@@ -1,0 +1,171 @@
+import io
+import sys
+from pathlib import Path
+import db as qrdb  # backend-agnostic QR_codes DB layer
+
+import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
+from matplotlib.colors import LinearSegmentedColormap
+
+try:
+    from . import completeness_score as shared
+except ImportError:
+    current_dir = Path(__file__).resolve().parent
+    if str(current_dir) not in sys.path:
+        sys.path.insert(0, str(current_dir))
+    import completeness_score as shared
+
+
+def _coerce_confidence(value):
+    try:
+        score = float(value)
+    except (TypeError, ValueError):
+        return None
+    return max(0.0, min(100.0, score))
+
+
+def _extract_avg_ai_conf(payload):
+    if not isinstance(payload, dict):
+        return None
+
+    direct = payload.get("Avg_ai_conf")
+    if direct not in (None, ""):
+        return _coerce_confidence(direct)
+
+    scores = payload.get("confidence_scores")
+    if not isinstance(scores, dict):
+        return None
+
+    structured = shared._structured_data(payload)
+    asset_type = shared._normalize_asset_type(payload.get("asset_type") or structured.get("asset_type"))
+
+    exclude_fields = set()
+    if asset_type == "EL":
+        exclude_fields.update({"Branch Panel", "Volts", "Location"})
+    elif asset_type == "ME":
+        qr_code = shared._normalize_qr(payload.get("qr_code"))
+        building_number = shared._normalize_building(payload.get("building_number"))
+        if not shared._has_me_seq3_photo(qr_code, building_number):
+            exclude_fields.add("Technical Safety BC")
+
+    values = []
+    for field, score in scores.items():
+        if field in exclude_fields:
+            continue
+        normalized = _coerce_confidence(score)
+        if normalized is not None:
+            values.append(normalized)
+
+    if not values:
+        return None
+    return sum(values) / len(values)
+
+
+def _row_metrics(payload):
+    structured = shared._structured_data(payload)
+    asset_type = shared._normalize_asset_type(payload.get("asset_type") or structured.get("asset_type"))
+    if asset_type not in {"ME", "BF", "EL"}:
+        return None
+
+    avg_ai_conf = _extract_avg_ai_conf(payload)
+    if avg_ai_conf is None:
+        return None
+
+    return {
+        "building_number": shared._normalize_building(payload.get("building_number")),
+        "asset_type": asset_type,
+        "Approved": shared._coerce_approved(payload.get("Approved")) or shared._coerce_approved(structured.get("Approved")),
+        "Avg_ai_conf": float(avg_ai_conf),
+    }
+
+
+def render_chart_png(building: str = "All", process_scope: str = "all") -> bytes:
+    """
+    Renders the AI confidence chart for a given building and returns it as PNG bytes.
+    """
+    try:
+        conn = qrdb.get_connection(sqlite_path=str(shared.DB_PATH))
+        query = 'SELECT * FROM "Buildings"'
+        building_df = shared.pd.read_sql_query(query, qrdb.raw_conn(conn))
+        conn.close()
+        building_df = building_df[["Code", "Name"]]
+        building_df = building_df.rename(columns={"Code": "building_number", "Name": "Property"})
+        building_df["building_number"] = building_df["building_number"].astype(str)
+    except Exception as e:
+        print(f"CRITICAL: Could not read buildings from database. {e}")
+        return b""
+
+    records = []
+    if shared.JSON_OUTPUT_DIR.exists():
+        for json_path in shared.JSON_OUTPUT_DIR.iterdir():
+            if not json_path.name.endswith(".json"):
+                continue
+            if not any(token in json_path.name for token in ("_ME_", "_BF_", "_EL_")):
+                continue
+            payload = shared._read_json_payload(json_path)
+            if not payload:
+                continue
+            row = _row_metrics(payload)
+            if row:
+                records.append(row)
+
+    if not records:
+        return b""
+
+    process_scope = shared._as_text(process_scope).lower()
+    if process_scope not in {"open", "all"}:
+        process_scope = "all"
+
+    confidence_df = pd.DataFrame(records)
+    confidence_df["building_number"] = confidence_df["building_number"].astype(str)
+    if process_scope == "open":
+        confidence_df = confidence_df[confidence_df["Approved"] == False]
+
+    final_summary = confidence_df.groupby(["building_number", "asset_type"]).agg(
+        avg_ai_conf=("Avg_ai_conf", "mean"),
+    ).reset_index()
+
+    merged_df = pd.merge(final_summary, building_df, on="building_number", how="left")
+    confidence_summary = merged_df[["Property", "building_number", "asset_type", "avg_ai_conf"]].copy()
+
+    if building != "All":
+        data_to_plot = confidence_summary[confidence_summary["Property"] == building].sort_values("asset_type")
+    else:
+        if not confidence_summary.empty:
+            consolidated_data = confidence_summary.groupby("asset_type").agg(
+                avg_ai_conf=("avg_ai_conf", "mean"),
+            ).reset_index()
+            data_to_plot = consolidated_data.sort_values("asset_type")
+        else:
+            data_to_plot = pd.DataFrame()
+
+    if data_to_plot.empty:
+        return b""
+
+    num_charts = len(data_to_plot)
+    fig, axes = plt.subplots(1, num_charts, figsize=(num_charts * 2.5, 5), squeeze=False)
+    axes = axes.flatten()
+    cmap = LinearSegmentedColormap.from_list("custom_RdYlGn", ["#008000", "#fcf300", "#9d0208"])
+
+    for i, (_, row) in enumerate(data_to_plot.iterrows()):
+        ax = axes[i]
+        asset_type, score = row["asset_type"], float(row["avg_ai_conf"])
+        gradient = np.linspace(0, 1, 256).reshape(-1, 1)
+        ax.imshow(gradient, aspect="auto", cmap=cmap, extent=[0, 1, 0, 100])
+        ax.axhline(score, color="black", lw=1.5)
+        ax.text(1.1, score, f"{score:.1f}", va="center", ha="left", fontsize=12, fontweight="bold")
+        ax.set_title(asset_type, fontsize=14, fontweight="bold")
+        ax.set_ylim(0, 100)
+        ax.set_xticks([])
+        ax.spines[["top", "right", "bottom"]].set_visible(False)
+
+    fig.suptitle(f"AI Confidence Score for: {building}", fontsize=16, fontweight="bold", y=1.05)
+    plt.tight_layout(rect=[0, 0, 1, 0.96])
+
+    buffer = io.BytesIO()
+    plt.savefig(buffer, format="png", bbox_inches="tight")
+    plt.close(fig)
+    buffer.seek(0)
+
+    return buffer.getvalue()

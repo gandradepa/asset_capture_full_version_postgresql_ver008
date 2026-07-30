@@ -1,0 +1,3081 @@
+#!/usr/bin/env python
+from __future__ import annotations
+
+import argparse
+import base64
+from collections import defaultdict
+from dataclasses import dataclass
+import difflib
+import importlib.util
+import io
+import json
+from math import inf
+import os
+import re
+import sqlite3
+import sys
+from pathlib import Path
+from types import ModuleType
+from typing import Any, cast
+
+import fitz
+from openai import OpenAI
+from openai.lib._pydantic import to_strict_json_schema
+from PIL import Image
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
+
+# Backend-agnostic DB layer (Phase C/C4); db.py lives in the parent EL app dir
+# (one level up from this sld/ folder).
+_EL_APP_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if _EL_APP_DIR not in sys.path:
+    sys.path.append(_EL_APP_DIR)
+import db as qrdb  # noqa: E402
+# Legacy-flow gate (Buildings.Process): review/Asset_dashboard_browser_EL/legacy_flow.py,
+# same directory as db.py above. Standard buildings never touch this module's
+# functions below main()'s gate check.
+import legacy_flow as el_legacy_flow  # noqa: E402
+
+# Feedback-corpus emitter (sibling module). Imports from the same directory
+# whether run as a script (sys.path[0] == this dir) or imported.
+try:
+    from _feedback import FeedbackEmitter, emit_summary_to_stdout  # type: ignore
+except ImportError:
+    FeedbackEmitter = None  # type: ignore[assignment]
+
+    def emit_summary_to_stdout(summary):  # type: ignore[no-redef]
+        return None
+
+
+# Module-global emitter; set in main() once args are parsed. Disabled by
+# default (no-op) so the script keeps working under direct CLI invocations
+# that don't pass --feedback-file.
+_FB: "FeedbackEmitter | None" = None
+
+
+def _get_emitter() -> "FeedbackEmitter | None":
+    return _FB
+
+
+# Count of model calls that returned successfully. When this stays at 0 the
+# whole run was an API outage (quota/auth/network) — main() aborts instead of
+# silently degrading to the text-layer-only scrape (see incident 2026-06-08:
+# building 750 stored 25 unverified scraped rows after thirty 429 errors).
+_MODEL_CALL_SUCCESSES = 0
+
+
+def _traced_create(label: str, client: "OpenAI", **kwargs):
+    """Either delegates to the emitter's traced wrapper or falls back to
+    ``client.responses.create`` directly when feedback is disabled.
+    Returns the OpenAI response object either way."""
+    global _MODEL_CALL_SUCCESSES
+    fb = _get_emitter()
+    if fb is None or getattr(fb, "disabled", True):
+        response = client.responses.create(**kwargs)
+    else:
+        response = fb.traced_responses_create(label, client, **kwargs)
+    _MODEL_CALL_SUCCESSES += 1
+    return response
+
+
+DEFAULT_DICTIONARY = Path(__file__).with_name("electrical.dictionay_single_line_diagrama.py")
+DEFAULT_MODEL = "gpt-5.4"
+DEFAULT_PRIMARY_MODELS = ("gpt-5.4",)
+DEFAULT_FALLBACK_MODELS: tuple[str, ...] = ()
+DEFAULT_NORMAL_REASONING_EFFORT = "low"
+DEFAULT_HARD_REASONING_EFFORT = "high"
+REASONING_EFFORTS = {"none", "low", "medium", "high", "xhigh"}
+SUPPORTED_EXTENSIONS = {".pdf", ".png", ".jpg", ".jpeg"}
+DB_TABLE_NAME = "electrical_building_schema"
+SCHEMA_NAME = "electrical_building_assets"
+# Geometry tolerances are in PDF coordinate space (points at 72 DPI, ~0.35mm per point).
+GEOMETRY_COORD_TOLERANCE = 5.0
+GEOMETRY_GAP_TOLERANCE = 28.0
+MIN_HORIZONTAL_SEGMENT = 40.0
+MIN_VERTICAL_SEGMENT = 30.0
+MIN_BUS_LENGTH = 120.0
+MAX_BUS_LABEL_DISTANCE = 160.0
+MAX_BRANCH_LABEL_DISTANCE = 220.0
+MAX_BRANCH_X_OFFSET = 180.0
+POWER_UNIT_MAP = {
+    "va": "VA",
+    "kva": "kVA",
+    "w": "W",
+    "kw": "kW",
+    "mw": "MW",
+    "mva": "MVA",
+}
+AMPERAGE_PATTERN = re.compile(r"(?<![A-Z])(?P<value>\d+(?:\.\d+)?)\s*(?P<unit>A)(?![A-Z0-9])", re.IGNORECASE)
+# Breaker/disconnect labels like "200A-3P", "90A-3P", "100AT-3P", "225AF-2P"
+# (trip amps + pole count, often followed by an LSI trip-unit note). These
+# describe the protective device drawn next to an asset, not the asset's own
+# amperage rating — the text-layer harvesters must never attribute them.
+BREAKER_NOTATION_PATTERN = re.compile(r"\d+(?:\.\d+)?\s*A[FT]?\s*-\s*\d\s*P\b", re.IGNORECASE)
+# A bare single-digit "W" on a single-line drawing is wire-count notation
+# (e.g. "3W"/"4W"), not watts. Multi-digit values with the W suffix are still
+# treated as watts. Genuine power units (MVA/kVA/VA/MW/kW) are unaffected.
+POWER_PATTERN = re.compile(
+    r"(?P<value>\d+(?:\.\d+)?)\s*(?P<unit>MVA|KVA|VA|MW|KW)\b"
+    r"|(?P<value2>\d{2,}(?:\.\d+)?)\s*(?P<unit2>W)\b",
+    re.IGNORECASE,
+)
+# Wire-count notation: "3W", "4W", or with phase prefix like "1Ø3W", "3Ø4W",
+# "1PH-3W". The "wires" group is what gets stored (e.g. "4" for 3Ø4W).
+WIRE_PATTERN = re.compile(
+    r"(?:(?P<phase>\d)\s*(?:Ø|PH|PHASE)\s*[-,/]?\s*)?(?P<wires>[2-5])\s*W\b",
+    re.IGNORECASE,
+)
+VOLTAGE_PATTERN = re.compile(
+    r"(?P<value>\d+(?:\.\d+)?(?:[A-Z]?/\d+(?:\.\d+)?)?)\s*(?P<unit>V)\b",
+    re.IGNORECASE,
+)
+
+
+SYSTEM_PROMPT = """You are an expert in electrical drawing interpretation and structured asset extraction.
+
+Analyze the provided electrical building drawing, schematic, or single-line diagram.
+
+Extract only information that is explicitly visible in the drawing.
+Focus on the hierarchy of distribution equipment and connected electrical equipment.
+
+Equipment Tag Formats (UBC naming conventions):
+- Main Distribution Center: MDC
+- Panel (typed):   <ABBR>-<VOLTAGE><SYSTEM><LOCATION><TYPE><SEQUENCE>  e.g. CDP-6N1L1, CDP-2N0D1, PNL-6ERD1
+- Panel (distribution): <ABBR>-<VOLTAGE><SYSTEM><LOCATION>  e.g. CDP-6N1, CDP-2N0
+- Legacy panel:    <ABBR>-<CODE>  e.g. CDP-B3A, CDP-3B2A, EDC-1A, PNL-1AG
+IMPORTANT: When a tag on the drawing is prefixed with PNL- (e.g. "PNL-6ERD1"), preserve the PNL- prefix exactly. Do NOT rewrite PNL- panels as CDP-.
+- Panel tag:       <CODE>  e.g. 5A61, B3A1, HB1A1 (bare codes without a prefix)
+- Switchboard:     SWBD-<CODE>  e.g. SWBD-A, SWBD-LS
+- Transformer:     TX-<SYSTEM><LOCATION>[<SECONDARY_SYSTEM>]<SEQUENCE>  e.g. TX-N01, TX-E2S1, TX-N0N1, TX-E1.5N1
+- Generator:       GEN-<SEQUENCE>  e.g. GEN-1, GEN-2
+- ATS:             ATS-<CODE>  e.g. ATS-A, ATS-LS
+- Motor Control:   MCC-<CODE>  e.g. MCC-A1
+- Splitter:        SPL-<CODE>  e.g. SPL-1
+
+Valid abbreviation prefixes: MDC, CDP, MCC, SPL, PNL, ATS, SWBD, TX, EDC, NDC, GEN
+Voltage codes: 6 = 600/347V, 2 = 208/120V
+System codes: N = Normal, E = Life Safety, S = Standby
+Location codes: 0, 1, 1.5, 2, R (Roof). Half-level values like 1.5 are valid for mezzanine floors.
+Type codes: L = Lighting, P = Power, M = Mechanical, D = Distribution, T = Tenant
+Transformer SECONDARY_SYSTEM (optional): N/E/S, identifying the secondary (208V) bus the TX feeds; e.g. TX-E2S1 feeds the Standby bus.
+
+Rules:
+- Do not invent, infer, or complete missing values.
+- Use the main visible tag or primary visible identifier as the asset ID.
+- Preserve the parent-child hierarchy shown in the drawing.
+- If a tag is not fully legible, omit that asset instead of guessing or shortening the tag.
+- Preserve all visible alphanumeric characters in equipment tags exactly as shown.
+- Only output the JSON object required by the schema.
+- hierarchy must be the numeric hierarchy level encoded as a string, such as "1", "2", or "3".
+- parent_id must be an empty string for top-level assets.
+- attributes_from_drawing must be returned as an array of key/value pairs.
+- Each attribute key must be unique within an asset.
+- If ambiguity or confidence notes are necessary, include them inside attributes_from_drawing.
+- If an accessory does not have its own visible ID, fold it into the parent asset's attributes instead of creating a separate asset row.
+- For ratings, capture the exact value and unit as shown (e.g. "75 kVA", "225A", "600/347V", "208/120V").
+- Wire-count notation (e.g. "3W", "4W", "1Ø3W", "3Ø4W", "1PH-3W") indicates the number of conductors in a circuit and is NOT power in watts. Capture it as wire_rating with the W suffix preserved (e.g. "4W"). Do not put wire-count values into power_rating.
+"""
+
+
+USER_PROMPT = """Extract the electrical asset hierarchy from this drawing and return only assets that should be stored in the SQLite table.
+
+Return:
+- hierarchy
+- parent_id
+- id
+- attributes_from_drawing as a list of {"key": "...", "value": "..."} items
+
+The extraction should preserve the engineering hierarchy exactly as drawn.
+
+Example of expected output for a typical hierarchy:
+{"assets": [
+  {"hierarchy": "1", "parent_id": "", "id": "MDC", "attributes_from_drawing": [{"key": "voltage", "value": "600/347V"}]},
+  {"hierarchy": "2", "parent_id": "MDC", "id": "SWBD-A", "attributes_from_drawing": [{"key": "rating", "value": "2000A"}]},
+  {"hierarchy": "2", "parent_id": "MDC", "id": "TX-N01", "attributes_from_drawing": [{"key": "power_rating", "value": "75 kVA"}, {"key": "voltage", "value": "600V-208/120V"}]},
+  {"hierarchy": "3", "parent_id": "TX-N01", "id": "CDP-2N0D1", "attributes_from_drawing": [{"key": "rating", "value": "225A"}]},
+  {"hierarchy": "4", "parent_id": "CDP-2N0D1", "id": "CDP-2N0L1", "attributes_from_drawing": [{"key": "rating", "value": "100A"}, {"key": "circuits", "value": "20 CCT"}, {"key": "wire_rating", "value": "4W"}]}
+]}
+
+Note: This example illustrates the format and hierarchy structure only. Extract only what is visible in the actual drawing.
+"""
+
+CROP_USER_PROMPT = """Extract electrical distribution equipment and panel tags visible in this crop only.
+
+Return:
+- hierarchy
+- parent_id
+- id
+- attributes_from_drawing as a list of {"key": "...", "value": "..."} items
+
+Rules for crop extraction:
+- Only include assets whose tag is visible in this crop.
+- If the full tag is not legible, omit the asset instead of guessing.
+- If a parent asset's tag is visible in this crop, use it as parent_id.
+- If a bus bar or connection line visibly connects an asset to a parent whose tag is partially visible or can be read from the line label, include that parent_id.
+- Only leave parent_id empty when there is no visible hierarchy relationship in this crop.
+- Preserve visible tags exactly as shown.
+- For ratings and attributes, capture the exact value and unit as shown on the drawing.
+- Wire-count notations like "3W", "4W", "1Ø3W", "3Ø4W" indicate conductor count and must be captured as wire_rating, not power_rating.
+"""
+
+PDF_TEXT_PROMPT_PREFIX = """The following is text extracted directly from the PDF text layer.
+Use it only as supporting evidence for visible tags and ratings, and resolve hierarchy from the actual drawing.
+
+PDF text layer:
+"""
+
+CANDIDATE_IDS_PROMPT_PREFIX = """The following IDs were found directly in the PDF text layer.
+Prefer these exact tags when they are visibly present in the drawing. Do not rename them.
+
+Candidate IDs:
+"""
+
+
+class Asset(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    hierarchy: str
+    parent_id: str
+    id: str = Field(min_length=1)
+    attributes_from_drawing: dict[str, str]
+
+    @field_validator("hierarchy")
+    @classmethod
+    def validate_hierarchy(cls, value: str) -> str:
+        stripped = value.strip()
+        if not stripped.isdigit():
+            raise ValueError("hierarchy must be a numeric string")
+        return stripped
+
+    @field_validator("parent_id", "id")
+    @classmethod
+    def strip_text(cls, value: str) -> str:
+        return value.strip()
+
+    @field_validator("attributes_from_drawing")
+    @classmethod
+    def validate_attributes(cls, value: dict[str, str]) -> dict[str, str]:
+        normalized: dict[str, str] = {}
+        for key, item in value.items():
+            key_text = str(key).strip()
+            if not key_text:
+                raise ValueError("attributes_from_drawing contains an empty key")
+            normalized[key_text] = str(item).strip()
+        return normalized
+
+
+class ExtractionPayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    assets: list[Asset]
+
+
+@dataclass
+class ExtractionRun:
+    payload: ExtractionPayload
+    model: str
+    manual_review_reason_codes: list[str]
+    ocr_assisted_retry: bool
+
+
+class ApiAttributeItem(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    key: str
+    value: str
+
+    @field_validator("key", "value")
+    @classmethod
+    def strip_text(cls, value: str) -> str:
+        stripped = value.strip()
+        if not stripped:
+            raise ValueError("attribute key/value cannot be empty")
+        return stripped
+
+
+class ApiAsset(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    hierarchy: str
+    parent_id: str
+    id: str = Field(min_length=1)
+    attributes_from_drawing: list[ApiAttributeItem]
+
+
+class ApiExtractionPayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    assets: list[ApiAsset]
+
+
+class ParentVerificationPayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    winner: str = Field(
+        description="Exact candidate ID that feeds the child panel, or 'UNKNOWN' if the feeder line cannot be traced.",
+    )
+
+
+ExtractionPayload.model_rebuild()
+ApiExtractionPayload.model_rebuild()
+ParentVerificationPayload.model_rebuild()
+RESPONSE_SCHEMA: dict[str, Any] = to_strict_json_schema(ApiExtractionPayload)
+PARENT_VERIFICATION_SCHEMA: dict[str, Any] = to_strict_json_schema(ParentVerificationPayload)
+
+
+@dataclass(frozen=True)
+class Box:
+    x0: float
+    y0: float
+    x1: float
+    y1: float
+
+    @property
+    def center_x(self) -> float:
+        return (self.x0 + self.x1) / 2.0
+
+    @property
+    def center_y(self) -> float:
+        return (self.y0 + self.y1) / 2.0
+
+
+@dataclass(frozen=True)
+class LineSegment:
+    page_index: int
+    orientation: str
+    axis: float
+    start: float
+    end: float
+
+    @property
+    def length(self) -> float:
+        return self.end - self.start
+
+
+@dataclass(frozen=True)
+class TextLabel:
+    asset_id: str
+    page_index: int
+    box: Box
+    raw_text: str
+
+
+@dataclass(frozen=True)
+class AssetPlacement:
+    asset_id: str
+    page_index: int
+    label: TextLabel
+    segment: LineSegment
+
+
+@dataclass
+class PdfGeometryContext:
+    labels_by_asset: dict[str, list[TextLabel]]
+    horizontal_segments_by_page: dict[int, list[LineSegment]]
+    vertical_segments_by_page: dict[int, list[LineSegment]]
+
+
+@dataclass(frozen=True)
+class PdfTextContext:
+    full_text: str
+    lines: list[str]
+
+    @staticmethod
+    def from_path(input_path: Path) -> "PdfTextContext":
+        chunks: list[str] = []
+        with fitz.open(input_path) as document:
+            for page_index in range(document.page_count):
+                page = document.load_page(page_index)
+                raw_text = page.get_text("text")
+                text = raw_text.strip() if isinstance(raw_text, str) else ""
+                if text:
+                    chunks.append(text)
+        full_text = "\n\n".join(chunks).strip()
+        lines = [line.strip() for line in full_text.splitlines() if line.strip()] if full_text else []
+        return PdfTextContext(full_text=full_text, lines=lines)
+
+    @staticmethod
+    def empty() -> "PdfTextContext":
+        return PdfTextContext(full_text="", lines=[])
+
+    def truncated(self, max_chars: int) -> str:
+        if not self.full_text:
+            return ""
+        return self.full_text[:max_chars]
+
+
+def load_dictionary_module(dictionary_path: Path) -> ModuleType:
+    if not dictionary_path.exists():
+        fail(f"Dictionary file does not exist: {dictionary_path}")
+    spec = importlib.util.spec_from_file_location("electrical_dictionary", dictionary_path)
+    if spec is None or spec.loader is None:
+        fail(f"Unable to load dictionary file: {dictionary_path}")
+    assert spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    for attr in ("label_schema", "normalize_dictionary_id", "is_dictionary_id"):
+        if not hasattr(module, attr):
+            fail(f"Dictionary file is missing required symbol '{attr}': {dictionary_path}")
+    return module
+
+
+def parse_model_list(value: str | None, default: tuple[str, ...] = ()) -> list[str]:
+    raw = value if value is not None else ",".join(default)
+    models: list[str] = []
+    for item in str(raw or "").split(","):
+        model = item.strip()
+        if model and model not in models:
+            models.append(model)
+    return models
+
+
+def env_model_list(env_name: str, default: tuple[str, ...]) -> str:
+    return os.getenv(env_name, ",".join(default)).strip()
+
+
+def normalize_reasoning_effort(value: str | None, default: str) -> str:
+    effort = str(value or default).strip().lower()
+    return effort if effort in REASONING_EFFORTS else default
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="Extract electrical asset hierarchy from a drawing and save it to SQLite."
+    )
+    parser.add_argument("--input", required=True, help="Path to the PDF or image drawing file.")
+    parser.add_argument("--db", required=True, help="Path to the SQLite database file.")
+    parser.add_argument("--env", default=None, help="Path to the env file containing OPENAI_API_KEY. Falls back to the process environment if omitted.")
+    parser.add_argument("--model", default=None, help="Legacy single primary model override. Defaults to the primary model tier.")
+    parser.add_argument(
+        "--primary-models",
+        default=env_model_list("SLD_PRIMARY_MODELS", DEFAULT_PRIMARY_MODELS),
+        help="Comma-separated normal-tier models. Defaults to gpt-5.4.",
+    )
+    parser.add_argument(
+        "--fallback-models",
+        default=env_model_list("SLD_FALLBACK_MODELS", DEFAULT_FALLBACK_MODELS),
+        help="Comma-separated hard/low-quality fallback models. Empty by default.",
+    )
+    parser.add_argument(
+        "--normal-reasoning-effort",
+        default=os.getenv("SLD_NORMAL_REASONING_EFFORT", DEFAULT_NORMAL_REASONING_EFFORT),
+        help="Reasoning effort for normal-tier gpt-5/o models.",
+    )
+    parser.add_argument(
+        "--hard-reasoning-effort",
+        default=os.getenv("SLD_HARD_REASONING_EFFORT", DEFAULT_HARD_REASONING_EFFORT),
+        help="Reasoning effort for fallback-tier gpt-5/o models.",
+    )
+    parser.add_argument("--building-code", default=None, help="Explicit Building value to store. Overrides filename-derived value.")
+    # Feedback-corpus integration. When --feedback-file is omitted the
+    # emitter is disabled and the script behaves exactly as before.
+    parser.add_argument("--feedback-file", default=None, help="Per-run JSONL feedback file. Disabled when omitted.")
+    parser.add_argument("--run-id", default=None, help="Run identifier used to join model_call events to human_correction events.")
+    return parser.parse_args()
+
+
+def fail(message: str, exit_code: int = 1) -> None:
+    print(f"ERROR: {message}", file=sys.stderr)
+    raise SystemExit(exit_code)
+
+
+def load_api_key(env_path: Path | None) -> str:
+    if env_path is None:
+        env_key = os.environ.get("OPENAI_API_KEY", "").strip()
+        if env_key:
+            return env_key
+        fail("OPENAI_API_KEY not set in process environment and no --env file provided.")
+
+    if not env_path.exists():
+        fail(f"Env file does not exist: {env_path}")
+    if not env_path.is_file():
+        fail(f"Env path is not a file: {env_path}")
+
+    for raw_line in env_path.read_text(encoding="utf-8", errors="ignore").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.startswith("export "):
+            line = line[len("export ") :].strip()
+        key, sep, value = line.partition("=")
+        if not sep:
+            continue
+        if key.strip() != "OPENAI_API_KEY":
+            continue
+        parsed = value.strip().strip("'").strip('"')
+        if parsed:
+            return parsed
+        fail("OPENAI_API_KEY is present but empty in env file.")
+
+    fail("OPENAI_API_KEY was not found in the env file.")
+    raise AssertionError("unreachable")
+
+
+def validate_input_path(input_path: Path) -> None:
+    if not input_path.exists():
+        fail(f"Input file does not exist: {input_path}")
+    if not input_path.is_file():
+        fail(f"Input path is not a file: {input_path}")
+    if input_path.suffix.lower() not in SUPPORTED_EXTENSIONS:
+        supported = ", ".join(sorted(SUPPORTED_EXTENSIONS))
+        fail(f"Unsupported input type '{input_path.suffix}'. Supported extensions: {supported}")
+
+
+def validate_db_path(db_path: Path) -> None:
+    if db_path.exists() and not db_path.is_file():
+        fail(f"Database path is not a file: {db_path}")
+    parent = db_path.parent
+    if not parent.exists():
+        fail(f"Database directory does not exist: {parent}")
+    if not os.access(parent, os.W_OK):
+        fail(f"Database directory is not writable: {parent}")
+
+
+def build_response_text_config() -> Any:
+    return {
+        "format": {
+            "type": "json_schema",
+            "name": SCHEMA_NAME,
+            "description": "Structured extraction of electrical drawing assets.",
+            "strict": True,
+            "schema": RESPONSE_SCHEMA,
+        }
+    }
+
+
+def build_response_input(content: list[dict[str, Any]]) -> Any:
+    return [{"role": "user", "content": content}]
+
+
+def model_supports_reasoning_effort(model_name: str) -> bool:
+    normalized = (model_name or "").strip().lower()
+    return normalized.startswith("gpt-5") or normalized.startswith("o")
+
+
+def response_reasoning_kwargs(model_name: str, effort: str) -> dict[str, Any]:
+    normalized_effort = normalize_reasoning_effort(effort, DEFAULT_NORMAL_REASONING_EFFORT)
+    if normalized_effort == "none" or not model_supports_reasoning_effort(model_name):
+        return {}
+    return {"reasoning": {"effort": normalized_effort}}
+
+
+def upload_pdf(client: OpenAI, input_path: Path) -> str:
+    with input_path.open("rb") as file_handle:
+        uploaded = client.files.create(file=file_handle, purpose="user_data")
+    return uploaded.id
+
+
+def extract_pdf_text_layer(input_path: Path, max_chars: int = 20000) -> str:
+    chunks: list[str] = []
+    with fitz.open(input_path) as document:
+        for page_index in range(document.page_count):
+            page = document.load_page(page_index)
+            raw_text = page.get_text("text")
+            text = raw_text.strip() if isinstance(raw_text, str) else ""
+            if text:
+                chunks.append(text)
+    joined = "\n\n".join(chunks).strip()
+    if not joined:
+        return ""
+    return joined[:max_chars]
+
+
+def extract_candidate_ids_from_text(pdf_text: str) -> list[str]:
+    candidates: set[str] = set()
+    patterns = [
+        r"\bMDC\b",
+        r"\b2SIS\b",
+        r"\bCELL\s+\d\b",
+        r"\bCDP-[A-Z0-9.]+\b",
+        r"\bCDP\s*-\s*[A-Z0-9.]+\b",
+        r"\b[EN]DC-[A-Z0-9.]+\b",
+        r"\b[EN]DC\s*-\s*[A-Z0-9.]+\b",
+        r"\bTX-[A-Z0-9.]+\b",
+        r"\bTX\s*-\s*[A-Z0-9.]+\b",
+        r"\bSPL-[A-Z0-9.]+\b",
+        r"\bSPL\s*-\s*[A-Z0-9.]+\b",
+        r"\bSWBD-[A-Z0-9.]+\b",
+        r"\bSWBD\s*-\s*[A-Z0-9.]+\b",
+        r"\bATS-[A-Z0-9.]+\b",
+        r"\bATS\s*-\s*[A-Z0-9.]+\b",
+        r"\bPNL-[A-Z0-9.]+\b",
+        r"\bPNL\s*-\s*[A-Z0-9.]+\b",
+        r"\bGEN-\d+\b",
+        r"\bGEN\s*-\s*\d+\b",
+        r"\b(?:[26][NES](?:\d+(?:\.\d+)?|R)[LPMDT]\d+|2NRM\d+)\b",
+        r"\b(?:HB|B)?\dA\d{1,3}\b",
+        r"\b2E091\b",
+    ]
+
+    for pattern in patterns:
+        for match in re.findall(pattern, pdf_text, flags=re.IGNORECASE):
+            candidates.add(re.sub(r"\s*-\s*", "-", match.upper()))
+
+    for match in re.findall(r"PANEL\s+'([^']+)'", pdf_text, flags=re.IGNORECASE):
+        candidates.add(match.upper())
+
+    return sorted(candidates)
+
+
+def image_to_data_url(image: Image.Image, max_dimension: int = 2200) -> str:
+    view = image.copy()
+    view.thumbnail((max_dimension, max_dimension))
+    buffer = io.BytesIO()
+    view.save(buffer, format="PNG")
+    encoded = base64.b64encode(buffer.getvalue()).decode("utf-8")
+    return f"data:image/png;base64,{encoded}"
+
+
+def build_grid_crop_boxes(
+    width: int,
+    height: int,
+    columns: int = 4,
+    rows: int = 3,
+    overlap_ratio: float = 0.12,
+) -> list[tuple[int, int, int, int]]:
+    tile_width = max(1, width // columns)
+    tile_height = max(1, height // rows)
+    overlap_x = int(tile_width * overlap_ratio)
+    overlap_y = int(tile_height * overlap_ratio)
+    boxes: list[tuple[int, int, int, int]] = []
+
+    for row in range(rows):
+        for column in range(columns):
+            left = max(0, column * tile_width - overlap_x)
+            top = max(0, row * tile_height - overlap_y)
+            right = min(width, (column + 1) * tile_width + overlap_x)
+            bottom = min(height, (row + 1) * tile_height + overlap_y)
+            boxes.append((left, top, right, bottom))
+
+    return boxes
+
+
+def build_context_views(image: Image.Image) -> list[str]:
+    width, height = image.size
+    views = [image]
+    crop_boxes = build_grid_crop_boxes(width, height)
+    crop_boxes.extend(
+        [
+            (0, 0, width, int(height * 0.28)),
+            (0, int(height * 0.22), width, int(height * 0.58)),
+            (0, int(height * 0.52), width, height),
+        ]
+    )
+
+    for left, top, right, bottom in crop_boxes:
+        if right - left <= 0 or bottom - top <= 0:
+            continue
+        views.append(image.crop((left, top, right, bottom)))
+
+    return [image_to_data_url(view) for view in views]
+
+
+def render_pdf_context_views(input_path: Path) -> list[str]:
+    data_urls: list[str] = []
+    with fitz.open(input_path) as document:
+        if document.page_count == 0:
+            fail(f"PDF contains no pages: {input_path}")
+
+        for page_index in range(document.page_count):
+            page = document.load_page(page_index)
+            zoom = 4 if page_index == 0 else 2
+            pix = page.get_pixmap(matrix=fitz.Matrix(zoom, zoom), alpha=False)
+            image = Image.open(io.BytesIO(pix.tobytes("png")))
+            if page_index == 0:
+                data_urls.extend(build_context_views(image))
+            else:
+                data_urls.append(image_to_data_url(image))
+            if page_index >= 1:
+                break
+
+    return data_urls
+
+
+def call_pdf_extraction(
+    client: OpenAI,
+    input_path: Path,
+    model: str,
+    pdf_text_ctx: PdfTextContext,
+    candidate_ids: set[str] | None = None,
+    reasoning_effort: str = DEFAULT_NORMAL_REASONING_EFFORT,
+) -> ExtractionPayload:
+    file_id = upload_pdf(client, input_path)
+    content: list[dict[str, Any]] = [{"type": "input_text", "text": USER_PROMPT}]
+    prompt_text = pdf_text_ctx.truncated(20000)
+    if prompt_text:
+        content.append({"type": "input_text", "text": f"{PDF_TEXT_PROMPT_PREFIX}\n{prompt_text}"})
+        if candidate_ids:
+            content.append(
+                {
+                    "type": "input_text",
+                    "text": f"{CANDIDATE_IDS_PROMPT_PREFIX}\n" + "\n".join(sorted(candidate_ids)),
+                }
+            )
+    content.append({"type": "input_file", "file_id": file_id})
+    for data_url in render_pdf_context_views(input_path):
+        content.append({"type": "input_image", "image_url": data_url, "detail": "high"})
+
+    response = _traced_create(
+        "extract_pdf",
+        client,
+        model=model,
+        instructions=SYSTEM_PROMPT,
+        input=cast(Any, build_response_input(content)),
+        text=cast(Any, build_response_text_config()),
+        **response_reasoning_kwargs(model, reasoning_effort),
+    )
+    return parse_response_payload(response.output_text)
+
+
+def render_pdf_pages_to_data_urls(input_path: Path) -> list[str]:
+    return render_pdf_context_views(input_path)
+
+
+def encode_image_data_url(input_path: Path) -> str:
+    suffix = input_path.suffix.lower()
+    mime_type = "image/jpeg" if suffix in {".jpg", ".jpeg"} else "image/png"
+    encoded = base64.b64encode(input_path.read_bytes()).decode("utf-8")
+    return f"data:{mime_type};base64,{encoded}"
+
+
+def build_image_context_views(input_path: Path) -> list[str]:
+    image = Image.open(input_path)
+    return build_context_views(image)
+
+
+def call_image_extraction(
+    client: OpenAI,
+    image_data_urls: list[str],
+    model: str,
+    reasoning_effort: str = DEFAULT_NORMAL_REASONING_EFFORT,
+) -> ExtractionPayload:
+    content: list[dict[str, Any]] = [{"type": "input_text", "text": USER_PROMPT}]
+    for data_url in image_data_urls:
+        content.append({"type": "input_image", "image_url": data_url, "detail": "high"})
+
+    response = _traced_create(
+        "extract_image",
+        client,
+        model=model,
+        instructions=SYSTEM_PROMPT,
+        input=cast(Any, build_response_input(content)),
+        text=cast(Any, build_response_text_config()),
+        **response_reasoning_kwargs(model, reasoning_effort),
+    )
+    return parse_response_payload(response.output_text)
+
+
+def call_image_crop_extraction(
+    client: OpenAI,
+    image_data_urls: list[str],
+    model: str,
+    reasoning_effort: str = DEFAULT_HARD_REASONING_EFFORT,
+) -> ExtractionPayload:
+    content: list[dict[str, Any]] = [{"type": "input_text", "text": CROP_USER_PROMPT}]
+    for data_url in image_data_urls:
+        content.append({"type": "input_image", "image_url": data_url, "detail": "high"})
+
+    response = _traced_create(
+        "extract_image_crop",
+        client,
+        model=model,
+        instructions=SYSTEM_PROMPT,
+        input=cast(Any, build_response_input(content)),
+        text=cast(Any, build_response_text_config()),
+        **response_reasoning_kwargs(model, reasoning_effort),
+    )
+    return parse_response_payload(response.output_text)
+
+
+def build_crop_batches(image_data_urls: list[str]) -> list[list[str]]:
+    detail_views = image_data_urls[1:]
+    if not detail_views:
+        return []
+    # Batch images into chunks of 4 to prevent OpenAI timeout or token exhaustion errors
+    batch_size = 4
+    return [detail_views[i:i + batch_size] for i in range(0, len(detail_views), batch_size)]
+
+
+def merge_payloads(payloads: list[ExtractionPayload]) -> ExtractionPayload:
+    merged_assets: list[Asset] = []
+    for payload in payloads:
+        merged_assets.extend(payload.assets)
+    return ExtractionPayload(assets=merged_assets)
+
+
+def _extract_payload_with_model(
+    client: OpenAI,
+    input_path: Path,
+    model: str,
+    pdf_text_ctx: PdfTextContext,
+    candidate_ids: set[str] | None = None,
+    reasoning_effort: str = DEFAULT_NORMAL_REASONING_EFFORT,
+) -> ExtractionPayload:
+    suffix = input_path.suffix.lower()
+    if suffix == ".pdf":
+        image_data_urls = render_pdf_pages_to_data_urls(input_path)
+        payloads: list[ExtractionPayload] = []
+        try:
+            payload = call_pdf_extraction(client, input_path, model, pdf_text_ctx, candidate_ids, reasoning_effort)
+            if payload.assets:
+                payloads.append(payload)
+        except Exception as exc:
+            print(
+                f"PDF extraction path failed, falling back to rendered images: {exc}",
+                file=sys.stderr,
+            )
+        
+        # If PDF extraction failed or the text layer is severely lacking, run a full-page image extraction fallback
+        if not payloads or len(pdf_text_ctx.full_text) < 250:
+            try:
+                image_payload = call_image_extraction(client, image_data_urls, model, reasoning_effort)
+                if image_payload.assets:
+                    payloads.append(image_payload)
+            except Exception as exc:
+                print(
+                    f"Image extraction pass failed while processing PDF: {exc}",
+                    file=sys.stderr,
+                )
+
+        # Unconditionally process grid crops to bypass LLM token and resolution limits
+        for batch in build_crop_batches(image_data_urls):
+            try:
+                crop_payload = call_image_crop_extraction(client, batch, model, reasoning_effort)
+                if crop_payload.assets:
+                    payloads.append(crop_payload)
+            except Exception as exc:
+                print(
+                    f"Crop extraction batch failed while processing PDF: {exc}",
+                    file=sys.stderr,
+                )
+
+        if payloads:
+            return merge_payloads(payloads)
+
+        return call_image_extraction(client, image_data_urls, model, reasoning_effort)
+
+    if suffix in {".png", ".jpg", ".jpeg"}:
+        return call_image_extraction(client, build_image_context_views(input_path), model, reasoning_effort)
+
+    fail(f"Unsupported input type after validation: {suffix}")
+    raise AssertionError("unreachable")
+
+
+def extraction_review_reasons(
+    payload: ExtractionPayload,
+    candidate_ids: set[str] | None = None,
+) -> list[str]:
+    reason_codes: list[str] = []
+    unique_asset_ids = {asset.id for asset in payload.assets}
+
+    if not unique_asset_ids:
+        reason_codes.append("no_assets_extracted")
+
+    if candidate_ids and len(candidate_ids) >= 5:
+        min_expected = max(2, int(len(candidate_ids) * 0.2))
+        if len(unique_asset_ids) < min_expected:
+            reason_codes.append("low_candidate_coverage")
+
+    for asset in payload.assets:
+        if "?" in asset.id or "?" in asset.parent_id:
+            reason_codes.append("uncertain_identifier")
+            break
+        if any("?" in value for value in asset.attributes_from_drawing.values()):
+            reason_codes.append("uncertain_attribute")
+            break
+
+    return sorted(set(reason_codes))
+
+
+def mark_payload_for_manual_review(
+    payload: ExtractionPayload,
+    reason_codes: list[str],
+    *,
+    ocr_assisted_retry: bool,
+) -> ExtractionPayload:
+    if not reason_codes:
+        return payload
+    marked_assets: list[Asset] = []
+    for asset in payload.assets:
+        attributes = dict(asset.attributes_from_drawing)
+        attributes["manual_review_reason_codes"] = "|".join(reason_codes)
+        attributes["ocr_assisted_retry"] = "1" if ocr_assisted_retry else "0"
+        marked_assets.append(
+            Asset(
+                hierarchy=asset.hierarchy,
+                parent_id=asset.parent_id,
+                id=asset.id,
+                attributes_from_drawing=attributes,
+            )
+        )
+    return ExtractionPayload(assets=marked_assets)
+
+
+def extract_payload(
+    client: OpenAI,
+    input_path: Path,
+    primary_models: list[str],
+    fallback_models: list[str],
+    pdf_text_ctx: PdfTextContext,
+    candidate_ids: set[str] | None = None,
+    normal_reasoning_effort: str = DEFAULT_NORMAL_REASONING_EFFORT,
+    hard_reasoning_effort: str = DEFAULT_HARD_REASONING_EFFORT,
+) -> ExtractionRun:
+    primary_models = primary_models or list(DEFAULT_PRIMARY_MODELS)
+    fallback_models = fallback_models or list(DEFAULT_FALLBACK_MODELS)
+    best_payload = ExtractionPayload(assets=[])
+    best_model = primary_models[0]
+    best_reasons = ["no_assets_extracted"]
+
+    for model in primary_models:
+        try:
+            payload = _extract_payload_with_model(
+                client,
+                input_path,
+                model,
+                pdf_text_ctx,
+                candidate_ids,
+                normal_reasoning_effort,
+            )
+        except Exception as exc:
+            print(f"Extraction failed on normal-tier model {model}: {exc}", file=sys.stderr)
+            continue
+
+        reasons = extraction_review_reasons(payload, candidate_ids)
+        if len(payload.assets) > len(best_payload.assets):
+            best_payload = payload
+            best_model = model
+            best_reasons = reasons
+        if not reasons:
+            return ExtractionRun(payload=payload, model=model, manual_review_reason_codes=[], ocr_assisted_retry=False)
+
+    if fallback_models:
+        print(
+            "Escalating SLD extraction to fallback model tier "
+            f"(best_model={best_model}, reasons={best_reasons}).",
+            file=sys.stderr,
+        )
+
+    for model in fallback_models:
+        try:
+            payload = _extract_payload_with_model(
+                client,
+                input_path,
+                model,
+                pdf_text_ctx,
+                candidate_ids,
+                hard_reasoning_effort,
+            )
+        except Exception as exc:
+            print(f"Extraction failed on fallback model {model}: {exc}", file=sys.stderr)
+            continue
+
+        reasons = extraction_review_reasons(payload, candidate_ids)
+        if len(payload.assets) > len(best_payload.assets) or not reasons:
+            best_payload = payload
+            best_model = model
+            best_reasons = reasons
+        if not reasons:
+            return ExtractionRun(payload=payload, model=model, manual_review_reason_codes=[], ocr_assisted_retry=True)
+
+    marked_payload = mark_payload_for_manual_review(
+        best_payload,
+        best_reasons,
+        ocr_assisted_retry=True,
+    )
+    return ExtractionRun(
+        payload=marked_payload,
+        model=best_model,
+        manual_review_reason_codes=best_reasons,
+        ocr_assisted_retry=True,
+    )
+
+
+def parse_response_payload(output_text: str) -> ExtractionPayload:
+    if not output_text.strip():
+        fail("OpenAI returned an empty response body.")
+
+    try:
+        raw_payload = json.loads(output_text)
+    except json.JSONDecodeError as exc:
+        fail(f"OpenAI did not return valid JSON: {exc}")
+
+    try:
+        api_payload = ApiExtractionPayload.model_validate(raw_payload)
+    except ValidationError as exc:
+        fail(f"OpenAI JSON did not match the expected schema: {exc}")
+
+    normalized_assets: list[Asset] = []
+    for api_asset in api_payload.assets:
+        attributes: dict[str, str] = {}
+        for item in api_asset.attributes_from_drawing:
+            attributes[item.key] = item.value
+
+        normalized_assets.append(
+            Asset(
+                hierarchy=api_asset.hierarchy,
+                parent_id=api_asset.parent_id,
+                id=api_asset.id,
+                attributes_from_drawing=attributes,
+            )
+        )
+
+    payload = ExtractionPayload(assets=normalized_assets)
+    return payload
+
+
+def asset_prefix(asset_id: str) -> str:
+    return asset_id.split("-", 1)[0] if "-" in asset_id else asset_id
+
+
+def is_bus_asset_id(asset_id: str) -> bool:
+    return asset_prefix(asset_id) in {"MDC", "MDP", "CDP", "EDC", "NDC", "SWBD", "MCC"}
+
+
+def is_panel_asset_id(asset_id: str) -> bool:
+    return asset_prefix(asset_id) == "PNL"
+
+
+def is_supply_candidate_asset_id(asset_id: str) -> bool:
+    return asset_prefix(asset_id) in {"TX", "CDP", "MDC", "MDP", "EDC", "NDC", "SWBD", "MCC", "ATS", "SPL"}
+
+
+def rect_to_box(rect: fitz.Rect) -> Box:
+    return Box(rect.x0, rect.y0, rect.x1, rect.y1)
+
+
+def distance_to_interval(value: float, start: float, end: float) -> float:
+    if value < start:
+        return start - value
+    if value > end:
+        return value - end
+    return 0.0
+
+
+def boxes_overlap(a: Box, b: Box, tolerance: float = 2.0) -> bool:
+    return not (
+        a.x1 < b.x0 - tolerance
+        or b.x1 < a.x0 - tolerance
+        or a.y1 < b.y0 - tolerance
+        or b.y1 < a.y0 - tolerance
+    )
+
+
+def build_label_search_terms(asset_id: str) -> list[str]:
+    base_id = strip_panel_prefix(asset_id)
+    terms = [base_id]
+    if asset_id != base_id:
+        terms.append(asset_id)
+        terms.append(f"PANEL '{base_id}'")
+
+    for text in list(terms):
+        if "-" in text:
+            prefix, suffix = text.split("-", 1)
+            spaced = f"{prefix} - {suffix}"
+            if spaced not in terms:
+                terms.append(spaced)
+
+    deduped: list[str] = []
+    seen: set[str] = set()
+    for term in terms:
+        normalized = term.strip().upper()
+        if normalized in seen:
+            continue
+        seen.add(normalized)
+        deduped.append(term)
+    return deduped
+
+
+def dedupe_search_rects(rects: list[fitz.Rect]) -> list[fitz.Rect]:
+    deduped: list[fitz.Rect] = []
+    for rect in rects:
+        if any(
+            abs(existing.x0 - rect.x0) <= GEOMETRY_COORD_TOLERANCE
+            and abs(existing.y0 - rect.y0) <= GEOMETRY_COORD_TOLERANCE
+            and abs(existing.x1 - rect.x1) <= GEOMETRY_COORD_TOLERANCE
+            and abs(existing.y1 - rect.y1) <= GEOMETRY_COORD_TOLERANCE
+            for existing in deduped
+        ):
+            continue
+        deduped.append(rect)
+    return deduped
+
+
+def locate_pdf_text_labels(document: fitz.Document, asset_ids: set[str]) -> dict[str, list[TextLabel]]:
+    labels_by_asset: dict[str, list[TextLabel]] = defaultdict(list)
+
+    for asset_id in sorted(asset_ids):
+        for page_index in range(document.page_count):
+            page = document.load_page(page_index)
+            rects: list[fitz.Rect] = []
+            for term in build_label_search_terms(asset_id):
+                rects.extend(page.search_for(term))
+            for rect in dedupe_search_rects(rects):
+                labels_by_asset[asset_id].append(
+                    TextLabel(
+                        asset_id=asset_id,
+                        page_index=page_index,
+                        box=rect_to_box(rect),
+                        raw_text=asset_id,
+                    )
+                )
+    return dict(labels_by_asset)
+
+
+def add_axis_aligned_segment(
+    horizontal_segments: list[LineSegment],
+    vertical_segments: list[LineSegment],
+    page_index: int,
+    x0: float,
+    y0: float,
+    x1: float,
+    y1: float,
+) -> None:
+    dx = x1 - x0
+    dy = y1 - y0
+
+    if abs(dy) <= GEOMETRY_COORD_TOLERANCE and abs(dx) >= MIN_HORIZONTAL_SEGMENT:
+        start, end = sorted((x0, x1))
+        horizontal_segments.append(
+            LineSegment(page_index=page_index, orientation="h", axis=(y0 + y1) / 2.0, start=start, end=end)
+        )
+        return
+
+    if abs(dx) <= GEOMETRY_COORD_TOLERANCE and abs(dy) >= MIN_VERTICAL_SEGMENT:
+        start, end = sorted((y0, y1))
+        vertical_segments.append(
+            LineSegment(page_index=page_index, orientation="v", axis=(x0 + x1) / 2.0, start=start, end=end)
+        )
+
+
+def merge_collinear_segments(segments: list[LineSegment]) -> list[LineSegment]:
+    if not segments:
+        return []
+
+    merged: list[LineSegment] = []
+    sorted_segments = sorted(segments, key=lambda segment: (segment.page_index, segment.axis, segment.start, segment.end))
+
+    current = sorted_segments[0]
+    for segment in sorted_segments[1:]:
+        same_track = (
+            segment.page_index == current.page_index
+            and segment.orientation == current.orientation
+            and abs(segment.axis - current.axis) <= GEOMETRY_COORD_TOLERANCE
+        )
+        close_gap = segment.start <= current.end + GEOMETRY_GAP_TOLERANCE
+        if same_track and close_gap:
+            current = LineSegment(
+                page_index=current.page_index,
+                orientation=current.orientation,
+                axis=(current.axis + segment.axis) / 2.0,
+                start=min(current.start, segment.start),
+                end=max(current.end, segment.end),
+            )
+            continue
+
+        merged.append(current)
+        current = segment
+
+    merged.append(current)
+    return merged
+
+
+def extract_page_segments(page_index: int, page: fitz.Page) -> tuple[list[LineSegment], list[LineSegment]]:
+    horizontal_segments: list[LineSegment] = []
+    vertical_segments: list[LineSegment] = []
+
+    for drawing in page.get_drawings():
+        for item in drawing.get("items", []):
+            kind = item[0]
+            if kind == "l":
+                p1 = item[1]
+                p2 = item[2]
+                add_axis_aligned_segment(horizontal_segments, vertical_segments, page_index, p1.x, p1.y, p2.x, p2.y)
+            elif kind == "re":
+                rect = item[1]
+                add_axis_aligned_segment(horizontal_segments, vertical_segments, page_index, rect.x0, rect.y0, rect.x1, rect.y0)
+                add_axis_aligned_segment(horizontal_segments, vertical_segments, page_index, rect.x1, rect.y0, rect.x1, rect.y1)
+                add_axis_aligned_segment(horizontal_segments, vertical_segments, page_index, rect.x1, rect.y1, rect.x0, rect.y1)
+                add_axis_aligned_segment(horizontal_segments, vertical_segments, page_index, rect.x0, rect.y1, rect.x0, rect.y0)
+
+    return merge_collinear_segments(horizontal_segments), merge_collinear_segments(vertical_segments)
+
+
+def build_pdf_geometry_context(input_path: Path, asset_ids: set[str]) -> PdfGeometryContext | None:
+    if input_path.suffix.lower() != ".pdf":
+        return None
+
+    with fitz.open(input_path) as document:
+        labels_by_asset = locate_pdf_text_labels(document, asset_ids)
+        found_label_count = sum(1 for asset_id in asset_ids if labels_by_asset.get(asset_id))
+        if found_label_count < max(3, int(len(asset_ids) * 0.35)):
+            return None
+
+        horizontal_segments_by_page: dict[int, list[LineSegment]] = {}
+        vertical_segments_by_page: dict[int, list[LineSegment]] = {}
+        total_segments = 0
+        for page_index in range(document.page_count):
+            page = document.load_page(page_index)
+            horizontal_segments, vertical_segments = extract_page_segments(page_index, page)
+            horizontal_segments_by_page[page_index] = horizontal_segments
+            vertical_segments_by_page[page_index] = vertical_segments
+            total_segments += len(horizontal_segments) + len(vertical_segments)
+
+    if total_segments < 20:
+        print(f"Geometry inference disabled: only {total_segments} segments found (minimum 20)", file=sys.stderr)
+        return None
+
+    return PdfGeometryContext(
+        labels_by_asset=labels_by_asset,
+        horizontal_segments_by_page=horizontal_segments_by_page,
+        vertical_segments_by_page=vertical_segments_by_page,
+    )
+
+
+def normalize_identifier(raw_id: str, dictionary_module: Any, candidate_ids: set[str] | None = None) -> str:
+    stripped = raw_id.strip()
+    if not stripped:
+        return stripped
+
+    collapsed = re.sub(r"\s*-\s*", "-", stripped.upper())
+    compact_match = re.fullmatch(r"([A-Z]+)-([A-Z0-9-]+)", collapsed)
+    if compact_match:
+        prefix, suffix = compact_match.groups()
+        if "-" in suffix:
+            collapsed = f"{prefix}-{suffix.replace('-', '')}"
+    stripped = collapsed
+
+    patterns = [
+        r"PANEL\s+'([^']+)'",
+        r"\b(TX-[A-Z0-9.]+)\b",
+        r"\b(TX\s*-\s*[A-Z0-9.]+)\b",
+        r"\b(CDP-[A-Z0-9.]+)\b",
+        r"\b(CDP\s*-\s*[A-Z0-9.]+)\b",
+        r"\b(SPL-[A-Z0-9.]+)\b",
+        r"\b(SPL\s*-\s*[A-Z0-9.]+)\b",
+        r"\b(([EN]DC)-[A-Z0-9.]+)\b",
+        r"\b(([EN]DC)\s*-\s*[A-Z0-9.]+)\b",
+        r"\b(SWBD-[A-Z0-9.]+)\b",
+        r"\b(SWBD\s*-\s*[A-Z0-9.]+)\b",
+        r"\b(ATS-[A-Z0-9.]+)\b",
+        r"\b(ATS\s*-\s*[A-Z0-9.]+)\b",
+        r"\b(PNL-[A-Z0-9.]+)\b",
+        r"\b(PNL\s*-\s*[A-Z0-9.]+)\b",
+        r"\b(GEN-\d+)\b",
+        r"\b(GEN\s*-\s*\d+)\b",
+        r"\b(MDC)\b",
+        r"\b(2SIS)\b",
+        r"\b(CELL\s+\d)\b",
+        r"\b((?:[26][NES](?:\d+(?:\.\d+)?|R)[LPMDT]\d+|2NRM\d+))\b",
+        r"\b((?:HB|B)?\dA\d{1,3})\b",
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, stripped, re.IGNORECASE)
+        if match:
+            stripped = re.sub(r"\s*-\s*", "-", match.group(1).upper())
+            break
+
+    if candidate_ids:
+        upper = stripped.upper()
+        if upper in candidate_ids:
+            return dictionary_module.normalize_dictionary_id(upper)
+        if upper == "MCC" and "MDC" in candidate_ids:
+            return "MDC"
+        # Check if a prefixed version of a bare compact code exists in candidates
+        for prefix in ("CDP", "EDC", "NDC", "SPL", "MCC", "ATS", "PNL"):
+            prefixed = f"{prefix}-{upper}"
+            if prefixed in candidate_ids:
+                return dictionary_module.normalize_dictionary_id(prefixed)
+        close = difflib.get_close_matches(upper, sorted(candidate_ids), n=1, cutoff=0.92)
+        if close:
+            return dictionary_module.normalize_dictionary_id(close[0])
+
+    return dictionary_module.normalize_dictionary_id(stripped)
+
+
+def collapse_legacy_variant(asset_id: str, known_ids: set[str]) -> str:
+    if asset_id.endswith("X") and asset_id[:-1] in known_ids:
+        return asset_id[:-1]
+    floor_panel_match = re.fullmatch(r"CDP-([1-5])AC", asset_id)
+    if floor_panel_match:
+        candidate = f"CDP-{floor_panel_match.group(1)}AG"
+        if candidate in known_ids:
+            return candidate
+    return asset_id
+
+
+def strip_panel_prefix(asset_id: str) -> str:
+    return asset_id[4:] if asset_id.startswith("PNL-") else asset_id
+
+
+def compact_panel_parent_candidates(asset_code: str, known_ids: set[str]) -> list[str]:
+    match = re.fullmatch(r"([26])([NES])(\d+(?:\.\d+)?|R)([LPMDT])(\d+)", asset_code)
+    if not match:
+        return []
+    voltage_code, system_code, location_code = match.group(1), match.group(2), match.group(3)
+    ordered = (
+        f"CDP-{voltage_code}{system_code}{location_code}D1",
+        f"CDP-{voltage_code}{system_code}0D1",
+        f"CDP-{voltage_code}{system_code}{location_code}D2",
+        f"CDP-{voltage_code}{system_code}0D2",
+        f"CDP-{voltage_code}{system_code}{location_code}",
+        f"CDP-{voltage_code}{system_code}0",
+    )
+    seen: set[str] = set()
+    unique: list[str] = []
+    for candidate in ordered:
+        if candidate in known_ids and candidate not in seen:
+            seen.add(candidate)
+            unique.append(candidate)
+    return unique
+
+
+def infer_parent_override(asset_id: str, known_ids: set[str], current_parent: str = "") -> str | None:
+    asset_code = strip_panel_prefix(asset_id)
+
+    if asset_id == "MDC":
+        return ""
+
+    if asset_id in {"ATS-A", "ATS-LS", "MCC-A1"} and "SWBD-A" in known_ids:
+        return "SWBD-A"
+
+    if asset_id in {"CDP-B3A", "CDP-B2A1", "CDP-1AG", "CDP-2AG", "CDP-3AG", "CDP-4AG", "CDP-5AG"}:
+        if "SWBD-A" in known_ids:
+            return "SWBD-A"
+
+    if asset_id == "CDP-HB1A" and "SWBD-A" in known_ids:
+        return "SWBD-A"
+
+    if asset_id == "CDP-B2A2" and "CDP-B2A1" in known_ids:
+        return "CDP-B2A1"
+
+    if asset_id == "CDP-B1A1" and "CDP-HB1A" in known_ids:
+        return "CDP-HB1A"
+
+    if re.fullmatch(r"B3A\d{1,3}", asset_code) and "CDP-B3A" in known_ids:
+        return "CDP-B3A"
+
+    if re.fullmatch(r"B2A\d{1,3}", asset_code) and "CDP-B2A2" in known_ids:
+        return "CDP-B2A2"
+
+    if re.fullmatch(r"HB2A\d{1,3}", asset_code) and "CDP-B2A1" in known_ids:
+        return "CDP-B2A1"
+
+    if re.fullmatch(r"B1A\d{1,3}", asset_code) and "CDP-B1A1" in known_ids:
+        return "CDP-B1A1"
+
+    if re.fullmatch(r"HB1A\d{1,3}", asset_code) and "CDP-HB1A" in known_ids:
+        return "CDP-HB1A"
+
+    floor_panel_match = re.fullmatch(r"([1-5])A\d{2,3}", asset_code)
+    if floor_panel_match:
+        candidate = f"CDP-{floor_panel_match.group(1)}AG"
+        if candidate in known_ids:
+            return candidate
+
+    compact_panel_match = re.fullmatch(r"([26])([NES])(\d+(?:\.\d+)?|R)([LPMDT])(\d+)", asset_code)
+    if compact_panel_match:
+        unique_candidates = compact_panel_parent_candidates(asset_code, known_ids)
+        if len(unique_candidates) == 1:
+            return unique_candidates[0]
+        # Ambiguous (multiple candidate CDPs exist) — defer to geometry/api_parent
+        # rather than rubber-stamping the LLM's guess. The caller handles the
+        # ambiguous case via compact_panel_parent_candidates().
+
+    distribution_panel_match = re.fullmatch(r"CDP-(2)([NES])(\d+(?:\.\d+)?|R)D(\d+)", asset_id)
+    if distribution_panel_match:
+        candidate = (
+            f"TX-{distribution_panel_match.group(2)}"
+            f"{distribution_panel_match.group(3)}"
+            f"{distribution_panel_match.group(4)}"
+        )
+        if candidate in known_ids:
+            return candidate
+
+    distribution_match = re.fullmatch(r"CDP-(2)([NES])(\d+(?:\.\d+)?|R)", asset_id)
+    if distribution_match:
+        candidate = f"TX-{distribution_match.group(2)}{distribution_match.group(3)}1"
+        if candidate in known_ids:
+            return candidate
+
+    transformer_match = re.fullmatch(r"TX-([NES])(\d+(?:\.\d+)?|R)([NES])?(\d+)", asset_id)
+    if transformer_match:
+        system_code = transformer_match.group(1)
+        ats_candidate = f"ATS-{system_code}"
+        if ats_candidate in known_ids:
+            return ats_candidate
+        if "MDC" in known_ids:
+            return "MDC"
+
+    prefixed_panel_match = re.fullmatch(r"CDP-(6)([NES])(\d+(?:\.\d+)?|R)([LPMDT])(\d+)", asset_id)
+    if prefixed_panel_match and "MDC" in known_ids:
+        return "MDC"
+
+    if asset_id == "CDP-6N0" and "MDC" in known_ids:
+        return "MDC"
+
+    return None
+
+
+def resolve_nearest_valid_parent(
+    parent_id: str,
+    parent_lookup: dict[str, list[str]],
+    valid_ids: set[str],
+) -> str:
+    current = parent_id
+    seen: set[str] = set()
+
+    while current and current not in seen:
+        seen.add(current)
+        if current in valid_ids:
+            return current
+
+        next_candidates = parent_lookup.get(current, [])
+        current = next((candidate for candidate in next_candidates if candidate not in seen), "")
+
+    return ""
+
+
+def choose_preferred_asset(existing: Asset | None, candidate: Asset, prefer_parent: bool = True) -> Asset:
+    if existing is None:
+        return candidate
+
+    # Merge attributes: candidate fills gaps, existing attributes take priority
+    merged_attributes = dict(candidate.attributes_from_drawing)
+    merged_attributes.update(existing.attributes_from_drawing)
+
+    # Choose parent_id
+    if prefer_parent and candidate.id == "MDC":
+        parent_id = "" if candidate.parent_id == "" or existing.parent_id == "" else existing.parent_id
+    elif prefer_parent:
+        parent_id = existing.parent_id if existing.parent_id else candidate.parent_id
+    else:
+        parent_id = existing.parent_id if existing.parent_id else candidate.parent_id
+
+    # Choose hierarchy: prefer lower (closer to root is more stable)
+    hierarchy = min(existing.hierarchy, candidate.hierarchy, key=lambda h: int(h))
+
+    return Asset(
+        hierarchy=hierarchy,
+        parent_id=parent_id,
+        id=existing.id,
+        attributes_from_drawing=merged_attributes,
+    )
+
+
+def compute_hierarchy_levels(assets: list[Asset]) -> dict[str, int]:
+    parent_map = {asset.id: asset.parent_id for asset in assets}
+    cache: dict[str, int] = {}
+
+    def visit(asset_id: str, trail: set[str]) -> int:
+        if asset_id in cache:
+            return cache[asset_id]
+        if asset_id in trail:
+            cache[asset_id] = 1
+            return 1
+
+        parent_id = parent_map.get(asset_id, "")
+        if not parent_id or parent_id == asset_id or parent_id not in parent_map:
+            cache[asset_id] = 1
+            return 1
+
+        cache[asset_id] = visit(parent_id, trail | {asset_id}) + 1
+        return cache[asset_id]
+
+    for asset in assets:
+        visit(asset.id, set())
+
+    return cache
+
+
+def corrected_assets(payload: ExtractionPayload, dictionary_module: Any, candidate_ids: set[str] | None = None, pdf_lines: list[str] | None = None) -> list[Asset]:
+    normalized_assets: list[Asset] = []
+    normalized_ids: set[str] = set()
+    parent_lookup: dict[str, list[str]] = {}
+
+    for asset in payload.assets:
+        normalized_id = normalize_identifier(asset.id, dictionary_module, candidate_ids)
+        normalized_parent = normalize_identifier(asset.parent_id, dictionary_module, candidate_ids)
+        normalized_asset = Asset(
+            hierarchy=asset.hierarchy,
+            parent_id=normalized_parent,
+            id=normalized_id,
+            attributes_from_drawing=asset.attributes_from_drawing,
+        )
+        normalized_assets.append(normalized_asset)
+        normalized_ids.add(normalized_id)
+        parent_lookup.setdefault(normalized_id, [])
+        if normalized_parent and normalized_parent not in parent_lookup[normalized_id]:
+            parent_lookup[normalized_id].append(normalized_parent)
+
+    canonicalized_assets: list[Asset] = []
+    canonical_parent_lookup: dict[str, list[str]] = {}
+    valid_ids: set[str] = set()
+    for asset in normalized_assets:
+        canonical_id = collapse_legacy_variant(asset.id, normalized_ids)
+        canonical_parent = collapse_legacy_variant(asset.parent_id, normalized_ids)
+        canonicalized_assets.append(
+            Asset(
+                hierarchy=asset.hierarchy,
+                parent_id=canonical_parent,
+                id=canonical_id,
+                attributes_from_drawing=asset.attributes_from_drawing,
+            )
+        )
+        canonical_parent_lookup.setdefault(canonical_id, [])
+        if canonical_parent and canonical_parent not in canonical_parent_lookup[canonical_id]:
+            canonical_parent_lookup[canonical_id].append(canonical_parent)
+        if dictionary_module.is_dictionary_id(canonical_id):
+            valid_ids.add(canonical_id)
+
+    existing_ids = {asset.id for asset in canonicalized_assets}
+    placeholder_parent_ids = {
+        asset.parent_id
+        for asset in canonicalized_assets
+        if asset.parent_id and dictionary_module.is_dictionary_id(asset.parent_id) and asset.parent_id not in existing_ids
+    }
+
+    for placeholder_id in sorted(placeholder_parent_ids):
+        canonicalized_assets.append(
+            Asset(
+                hierarchy="1",
+                parent_id="",
+                id=placeholder_id,
+                attributes_from_drawing={},
+            )
+        )
+        canonical_parent_lookup.setdefault(placeholder_id, [])
+        valid_ids.add(placeholder_id)
+
+    filtered_candidates: list[Asset] = []
+    for asset in canonicalized_assets:
+        if not dictionary_module.is_dictionary_id(asset.id):
+            continue
+
+        parent_id = infer_parent_override(asset.id, valid_ids, asset.parent_id)
+        if parent_id is None:
+            parent_id = asset.parent_id
+        if parent_id and parent_id not in valid_ids:
+            parent_id = resolve_nearest_valid_parent(parent_id, canonical_parent_lookup, valid_ids)
+        if parent_id == asset.id:
+            parent_id = ""
+        if asset.id.startswith("CDP-") and not parent_id and {"SWBD-A", "MDC"} & valid_ids:
+            referenced_as_parent = any(a.parent_id == asset.id for a in canonicalized_assets)
+            has_text_backing = bool(pdf_lines and find_asset_text_block(asset.id, pdf_lines))
+            if not referenced_as_parent and not has_text_backing:
+                continue
+
+        filtered_candidates.append(
+            Asset(
+                hierarchy=asset.hierarchy,
+                parent_id=parent_id,
+                id=asset.id,
+                attributes_from_drawing=asset.attributes_from_drawing,
+            )
+        )
+
+    deduped: dict[str, Asset] = {}
+    occurrence_counts: dict[str, int] = defaultdict(int)
+    for asset in filtered_candidates:
+        occurrence_counts[asset.id] += 1
+        deduped[asset.id] = choose_preferred_asset(deduped.get(asset.id), asset)
+
+    final_ids = set(deduped)
+    repaired: list[Asset] = []
+    for asset in deduped.values():
+        parent_id = asset.parent_id
+        if parent_id and parent_id not in final_ids:
+            parent_id = resolve_nearest_valid_parent(parent_id, canonical_parent_lookup, final_ids)
+        if parent_id == asset.id:
+            parent_id = ""
+        repaired.append(
+            Asset(
+                hierarchy=asset.hierarchy,
+                parent_id=parent_id,
+                id=asset.id,
+                attributes_from_drawing=asset.attributes_from_drawing,
+            )
+        )
+
+    hierarchy_levels = compute_hierarchy_levels(repaired)
+    ordered_assets = sorted(repaired, key=lambda asset: (hierarchy_levels[asset.id], asset.parent_id, asset.id))
+    return [
+        Asset(
+            hierarchy=str(hierarchy_levels[asset.id]),
+            parent_id=asset.parent_id,
+            id=asset.id,
+            attributes_from_drawing=asset.attributes_from_drawing,
+        )
+        for asset in ordered_assets
+    ]
+
+
+def validate_dictionary_identifiers(assets: list[Asset], dictionary_module: Any) -> None:
+    invalid: list[str] = []
+    valid_ids = {asset.id for asset in assets}
+    for asset in assets:
+        if asset.id and not dictionary_module.is_dictionary_id(asset.id):
+            invalid.append(f"ID '{asset.id}'")
+        if asset.parent_id and not dictionary_module.is_dictionary_id(asset.parent_id):
+            invalid.append(f"Parent ID '{asset.parent_id}'")
+        if asset.parent_id and asset.parent_id not in valid_ids:
+            invalid.append(f"Parent ID '{asset.parent_id}' is not present as an asset ID")
+    if invalid:
+        sample = ", ".join(invalid[:10])
+        fail(
+            "One or more identifiers are not modeled by electrical.dictionay_single_line_diagrama.py. "
+            f"Update the dictionary model or adjust normalization. Examples: {sample}"
+        )
+
+
+def derive_building_value(input_path: Path) -> str:
+    stem = input_path.stem.strip()
+    prefix, separator, _ = stem.partition(" - ")
+    return prefix if separator else stem
+
+
+def get_attribute_value(attributes: dict[str, str], preferred_keys: list[str]) -> str:
+    normalized_attributes = {key.lower(): value for key, value in attributes.items()}
+    for key in preferred_keys:
+        value = normalized_attributes.get(key.lower(), "").strip()
+        if value:
+            return value
+    return ""
+
+
+def normalize_lookup_text(value: str) -> str:
+    return re.sub(r"[\s'\"]+", "", value.upper())
+
+
+def find_asset_text_block(asset_id: str, pdf_lines: list[str]) -> list[str]:
+    lookup_values = {normalize_lookup_text(asset_id), normalize_lookup_text(strip_panel_prefix(asset_id))}
+    lookup_values.discard("")
+    for index, line in enumerate(pdf_lines):
+        normalized_line = normalize_lookup_text(line)
+        if not any(lookup_val in normalized_line for lookup_val in lookup_values):
+            continue
+        return pdf_lines[index : min(len(pdf_lines), index + 8)]
+    return []
+
+
+def is_breaker_notation_line(line: str) -> bool:
+    return bool(BREAKER_NOTATION_PATTERN.search(line))
+
+
+def allows_text_layer_amperage(asset_id: str) -> bool:
+    # Transformers are kVA-rated on single-line diagrams; an amperage value in
+    # the text lines near a TX tag is the adjacent feeder breaker, not a
+    # transformer attribute.
+    return asset_prefix(asset_id.strip().upper()) != "TX"
+
+
+def extract_text_layer_attributes(block_lines: list[str], asset_id: str = "") -> dict[str, str]:
+    attributes: dict[str, str] = {}
+    voltage_lines: list[str] = []
+    amperage_allowed = allows_text_layer_amperage(asset_id)
+
+    for raw_line in block_lines:
+        line = raw_line.strip()
+        if not line:
+            continue
+
+        if "circuits" not in attributes and "CCT" in line.upper():
+            attributes["circuits"] = line
+
+        if POWER_PATTERN.search(line) and "power_rating" not in attributes:
+            attributes["power_rating"] = line
+
+        if WIRE_PATTERN.search(line) and "wire_rating" not in attributes:
+            attributes["wire_rating"] = line
+
+        if (
+            amperage_allowed
+            and AMPERAGE_PATTERN.search(line)
+            and not POWER_PATTERN.search(line)
+            and not is_breaker_notation_line(line)
+            and "rating" not in attributes
+        ):
+            attributes["rating"] = line
+
+        if VOLTAGE_PATTERN.search(line):
+            voltage_lines.append(line)
+
+    if voltage_lines:
+        if len(voltage_lines) == 1:
+            if "/" in voltage_lines[0] or voltage_lines[0].count("V") >= 2 or any(separator in voltage_lines[0] for separator in ("-", ":")):
+                attributes["voltage_primary_secondary"] = voltage_lines[0]
+            else:
+                attributes["voltage"] = voltage_lines[0]
+        elif "voltage_primary_secondary" not in attributes:
+            attributes["voltage_primary_secondary"] = f"{voltage_lines[0]}-{voltage_lines[1]}"
+
+    return attributes
+
+
+def build_text_layer_asset_payload(
+    pdf_text_ctx: PdfTextContext,
+    dictionary_module: Any,
+    candidate_ids: set[str] | None = None,
+) -> ExtractionPayload:
+    if not pdf_text_ctx.lines:
+        return ExtractionPayload(assets=[])
+
+    pdf_lines = pdf_text_ctx.lines
+
+    asset_positions: list[tuple[int, str]] = []
+    seen_ids: set[str] = set()
+    for index, line in enumerate(pdf_lines):
+        asset_id = normalize_identifier(line, dictionary_module, candidate_ids)
+        if not asset_id or not dictionary_module.is_dictionary_id(asset_id):
+            continue
+        if asset_id in seen_ids:
+            continue
+        seen_ids.add(asset_id)
+        asset_positions.append((index, asset_id))
+
+    if not asset_positions:
+        return ExtractionPayload(assets=[])
+
+    supplemental_assets: list[Asset] = []
+    for position, (line_index, asset_id) in enumerate(asset_positions):
+        next_line_index = asset_positions[position + 1][0] if position + 1 < len(asset_positions) else len(pdf_lines)
+        block_end = min(next_line_index, line_index + 7)
+        block_lines = pdf_lines[line_index + 1 : block_end]
+        supplemental_assets.append(
+            Asset(
+                hierarchy="1",
+                parent_id="",
+                id=asset_id,
+                attributes_from_drawing=extract_text_layer_attributes(block_lines, asset_id),
+            )
+        )
+
+    return ExtractionPayload(assets=supplemental_assets)
+
+
+def enrich_attributes_from_pdf_text(
+    asset_id: str,
+    attributes: dict[str, str],
+    pdf_lines: list[str],
+) -> dict[str, str]:
+    if not pdf_lines:
+        return attributes
+
+    block = find_asset_text_block(asset_id, pdf_lines)
+    if not block:
+        return attributes
+
+    enriched = dict(attributes)
+    supporting_lines = block[1:]
+
+    if not get_attribute_value(enriched, ["kva", "power", "power_rating", "rating"]):
+        for line in supporting_lines:
+            if POWER_PATTERN.search(line):
+                enriched["power_rating"] = line.strip()
+                break
+
+    if not get_attribute_value(enriched, ["wire_rating", "wires", "wire_count"]):
+        for line in supporting_lines:
+            if WIRE_PATTERN.search(line):
+                enriched["wire_rating"] = line.strip()
+                break
+
+    if not get_attribute_value(enriched, ["voltage", "voltage_primary_secondary", "voltage_rating"]):
+        voltage_lines = [line.strip() for line in supporting_lines if VOLTAGE_PATTERN.search(line)]
+        if len(voltage_lines) >= 2:
+            enriched["voltage_primary_secondary"] = f"{voltage_lines[0]}-{voltage_lines[1]}"
+        elif voltage_lines:
+            enriched["voltage"] = voltage_lines[0]
+
+    if allows_text_layer_amperage(asset_id) and not get_attribute_value(enriched, ["amperage", "amperage_rating", "rating"]):
+        for line in supporting_lines:
+            if (
+                AMPERAGE_PATTERN.search(line)
+                and not POWER_PATTERN.search(line)
+                and not is_breaker_notation_line(line)
+            ):
+                enriched["rating"] = line.strip()
+                break
+
+    return enriched
+
+
+def parse_amperage_rating(source_text: str) -> tuple[str, str]:
+    match = AMPERAGE_PATTERN.search(source_text)
+    if not match:
+        return "", ""
+    return match.group("value"), match.group("unit").upper()
+
+
+def parse_power_rating(source_text: str) -> tuple[str, str]:
+    match = POWER_PATTERN.search(source_text)
+    if not match:
+        return "", ""
+    value = match.group("value") or match.group("value2") or ""
+    unit_raw = match.group("unit") or match.group("unit2") or ""
+    if not value or not unit_raw:
+        return "", ""
+    unit = POWER_UNIT_MAP[unit_raw.lower()]
+    return value, unit
+
+
+def parse_wire_rating(source_text: str) -> tuple[str, str]:
+    match = WIRE_PATTERN.search(source_text)
+    if not match:
+        return "", ""
+    return match.group("wires"), "W"
+
+
+def parse_voltage_rating(source_text: str) -> tuple[str, str]:
+    matches = [match.group("value") for match in VOLTAGE_PATTERN.finditer(source_text)]
+    if not matches:
+        return "", ""
+    deduped_matches: list[str] = []
+    for match in matches:
+        if match not in deduped_matches:
+            deduped_matches.append(match)
+    separator = ":" if ":" in source_text else "-" if "-" in source_text else ", "
+    return separator.join(deduped_matches), "V"
+
+
+def extract_rating_columns(
+    attributes: dict[str, str],
+) -> tuple[str, str, str, str, str, str, str, str]:
+    amperage_value, amperage_uom = parse_amperage_rating(
+        get_attribute_value(attributes, ["rating", "amperage", "amperage_rating"])
+    )
+    power_value, power_uom = parse_power_rating(
+        get_attribute_value(attributes, ["kva", "rating_kva", "power", "power_rating"])
+    )
+    wire_value, wire_uom = parse_wire_rating(
+        get_attribute_value(attributes, ["wire_rating", "wires", "wire_count"])
+    )
+    if not get_attribute_value(attributes, ["voltage", "voltage_primary_secondary", "voltage_rating"]):
+        primary_voltage = get_attribute_value(attributes, ["primary_voltage"])
+        secondary_voltage = get_attribute_value(attributes, ["secondary_voltage"])
+        if primary_voltage and secondary_voltage:
+            attributes = dict(attributes)
+            attributes["voltage_primary_secondary"] = f"{primary_voltage}-{secondary_voltage}"
+    voltage_value, voltage_uom = parse_voltage_rating(
+        get_attribute_value(attributes, ["voltage", "voltage_primary_secondary", "rating", "voltage_rating"])
+    )
+    return (
+        amperage_value,
+        amperage_uom,
+        power_value,
+        power_uom,
+        wire_value,
+        wire_uom,
+        voltage_value,
+        voltage_uom,
+    )
+
+
+def get_voltage_source_text(attributes: dict[str, str]) -> str:
+    direct_voltage = get_attribute_value(attributes, ["voltage", "voltage_primary_secondary", "voltage_rating"])
+    if direct_voltage:
+        return direct_voltage
+
+    primary_voltage = get_attribute_value(attributes, ["primary_voltage"])
+    secondary_voltage = get_attribute_value(attributes, ["secondary_voltage"])
+    if primary_voltage and secondary_voltage:
+        return f"{primary_voltage}-{secondary_voltage}"
+    return ""
+
+
+def extract_nominal_voltage_value(source_text: str) -> float | None:
+    if not source_text:
+        return None
+    voltage_value, _ = parse_voltage_rating(source_text)
+    if not voltage_value:
+        return None
+    match = re.search(r"\d+(?:\.\d+)?", voltage_value)
+    return float(match.group(0)) if match else None
+
+
+def prepare_candidate_assets(
+    payload: ExtractionPayload,
+    dictionary_module: Any,
+    candidate_ids: set[str] | None,
+    pdf_lines: list[str],
+    prefer_parent: bool,
+) -> list[Asset]:
+    normalized_assets: list[Asset] = []
+    normalized_ids: set[str] = set()
+
+    for asset in payload.assets:
+        normalized_id = normalize_identifier(asset.id, dictionary_module, candidate_ids)
+        if not normalized_id:
+            continue
+        normalized_parent = normalize_identifier(asset.parent_id, dictionary_module, candidate_ids)
+        normalized_assets.append(
+            Asset(
+                hierarchy=asset.hierarchy,
+                parent_id=normalized_parent,
+                id=normalized_id,
+                attributes_from_drawing=asset.attributes_from_drawing,
+            )
+        )
+        normalized_ids.add(normalized_id)
+
+    deduped: dict[str, Asset] = {}
+    for asset in normalized_assets:
+        canonical_id = collapse_legacy_variant(asset.id, normalized_ids)
+        if not dictionary_module.is_dictionary_id(canonical_id):
+            continue
+
+        canonical_parent = collapse_legacy_variant(asset.parent_id, normalized_ids)
+        if canonical_parent and not dictionary_module.is_dictionary_id(canonical_parent):
+            canonical_parent = ""
+
+        enriched_attributes = enrich_attributes_from_pdf_text(canonical_id, asset.attributes_from_drawing, pdf_lines)
+        candidate = Asset(
+            hierarchy=asset.hierarchy,
+            parent_id=canonical_parent,
+            id=canonical_id,
+            attributes_from_drawing=enriched_attributes,
+        )
+        deduped[candidate.id] = choose_preferred_asset(deduped.get(candidate.id), candidate, prefer_parent=prefer_parent)
+
+    text_backed_ids = {
+        normalize_identifier(line, dictionary_module, candidate_ids)
+        for line in pdf_lines
+        if normalize_identifier(line, dictionary_module, candidate_ids)
+    }
+    prefix_artifacts = {
+        asset_id
+        for asset_id, asset in deduped.items()
+        if any(other_id != asset_id and other_id.startswith(asset_id) for other_id in deduped)
+        and asset_id not in text_backed_ids
+        and not find_asset_text_block(asset_id, pdf_lines)
+        and len(asset.attributes_from_drawing) <= 2
+    }
+    if prefix_artifacts:
+        deduped = {asset_id: asset for asset_id, asset in deduped.items() if asset_id not in prefix_artifacts}
+
+    return list(deduped.values())
+
+
+def nominal_voltage_for_asset(asset: Asset) -> float | None:
+    voltage_text = get_voltage_source_text(asset.attributes_from_drawing)
+    if not voltage_text:
+        voltage_text = get_attribute_value(asset.attributes_from_drawing, ["rating"])
+    return extract_nominal_voltage_value(voltage_text)
+
+
+def primary_voltage_for_transformer(asset: Asset) -> float | None:
+    primary_text = get_attribute_value(asset.attributes_from_drawing, ["primary_voltage"])
+    if not primary_text:
+        primary_text = get_voltage_source_text(asset.attributes_from_drawing)
+    return extract_nominal_voltage_value(primary_text)
+
+
+def expected_secondary_bus_ids(asset_id: str) -> list[str]:
+    transformer_match = re.fullmatch(
+        r"TX-([NES])(\d+(?:\.\d+)?|R)([NES])?(\d+)",
+        asset_id,
+    )
+    if not transformer_match:
+        return []
+
+    primary_sys, location_code, secondary_sys, sequence = transformer_match.groups()
+    effective_sys = secondary_sys or primary_sys
+    return [f"CDP-2{effective_sys}{location_code}D{sequence}"]
+
+
+def supply_candidate_rank(asset_id: str) -> int:
+    prefix = asset_prefix(asset_id)
+    if prefix == "TX":
+        return 0
+    if prefix in {"EDC", "NDC", "MDC", "MDP", "SWBD", "MCC"}:
+        return 1
+    if prefix == "CDP":
+        return 2
+    if prefix == "ATS":
+        return 3
+    if prefix == "SPL":
+        return 4
+    return 10
+
+
+def select_preferred_supply_candidate(entities: list[str]) -> str:
+    supply_candidates = sorted({entity for entity in entities if is_supply_candidate_asset_id(entity)})
+    if not supply_candidates:
+        return ""
+
+    ranked_candidates = sorted(
+        ((supply_candidate_rank(entity), entity) for entity in supply_candidates),
+        key=lambda item: (item[0], item[1]),
+    )
+    best_rank = ranked_candidates[0][0]
+    best_candidates = [entity for rank, entity in ranked_candidates if rank == best_rank]
+    return best_candidates[0] if len(best_candidates) == 1 else ""
+
+
+def locate_bus_placements(
+    context: PdfGeometryContext,
+    asset_ids: set[str],
+) -> dict[str, AssetPlacement]:
+    placements: dict[str, AssetPlacement] = {}
+
+    for asset_id in sorted(asset_ids):
+        best_placement: AssetPlacement | None = None
+        best_score = inf
+
+        for label in context.labels_by_asset.get(asset_id, []):
+            for segment in context.horizontal_segments_by_page.get(label.page_index, []):
+                if segment.length < MIN_BUS_LENGTH:
+                    continue
+
+                x_distance = distance_to_interval(label.box.center_x, segment.start - 30.0, segment.end + 30.0)
+                if x_distance > 80.0:
+                    continue
+
+                vertical_distance = min(
+                    abs(segment.axis - label.box.y0),
+                    abs(segment.axis - label.box.center_y),
+                    abs(segment.axis - label.box.y1),
+                )
+                if vertical_distance > MAX_BUS_LABEL_DISTANCE:
+                    continue
+
+                score = vertical_distance + x_distance * 1.5
+                if segment.axis < label.box.center_y:
+                    score -= 8.0
+                if score < best_score:
+                    best_score = score
+                    best_placement = AssetPlacement(asset_id=asset_id, page_index=label.page_index, label=label, segment=segment)
+
+        if best_placement is not None:
+            placements[asset_id] = best_placement
+
+    return placements
+
+
+def locate_branch_placements(
+    context: PdfGeometryContext,
+    asset_ids: set[str],
+) -> dict[str, AssetPlacement]:
+    placements: dict[str, AssetPlacement] = {}
+
+    for asset_id in sorted(asset_ids):
+        best_placement: AssetPlacement | None = None
+        best_score = inf
+
+        for label in context.labels_by_asset.get(asset_id, []):
+            preferred_min_x = label.box.x0 - MAX_BRANCH_X_OFFSET
+            preferred_max_x = label.box.x0 + 80.0
+            ideal_x = label.box.x0 - 45.0
+            for segment in context.vertical_segments_by_page.get(label.page_index, []):
+                if segment.length < MIN_VERTICAL_SEGMENT:
+                    continue
+                if segment.axis < preferred_min_x or segment.axis > preferred_max_x:
+                    continue
+
+                vertical_gap = 0.0
+                if segment.end < label.box.y0 - 120.0:
+                    vertical_gap = label.box.y0 - segment.end
+                elif segment.start > label.box.y1 + MAX_BRANCH_LABEL_DISTANCE:
+                    vertical_gap = segment.start - label.box.y1
+                if vertical_gap > MAX_BRANCH_LABEL_DISTANCE:
+                    continue
+
+                x_distance = abs(segment.axis - ideal_x)
+                score = x_distance + vertical_gap * 0.5
+                if segment.axis > label.box.center_x:
+                    score += 40.0
+                if segment.axis < label.box.x0:
+                    score -= min(12.0, label.box.x0 - segment.axis)
+                if segment.start <= label.box.y1 + 60.0 <= segment.end:
+                    score -= 8.0
+                if score < best_score:
+                    best_score = score
+                    best_placement = AssetPlacement(asset_id=asset_id, page_index=label.page_index, label=label, segment=segment)
+
+        if best_placement is not None:
+            placements[asset_id] = best_placement
+
+    return placements
+
+
+def vertical_intersects_bus(vertical: LineSegment, bus: LineSegment) -> bool:
+    if vertical.page_index != bus.page_index:
+        return False
+    if vertical.orientation != "v" or bus.orientation != "h":
+        return False
+    return (
+        bus.start - GEOMETRY_COORD_TOLERANCE <= vertical.axis <= bus.end + GEOMETRY_COORD_TOLERANCE
+        and vertical.start - GEOMETRY_COORD_TOLERANCE <= bus.axis <= vertical.end + GEOMETRY_COORD_TOLERANCE
+    )
+
+
+def bus_side_relative_to_label(label: TextLabel, bus: LineSegment) -> str:
+    return "above" if label.box.center_y < bus.axis else "below"
+
+
+def bus_side_relative_to_bus(other_bus: LineSegment, base_bus: LineSegment) -> str:
+    return "above" if other_bus.axis < base_bus.axis else "below"
+
+
+def find_connected_bus_links(
+    placement: AssetPlacement,
+    bus_placements: dict[str, AssetPlacement],
+) -> list[tuple[str, str, float]]:
+    matches: list[tuple[str, str, float]] = []
+    for bus_id, bus_placement in bus_placements.items():
+        if bus_id == placement.asset_id or bus_placement.page_index != placement.page_index:
+            continue
+        if not vertical_intersects_bus(placement.segment, bus_placement.segment):
+            continue
+
+        side = bus_side_relative_to_label(placement.label, bus_placement.segment)
+        distance = abs(placement.label.box.center_y - bus_placement.segment.axis)
+        matches.append((bus_id, side, distance))
+
+    if matches:
+        matches.sort(key=lambda item: item[2])
+        return matches
+
+    prefix = asset_prefix(placement.asset_id)
+    max_x_distance = 420.0 if prefix == "TX" else 180.0 if is_panel_asset_id(placement.asset_id) else 260.0
+    max_y_distance = 420.0 if prefix == "TX" else 900.0 if is_panel_asset_id(placement.asset_id) else 320.0
+    reference_x = placement.segment.axis
+
+    for bus_id, bus_placement in bus_placements.items():
+        if bus_id == placement.asset_id or bus_placement.page_index != placement.page_index:
+            continue
+
+        x_distance = distance_to_interval(reference_x, bus_placement.segment.start - 40.0, bus_placement.segment.end + 40.0)
+        if x_distance > max_x_distance:
+            continue
+
+        y_distance = abs(placement.label.box.center_y - bus_placement.segment.axis)
+        if y_distance > max_y_distance:
+            continue
+
+        side = bus_side_relative_to_label(placement.label, bus_placement.segment)
+        score = y_distance + x_distance * (0.5 if prefix == "TX" else 1.5)
+        matches.append((bus_id, side, score))
+
+    matches.sort(key=lambda item: item[2])
+    return matches
+
+
+def choose_branch_parent(
+    asset: Asset,
+    bus_links: list[tuple[str, str, float]],
+    asset_lookup: dict[str, Asset],
+) -> str:
+    unique_links: dict[str, tuple[str, str, float]] = {}
+    for bus_id, side, distance in bus_links:
+        if bus_id not in unique_links or distance < unique_links[bus_id][2]:
+            unique_links[bus_id] = (bus_id, side, distance)
+
+    ordered_links = sorted(unique_links.values(), key=lambda item: item[2])
+    if not ordered_links:
+        return ""
+    if len(ordered_links) == 1:
+        return ordered_links[0][0]
+
+    if is_panel_asset_id(asset.id):
+        nearest_distance = ordered_links[0][2]
+        nearest_candidates = [bus_id for bus_id, _, distance in ordered_links if abs(distance - nearest_distance) <= 5.0]
+        return nearest_candidates[0] if len(nearest_candidates) == 1 else ""
+
+    if asset_prefix(asset.id) == "TX":
+        primary_voltage = primary_voltage_for_transformer(asset)
+        if primary_voltage is not None:
+            voltage_deltas: list[tuple[float, float, str]] = []
+            for bus_id, _, distance in ordered_links:
+                bus_voltage = nominal_voltage_for_asset(asset_lookup[bus_id])
+                if bus_voltage is None:
+                    continue
+                voltage_deltas.append((abs(bus_voltage - primary_voltage), distance, bus_id))
+            if voltage_deltas:
+                voltage_deltas.sort(key=lambda item: item[0])
+                best_delta = voltage_deltas[0][0]
+                best_candidates = [item for item in voltage_deltas if abs(item[0] - best_delta) <= 1e-6]
+                if len(best_candidates) == 1:
+                    return best_candidates[0][2]
+                best_candidates.sort(key=lambda item: item[1])
+                if len(best_candidates) == 1 or best_candidates[0][1] + 5.0 < best_candidates[1][1]:
+                    return best_candidates[0][2]
+
+        voltage_candidates: list[tuple[float, float, str]] = []
+        for bus_id, _, distance in ordered_links:
+            bus_voltage = nominal_voltage_for_asset(asset_lookup[bus_id])
+            if bus_voltage is not None:
+                voltage_candidates.append((bus_voltage, distance, bus_id))
+        if voltage_candidates:
+            voltage_candidates.sort(reverse=True)
+            best_voltage = voltage_candidates[0][0]
+            best_candidates = [item for item in voltage_candidates if abs(item[0] - best_voltage) <= 1e-6]
+            if len(best_candidates) == 1:
+                return best_candidates[0][2]
+            best_candidates.sort(key=lambda item: item[1])
+            if len(best_candidates) == 1 or best_candidates[0][1] + 5.0 < best_candidates[1][1]:
+                return best_candidates[0][2]
+        return ""
+
+    nearest_distance = ordered_links[0][2]
+    nearest_candidates = [bus_id for bus_id, _, distance in ordered_links if abs(distance - nearest_distance) <= 5.0]
+    return nearest_candidates[0] if len(nearest_candidates) == 1 else ""
+
+
+def branch_side_entities_for_bus(
+    asset: Asset,
+    bus_links: list[tuple[str, str, float]],
+    chosen_parent: str,
+    asset_lookup: dict[str, Asset],
+) -> set[str]:
+    if not bus_links:
+        return set()
+    if asset_prefix(asset.id) != "TX":
+        return {chosen_parent} if chosen_parent else set()
+
+    selected: set[str] = {chosen_parent} if chosen_parent else set()
+    secondary_candidates = [bus_id for bus_id, _, _ in bus_links if bus_id in expected_secondary_bus_ids(asset.id)]
+    if len(secondary_candidates) == 1:
+        selected.add(secondary_candidates[0])
+        return selected
+
+    if not chosen_parent:
+        return selected
+
+    parent_voltage = nominal_voltage_for_asset(asset_lookup[chosen_parent])
+    alternate_links: list[tuple[float, float, str]] = []
+    for bus_id, _, distance in bus_links:
+        if bus_id == chosen_parent:
+            continue
+        bus_voltage = nominal_voltage_for_asset(asset_lookup[bus_id])
+        if parent_voltage is not None and bus_voltage is not None and bus_voltage < parent_voltage:
+            alternate_links.append((distance, bus_voltage, bus_id))
+    if alternate_links:
+        alternate_links.sort(key=lambda item: (item[0], -item[1], item[2]))
+        best_distance = alternate_links[0][0]
+        best_candidates = [item for item in alternate_links if abs(item[0] - best_distance) <= 10.0]
+        if len(best_candidates) == 1:
+            selected.add(best_candidates[0][2])
+    return selected
+
+
+def choose_bus_parent(
+    bus_id: str,
+    entities_by_side: dict[str, set[str]],
+) -> str:
+    above = sorted(entities_by_side.get("above", set()))
+    below = sorted(entities_by_side.get("below", set()))
+
+    if not above or not below:
+        return ""
+
+    above_supply = [entity for entity in above if is_supply_candidate_asset_id(entity)]
+    below_supply = [entity for entity in below if is_supply_candidate_asset_id(entity)]
+    preferred_above_supply = select_preferred_supply_candidate(above)
+    preferred_below_supply = select_preferred_supply_candidate(below)
+
+    if len(above) == 1 and len(below) > 1 and len(above_supply) == 1:
+        return above_supply[0]
+    if len(below) == 1 and len(above) > 1 and len(below_supply) == 1:
+        return below_supply[0]
+
+    if len(above) == 1 and len(below) == 1:
+        above_is_panel = is_panel_asset_id(above[0])
+        below_is_panel = is_panel_asset_id(below[0])
+        if above_is_panel != below_is_panel:
+            return below[0] if below_supply and above_is_panel else above[0] if above_supply and below_is_panel else ""
+        return ""
+
+    if len(above_supply) == 1 and all(is_panel_asset_id(entity) for entity in below):
+        return above_supply[0]
+    if len(below_supply) == 1 and all(is_panel_asset_id(entity) for entity in above):
+        return below_supply[0]
+
+    if preferred_above_supply and above_supply and all(is_panel_asset_id(entity) for entity in below):
+        return preferred_above_supply
+    if preferred_below_supply and below_supply and all(is_panel_asset_id(entity) for entity in above):
+        return preferred_below_supply
+
+    if preferred_above_supply and not preferred_below_supply and above_supply and len(below) >= 2:
+        return preferred_above_supply
+    if preferred_below_supply and not preferred_above_supply and below_supply and len(above) >= 2:
+        return preferred_below_supply
+
+    return ""
+
+
+def infer_geometry_parent_ids(
+    assets: list[Asset],
+    input_path: Path,
+) -> dict[str, str] | None:
+    asset_lookup = {asset.id: asset for asset in assets}
+    geometry_context = build_pdf_geometry_context(input_path, set(asset_lookup))
+    if geometry_context is None:
+        return None
+
+    bus_ids = {asset_id for asset_id in asset_lookup if is_bus_asset_id(asset_id)}
+    branch_ids = set(asset_lookup) - bus_ids
+    bus_placements = locate_bus_placements(geometry_context, bus_ids)
+    branch_placements = locate_branch_placements(geometry_context, branch_ids)
+    if not bus_placements or not branch_placements:
+        return None
+
+    branch_parent_ids: dict[str, str] = {}
+    bus_side_entities: dict[str, dict[str, set[str]]] = {
+        bus_id: {"above": set(), "below": set()} for bus_id in bus_placements
+    }
+
+    for asset_id, placement in branch_placements.items():
+        bus_links = find_connected_bus_links(placement, bus_placements)
+        parent_id = choose_branch_parent(asset_lookup[asset_id], bus_links, asset_lookup)
+        branch_parent_ids[asset_id] = parent_id
+        relevant_bus_ids = branch_side_entities_for_bus(asset_lookup[asset_id], bus_links, parent_id, asset_lookup)
+        for bus_id, side, _ in bus_links:
+            if bus_id in relevant_bus_ids and bus_id in bus_side_entities:
+                bus_side_entities[bus_id][side].add(asset_id)
+
+    bus_items = list(bus_placements.items())
+    for index, (bus_id, placement) in enumerate(bus_items):
+        for other_bus_id, other_placement in bus_items[index + 1 :]:
+            if placement.page_index != other_placement.page_index:
+                continue
+            base_voltage = nominal_voltage_for_asset(asset_lookup[bus_id])
+            other_voltage = nominal_voltage_for_asset(asset_lookup[other_bus_id])
+            if base_voltage is None or other_voltage is None or abs(base_voltage - other_voltage) > 1.0:
+                continue
+            overlap = min(placement.segment.end, other_placement.segment.end) - max(placement.segment.start, other_placement.segment.start)
+            if overlap < 120.0:
+                continue
+            if abs(placement.segment.axis - other_placement.segment.axis) > 320.0:
+                continue
+            side_for_bus = bus_side_relative_to_bus(other_placement.segment, placement.segment)
+            side_for_other = bus_side_relative_to_bus(placement.segment, other_placement.segment)
+            bus_side_entities[bus_id][side_for_bus].add(other_bus_id)
+            bus_side_entities[other_bus_id][side_for_other].add(bus_id)
+
+    parent_ids: dict[str, str] = {asset_id: "" for asset_id in asset_lookup}
+    parent_ids.update(branch_parent_ids)
+    for bus_id in bus_ids:
+        parent_ids[bus_id] = choose_bus_parent(bus_id, bus_side_entities.get(bus_id, {}))
+
+    return parent_ids
+
+
+PARENT_VERIFICATION_INSTRUCTIONS = (
+    "You are examining a zoomed-in crop of an electrical single-line diagram. "
+    "Identify which candidate distribution panel feeds the specified child panel "
+    "by tracing the vertical feeder/bus line from the child downward to the bus "
+    "it lands on. Respond with exactly one candidate ID from the list, or 'UNKNOWN' "
+    "if the feeder cannot be traced unambiguously in the crop. Do not guess."
+)
+
+
+def verify_ambiguous_parent(
+    asset_id: str,
+    candidates: list[str],
+    input_path: Path,
+    client: OpenAI | None,
+    model: str | None,
+    cache: dict[tuple[str, tuple[str, ...]], str | None],
+    reasoning_effort: str = DEFAULT_HARD_REASONING_EFFORT,
+) -> str | None:
+    if client is None or not model or not candidates:
+        return None
+    cache_key = (asset_id, tuple(sorted(candidates)))
+    if cache_key in cache:
+        return cache[cache_key]
+
+    asset_code = strip_panel_prefix(asset_id)
+    search_terms = [term for term in (asset_code, asset_id) if term]
+
+    result: str | None = None
+    try:
+        with fitz.open(input_path) as document:
+            for page_index in range(document.page_count):
+                page = document.load_page(page_index)
+                child_rects: list[Any] = []
+                for term in search_terms:
+                    child_rects = list(page.search_for(term) or [])
+                    if child_rects:
+                        break
+                if not child_rects:
+                    continue
+                candidate_rects: list[Any] = []
+                for cand in candidates:
+                    candidate_rects.extend(page.search_for(cand) or [])
+                if not candidate_rects:
+                    continue
+
+                all_rects = child_rects + candidate_rects
+                padding = 60.0
+                page_rect = page.rect
+                clip = fitz.Rect(
+                    max(min(r.x0 for r in all_rects) - padding, page_rect.x0),
+                    max(min(r.y0 for r in all_rects) - padding, page_rect.y0),
+                    min(max(r.x1 for r in all_rects) + padding, page_rect.x1),
+                    min(max(r.y1 for r in all_rects) + padding, page_rect.y1),
+                )
+                pix = page.get_pixmap(matrix=fitz.Matrix(3.5, 3.5), clip=clip, alpha=False)
+                image = Image.open(io.BytesIO(pix.tobytes("png")))
+                data_url = image_to_data_url(image)
+
+                user_text = (
+                    f"Child panel ID: {asset_id} (labeled on drawing as '{asset_code}').\n"
+                    f"Candidate parents: {', '.join(candidates)}.\n"
+                    "Return JSON with key 'winner' containing exactly one of the candidate IDs, "
+                    "or 'UNKNOWN' if the feeder line cannot be traced."
+                )
+                content = [
+                    {"type": "input_text", "text": user_text},
+                    {"type": "input_image", "image_url": data_url, "detail": "high"},
+                ]
+                text_config = {
+                    "format": {
+                        "type": "json_schema",
+                        "name": "parent_verification",
+                        "description": "Targeted parent verification for ambiguous feeders.",
+                        "strict": True,
+                        "schema": PARENT_VERIFICATION_SCHEMA,
+                    }
+                }
+                response = _traced_create(
+                    "verify_parent",
+                    client,
+                    model=model,
+                    instructions=PARENT_VERIFICATION_INSTRUCTIONS,
+                    input=cast(Any, build_response_input(content)),
+                    text=cast(Any, text_config),
+                    **response_reasoning_kwargs(model, reasoning_effort),
+                )
+                payload = ParentVerificationPayload.model_validate_json(response.output_text)
+                winner = payload.winner.strip()
+                result = winner if winner in candidates else None
+                break
+    except Exception as exc:
+        print(f"verify_ambiguous_parent failed for {asset_id}: {exc}", file=sys.stderr)
+        result = None
+
+    cache[cache_key] = result
+    return result
+
+
+def corrected_assets_with_geometry(
+    payload: ExtractionPayload,
+    input_path: Path,
+    dictionary_module: Any,
+    candidate_ids: set[str] | None = None,
+    pdf_text_ctx: PdfTextContext | None = None,
+    client: OpenAI | None = None,
+    model: str | None = None,
+    hard_reasoning_effort: str = DEFAULT_HARD_REASONING_EFFORT,
+) -> list[Asset] | None:
+    if input_path.suffix.lower() != ".pdf":
+        return None
+
+    pdf_lines = pdf_text_ctx.lines if pdf_text_ctx else []
+    candidate_assets = prepare_candidate_assets(payload, dictionary_module, candidate_ids, pdf_lines, prefer_parent=False)
+    if not candidate_assets:
+        return None
+
+    geometry_parent_ids = infer_geometry_parent_ids(candidate_assets, input_path)
+    if geometry_parent_ids is None:
+        return None
+
+    # Build a set of valid asset IDs for parent validation
+    valid_ids = {asset.id for asset in candidate_assets}
+
+    # Collect API-extracted parent IDs (from multi-pass extraction).
+    # When the API says an asset has a specific parent and that parent is a
+    # valid known asset, prefer the API parent over geometry.  The API reads
+    # schematic symbols and labels (e.g. "ATS-E feeds TX-E01") while geometry
+    # only measures physical line proximity.
+    api_parent_ids: dict[str, str] = {}
+    for asset in candidate_assets:
+        if asset.parent_id and asset.parent_id in valid_ids:
+            api_parent_ids[asset.id] = asset.parent_id
+
+    verification_cache: dict[tuple[str, tuple[str, ...]], str | None] = {}
+    resolved_assets = []
+    for asset in candidate_assets:
+        geo_parent = geometry_parent_ids.get(asset.id, "")
+        api_parent = api_parent_ids.get(asset.id, "")
+        attributes = dict(asset.attributes_from_drawing)
+
+        override_parent = infer_parent_override(asset.id, valid_ids, api_parent)
+
+        asset_code = strip_panel_prefix(asset.id)
+        compact_candidates = compact_panel_parent_candidates(asset_code, valid_ids)
+        is_ambiguous_compact = override_parent is None and len(compact_candidates) >= 2
+
+        if override_parent is not None:
+            parent_id = override_parent
+        elif is_ambiguous_compact:
+            # Two or more CDPs match the naming pattern — the LLM's full-page
+            # guess is unreliable here. Prefer geometry; if geometry is missing
+            # or disagrees, re-ask the vision model with a tight crop. If the
+            # crop also cannot resolve, fall back to the most-specific candidate
+            # and record the ambiguity so it can be reviewed downstream.
+            verified = verify_ambiguous_parent(
+                asset.id,
+                compact_candidates,
+                input_path,
+                client,
+                model,
+                verification_cache,
+                hard_reasoning_effort,
+            )
+            if verified and verified in compact_candidates:
+                parent_id = verified
+            elif geo_parent in compact_candidates:
+                parent_id = geo_parent
+            else:
+                parent_id = compact_candidates[0]
+                attributes["parent_ambiguous_candidates"] = "|".join(compact_candidates)
+        elif api_parent and api_parent in valid_ids:
+            parent_id = api_parent
+        else:
+            parent_id = geo_parent
+
+        if parent_id == asset.id:
+            parent_id = ""
+
+        resolved_assets.append(
+            Asset(
+                hierarchy=asset.hierarchy,
+                parent_id=parent_id,
+                id=asset.id,
+                attributes_from_drawing=attributes,
+            )
+        )
+
+    hierarchy_levels = compute_hierarchy_levels(resolved_assets)
+    ordered_assets = sorted(resolved_assets, key=lambda asset: (hierarchy_levels[asset.id], asset.parent_id, asset.id))
+    return [
+        Asset(
+            hierarchy=str(hierarchy_levels[asset.id]),
+            parent_id=asset.parent_id,
+            id=asset.id,
+            attributes_from_drawing=asset.attributes_from_drawing,
+        )
+        for asset in ordered_assets
+    ]
+
+
+def recreate_table(connection) -> None:
+    if qrdb.is_postgres():
+        # On PostgreSQL the table already exists with the full migrated schema
+        # (generated ID_check, CHECK/FK constraints, identity row_id, triggers).
+        # Dropping it would destroy all of that -- just clear the rows. sld_blueprint
+        # backs up and restores the other buildings' rows around this extraction.
+        connection.execute(f'DELETE FROM "{DB_TABLE_NAME}"')
+        return
+    connection.execute(f'DROP TABLE IF EXISTS "{DB_TABLE_NAME}"')
+    connection.execute(
+        f'''
+        CREATE TABLE "{DB_TABLE_NAME}" (
+            row_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            "Hierarchy" TEXT NOT NULL,
+            "Supply From" TEXT,
+            "Equipment ID" TEXT NOT NULL,
+            "Building" TEXT NOT NULL,
+            "Amperage Rating" TEXT,
+            "Amperage Rating (UoM)" TEXT,
+            "Power Rating" TEXT,
+            "Power Rating (UoM)" TEXT,
+            "Wire Rating" TEXT,
+            "Wire Rating (UoM)" TEXT,
+            "Voltage Rating" TEXT,
+            "Voltage Rating (UoM)" TEXT,
+            "ambigous" TEXT,
+            "sld_extract_run_id" TEXT DEFAULT "",
+            "sld_ai_extract_payload" TEXT DEFAULT ""
+        )
+        '''
+    )
+
+
+def is_short_cdp(value: str) -> bool:
+    if not value.startswith("CDP"):
+        return False
+    suffix = value[4:] if value.startswith("CDP-") else value[3:]
+    return len(suffix) <= 2
+
+
+def _rect_inside_any(rect: "fitz.Rect", outer_rects: list["fitz.Rect"]) -> bool:
+    cx = (rect.x0 + rect.x1) / 2
+    cy = (rect.y0 + rect.y1) / 2
+    for outer in outer_rects:
+        if outer.x0 <= cx <= outer.x1 and outer.y0 <= cy <= outer.y1:
+            return True
+    return False
+
+
+def _find_spaced_tag_examples(text: str) -> set[str]:
+    """Pick out legend naming-convention examples like 'CDP - 6 - N - 1 - L - 1' and collapse to 'CDP-6N1L1'."""
+    results: set[str] = set()
+    pattern = re.compile(r"\b([A-Z]{2,4})(?:\s*-\s*[A-Z0-9]){2,}\b")
+    for match in pattern.finditer(text):
+        token = match.group(0)
+        parts = [p.strip() for p in re.split(r"\s*-\s*", token) if p.strip()]
+        if len(parts) < 3:
+            continue
+        prefix = parts[0].upper()
+        tail = "".join(p.upper() for p in parts[1:])
+        results.add(f"{prefix}-{tail}")
+    return results
+
+
+def legend_only_asset_ids(input_path: Path) -> set[str]:
+    """Return candidate IDs that appear ONLY inside PANEL/TRANSFORMER LABELING legend blocks."""
+    if input_path.suffix.lower() != ".pdf":
+        return set()
+    legend_only: set[str] = set()
+    try:
+        document = fitz.open(input_path)
+    except Exception:
+        return set()
+    try:
+        for page in document:
+            legend_rects: list[fitz.Rect] = []
+            for header in ("PANEL LABELING", "TRANSFORMER LABELING"):
+                for hdr in page.search_for(header) or []:
+                    legend_rects.append(
+                        fitz.Rect(hdr.x0 - 40, hdr.y0, hdr.x1 + 260, hdr.y0 + 520)
+                    )
+            if not legend_rects:
+                continue
+
+            legend_tags: set[str] = set()
+            for rect in legend_rects:
+                legend_text = page.get_text("text", clip=rect) or ""
+                legend_tags.update(extract_candidate_ids_from_text(legend_text))
+                legend_tags.update(_find_spaced_tag_examples(legend_text))
+
+            for tag in legend_tags:
+                hits = list(page.search_for(tag) or [])
+                prefix, sep, rest = tag.partition("-")
+                if sep and rest:
+                    spaced = f"{prefix} - " + " - ".join(rest)
+                    hits.extend(page.search_for(spaced) or [])
+                if not hits:
+                    legend_only.add(tag)
+                elif all(_rect_inside_any(h, legend_rects) for h in hits):
+                    legend_only.add(tag)
+    finally:
+        document.close()
+    return legend_only
+
+
+def drop_legend_only_assets(assets: list[Asset], legend_only: set[str]) -> list[Asset]:
+    """Drop assets whose id is legend-only; clear parent_id if the parent is legend-only."""
+    if not legend_only:
+        return assets
+    kept: list[Asset] = []
+    for asset in assets:
+        if asset.id in legend_only:
+            continue
+        parent_id = "" if asset.parent_id in legend_only else asset.parent_id
+        if parent_id == asset.parent_id:
+            kept.append(asset)
+        else:
+            kept.append(
+                Asset(
+                    hierarchy=asset.hierarchy,
+                    parent_id=parent_id,
+                    id=asset.id,
+                    attributes_from_drawing=asset.attributes_from_drawing,
+                )
+            )
+    return kept
+
+
+def drop_short_cdp_assets(assets: list[Asset]) -> list[Asset]:
+    """Drop assets whose id is a short CDP stub; clear parent_id if the parent is a short CDP stub."""
+    kept: list[Asset] = []
+    for asset in assets:
+        if is_short_cdp(asset.id):
+            continue
+        parent_id = "" if is_short_cdp(asset.parent_id) else asset.parent_id
+        if parent_id == asset.parent_id:
+            kept.append(asset)
+        else:
+            kept.append(
+                Asset(
+                    hierarchy=asset.hierarchy,
+                    parent_id=parent_id,
+                    id=asset.id,
+                    attributes_from_drawing=asset.attributes_from_drawing,
+                )
+            )
+    return kept
+
+
+def synthesize_generator_assets(assets: list[Asset], pdf_text: str) -> list[Asset]:
+    if not pdf_text:
+        return assets
+
+    generator_count = len(re.findall(r"DIESEL\s+GENERATOR", pdf_text, flags=re.IGNORECASE))
+    if generator_count == 0:
+        return assets
+
+    known_ids = {asset.id for asset in assets}
+
+    def is_generator_candidate_orphan(asset: Asset) -> bool:
+        if asset.parent_id and asset.parent_id in known_ids:
+            return False
+        if asset.id.startswith("ATS-"):
+            return True
+        cdp_match = re.fullmatch(r"CDP-[26]([NES])(?:\d+(?:\.\d+)?|R)[LPMDT]?\d*", asset.id)
+        return bool(cdp_match and cdp_match.group(1) in {"E", "S"})
+
+    orphan_ids = {asset.id for asset in assets if is_generator_candidate_orphan(asset)}
+    if not orphan_ids:
+        return assets
+
+    missing_generator_ids = [
+        f"GEN-{i}" for i in range(1, generator_count + 1) if f"GEN-{i}" not in known_ids
+    ]
+    synthesized = [
+        Asset(
+            hierarchy="1",
+            parent_id="",
+            id=gen_id,
+            attributes_from_drawing={
+                "source": "synthesized_from_text",
+                "label": "DIESEL GENERATOR",
+            },
+        )
+        for gen_id in missing_generator_ids
+    ]
+
+    updated: list[Asset] = list(synthesized)
+    for asset in assets:
+        if asset.id in orphan_ids:
+            updated.append(
+                Asset(
+                    hierarchy=asset.hierarchy,
+                    parent_id="GEN-1",
+                    id=asset.id,
+                    attributes_from_drawing=asset.attributes_from_drawing,
+                )
+            )
+        else:
+            updated.append(asset)
+
+    if generator_count > 1:
+        print(
+            f"WARNING: {generator_count} DIESEL GENERATOR labels found; parking all orphans on GEN-1 (spatial disambiguation not implemented).",
+            file=sys.stderr,
+        )
+    print(
+        f"Synthesized {len(synthesized)} generator node(s); re-parented {len(orphan_ids)} orphan asset(s) to GEN-1.",
+        file=sys.stderr,
+    )
+    return updated
+
+
+def write_payload_to_db(
+    db_path: Path,
+    payload: ExtractionPayload,
+    input_path: Path,
+    dictionary_module: Any,
+    candidate_ids: set[str] | None = None,
+    pdf_text_ctx: PdfTextContext | None = None,
+    client: OpenAI | None = None,
+    model: str | None = None,
+    building_override: str | None = None,
+    hard_reasoning_effort: str = DEFAULT_HARD_REASONING_EFFORT,
+    run_id: str | None = None,
+) -> int:
+    ctx = pdf_text_ctx if pdf_text_ctx is not None else PdfTextContext.empty()
+    supplemental_payload = build_text_layer_asset_payload(ctx, dictionary_module, candidate_ids)
+    merged_payload = (
+        ExtractionPayload(assets=[*payload.assets, *supplemental_payload.assets])
+        if supplemental_payload.assets
+        else payload
+    )
+
+    pdf_lines = ctx.lines
+    geometry_assets = corrected_assets_with_geometry(
+        merged_payload, input_path, dictionary_module, candidate_ids, ctx, client, model, hard_reasoning_effort
+    )
+    assets = geometry_assets if geometry_assets is not None else corrected_assets(merged_payload, dictionary_module, candidate_ids, pdf_lines)
+    validate_dictionary_identifiers(assets, dictionary_module)
+    assets = drop_short_cdp_assets(assets)
+    legend_only = legend_only_asset_ids(input_path)
+    if legend_only:
+        before = len(assets)
+        assets = drop_legend_only_assets(assets, legend_only)
+        dropped = before - len(assets)
+        print(
+            f"Dropped {dropped} legend-only asset(s): {sorted(legend_only)}",
+            file=sys.stderr,
+        )
+
+    assets = synthesize_generator_assets(assets, ctx.full_text)
+
+    flagged = [a for a in assets if "parent_ambiguous_candidates" in a.attributes_from_drawing]
+    if flagged:
+        print(
+            f"WARNING: {len(flagged)} asset(s) with ambiguous parents (best-guess stored, candidates in 'ambigous' column):",
+            file=sys.stderr,
+        )
+        for a in flagged:
+            print(
+                f"  - {a.id}: parent={a.parent_id}; candidates={a.attributes_from_drawing['parent_ambiguous_candidates']}",
+                file=sys.stderr,
+            )
+
+    review_flagged = [a for a in assets if "manual_review_reason_codes" in a.attributes_from_drawing]
+    if review_flagged:
+        reasons = sorted({
+            a.attributes_from_drawing.get("manual_review_reason_codes", "")
+            for a in review_flagged
+            if a.attributes_from_drawing.get("manual_review_reason_codes", "")
+        })
+        print(
+            f"WARNING: {len(review_flagged)} asset(s) marked for manual extraction review: {', '.join(reasons)}",
+            file=sys.stderr,
+        )
+
+    building = (building_override or "").strip() or derive_building_value(input_path)
+    rows = []
+    for asset in assets:
+        enriched_attributes = enrich_attributes_from_pdf_text(asset.id, asset.attributes_from_drawing, pdf_lines)
+        (
+            amperage_rating,
+            amperage_rating_uom,
+            power_rating,
+            power_rating_uom,
+            wire_rating,
+            wire_rating_uom,
+            voltage_rating,
+            voltage_rating_uom,
+        ) = extract_rating_columns(enriched_attributes)
+        review_notes = [
+            asset.attributes_from_drawing.get("parent_ambiguous_candidates", ""),
+            asset.attributes_from_drawing.get("manual_review_reason_codes", ""),
+        ]
+        ambigous = "|".join(note for note in review_notes if note)
+        # AI baseline for human_correction diffing: the values inserted
+        # into the row at this moment, snapshot as JSON.
+        ai_baseline = {
+            "Hierarchy": asset.hierarchy,
+            "Supply From": asset.parent_id,
+            "Equipment ID": asset.id,
+            "Building": building,
+            "Amperage Rating": amperage_rating,
+            "Amperage Rating (UoM)": amperage_rating_uom,
+            "Power Rating": power_rating,
+            "Power Rating (UoM)": power_rating_uom,
+            "Wire Rating": wire_rating,
+            "Wire Rating (UoM)": wire_rating_uom,
+            "Voltage Rating": voltage_rating,
+            "Voltage Rating (UoM)": voltage_rating_uom,
+            "ambigous": ambigous,
+        }
+        try:
+            ai_baseline_json = json.dumps(ai_baseline, ensure_ascii=False)
+        except (TypeError, ValueError):
+            ai_baseline_json = ""
+        rows.append(
+            (
+                asset.hierarchy,
+                asset.parent_id,
+                asset.id,
+                building,
+                amperage_rating,
+                amperage_rating_uom,
+                power_rating,
+                power_rating_uom,
+                wire_rating,
+                wire_rating_uom,
+                voltage_rating,
+                voltage_rating_uom,
+                ambigous,
+                run_id or "",
+                ai_baseline_json,
+            )
+        )
+
+    unique_rows: dict[tuple[str, str], tuple] = {}
+    for row in rows:
+        key = (row[3], row[2])
+        existing = unique_rows.get(key)
+        if existing is None:
+            unique_rows[key] = row
+        elif not existing[1] and row[1]:
+            unique_rows[key] = row
+    dedupe_dropped = len(rows) - len(unique_rows)
+    if dedupe_dropped:
+        print(
+            f"Deduped {dedupe_dropped} duplicate (Building, Equipment ID) row(s) before insert.",
+            file=sys.stderr,
+        )
+    rows = list(unique_rows.values())
+
+    with qrdb.get_connection(sqlite_path=str(db_path)) as connection:
+        if not qrdb.is_postgres():
+            connection.execute("BEGIN")
+        recreate_table(connection)
+        connection.executemany(
+            f'''
+            INSERT INTO "{DB_TABLE_NAME}" (
+                "Hierarchy",
+                "Supply From",
+                "Equipment ID",
+                "Building",
+                "Amperage Rating",
+                "Amperage Rating (UoM)",
+                "Power Rating",
+                "Power Rating (UoM)",
+                "Wire Rating",
+                "Wire Rating (UoM)",
+                "Voltage Rating",
+                "Voltage Rating (UoM)",
+                "ambigous",
+                "sld_extract_run_id",
+                "sld_ai_extract_payload"
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ''',
+            rows,
+        )
+        connection.commit()
+    return len(rows)
+
+
+def main() -> int:
+    args = parse_args()
+    input_path = Path(args.input).expanduser().resolve()
+    db_path = Path(args.db).expanduser().resolve()
+    env_path = Path(args.env).expanduser().resolve() if args.env else None
+    dictionary_path = DEFAULT_DICTIONARY.resolve()
+
+    validate_input_path(input_path)
+    validate_db_path(db_path)
+
+    # Initialize the feedback emitter (no-op when --feedback-file is absent).
+    global _FB
+    if FeedbackEmitter is not None:
+        _FB = FeedbackEmitter(
+            feedback_file=getattr(args, "feedback_file", None),
+            run_id=getattr(args, "run_id", None),
+        )
+
+    # Legacy-flow gate: same (Building, Buildings.Process) lookup and precedence
+    # write_payload_to_db uses for the persisted "Building" value (args.building_code
+    # override, else filename-derived) so the gate can never disagree with what gets
+    # written. Blank/missing Process -> fail() (extractor convention: stderr + exit 1).
+    # Standard buildings get the unmodified dictionary_module (zero behavior change).
+    #
+    # Runs BEFORE load_api_key()/OpenAI(): both fail() on a missing/invalid
+    # OPENAI_API_KEY, which would mask the real, actionable blank-Process error
+    # behind an unrelated credentials message. Only args/db_path resolution and
+    # path validation are required above.
+    gate_building_code = (args.building_code or "").strip() or derive_building_value(input_path)
+    with qrdb.get_connection(sqlite_path=str(db_path)) as _bp_conn:
+        try:
+            building_process = el_legacy_flow.get_building_process(_bp_conn, gate_building_code)
+        except el_legacy_flow.BuildingProcessError as exc:
+            fail(str(exc))
+
+    api_key = load_api_key(env_path)
+    client = OpenAI(api_key=api_key)
+    dictionary_module = load_dictionary_module(dictionary_path)
+    if building_process == "Legacy":
+        dictionary_module = el_legacy_flow.legacy_dictionary_shim(dictionary_module)
+
+    primary_models = [args.model] if args.model else parse_model_list(args.primary_models, DEFAULT_PRIMARY_MODELS)
+    fallback_models = parse_model_list(args.fallback_models, DEFAULT_FALLBACK_MODELS)
+    normal_reasoning_effort = normalize_reasoning_effort(args.normal_reasoning_effort, DEFAULT_NORMAL_REASONING_EFFORT)
+    hard_reasoning_effort = normalize_reasoning_effort(args.hard_reasoning_effort, DEFAULT_HARD_REASONING_EFFORT)
+    print(
+        "SLD model tiers: "
+        f"primary={primary_models} | fallback={fallback_models} | "
+        f"reasoning(normal={normal_reasoning_effort}, hard={hard_reasoning_effort})",
+        file=sys.stderr,
+    )
+    pdf_text_ctx = PdfTextContext.empty()
+    candidate_ids: set[str] | None = None
+    if input_path.suffix.lower() == ".pdf":
+        pdf_text_ctx = PdfTextContext.from_path(input_path)
+        candidate_ids = set(extract_candidate_ids_from_text(pdf_text_ctx.full_text))
+        legend_only = legend_only_asset_ids(input_path)
+        if legend_only:
+            candidate_ids -= legend_only
+
+    extraction_run = extract_payload(
+        client,
+        input_path,
+        primary_models,
+        fallback_models,
+        pdf_text_ctx,
+        candidate_ids,
+        normal_reasoning_effort,
+        hard_reasoning_effort,
+    )
+    payload = extraction_run.payload
+    if extraction_run.manual_review_reason_codes:
+        print(
+            "WARNING: SLD extraction flagged for manual review: "
+            + ", ".join(extraction_run.manual_review_reason_codes),
+            file=sys.stderr,
+        )
+
+    if not payload.assets and _MODEL_CALL_SUCCESSES == 0:
+        # Every model call errored (quota/auth/network outage). Writing in
+        # this state would store an unverified text-layer-only scrape that
+        # looks like a clean extraction. Abort instead; the previously
+        # active SLD rows remain untouched because archival/recreate only
+        # happen inside the write path.
+        fail(
+            "All model calls failed (quota/auth/network outage) and no assets "
+            "were extracted. Aborting without writing — the previous SLD rows "
+            "remain active. Restore API access and re-run the extraction."
+        )
+
+    raw_asset_count = len(payload.assets)
+    raw_with_parent = sum(1 for a in payload.assets if a.parent_id)
+    raw_with_attrs = sum(1 for a in payload.assets if a.attributes_from_drawing)
+    candidate_count = len(candidate_ids) if candidate_ids else 0
+    print(
+        f"--- Extraction Diagnostics ---\n"
+        f"PDF text layer: {len(pdf_text_ctx.full_text)} chars, {len(pdf_text_ctx.lines)} lines\n"
+        f"Candidate IDs from text: {candidate_count}\n"
+        f"Raw assets from API passes: {raw_asset_count}\n"
+        f"  with parent_id: {raw_with_parent}\n"
+        f"  with attributes: {raw_with_attrs}",
+        file=sys.stderr,
+    )
+
+    inserted_rows = write_payload_to_db(
+        db_path, payload, input_path, dictionary_module, candidate_ids, pdf_text_ctx, client, extraction_run.model,
+        building_override=args.building_code,
+        hard_reasoning_effort=hard_reasoning_effort,
+        run_id=getattr(args, "run_id", None),
+    )
+
+    print(f"Inserted {inserted_rows} rows into {db_path}")
+    print(f"Table: {DB_TABLE_NAME}")
+    # Final machine-parseable summary line: the wrapper greps stdout for
+    # this prefix and writes a run_summary event into the JSONL feedback
+    # file. Keep it on its own line and last.
+    try:
+        hierarchy_count = len({(a.hierarchy or "") for a in payload.assets})
+        emit_summary_to_stdout({
+            "run_id": getattr(args, "run_id", None),
+            "asset_count": int(inserted_rows),
+            "raw_asset_count": int(raw_asset_count),
+            "hierarchy_count": int(hierarchy_count),
+            "model_used": extraction_run.model,
+            "manual_review_reason_codes": list(extraction_run.manual_review_reason_codes or []),
+            "ocr_assisted_retry": bool(extraction_run.ocr_assisted_retry),
+            "input_path": str(input_path),
+            "db_table": DB_TABLE_NAME,
+        })
+    except Exception:
+        pass
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

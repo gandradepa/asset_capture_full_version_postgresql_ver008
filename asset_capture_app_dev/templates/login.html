@@ -1,0 +1,104 @@
+{% extends "base.html" %}
+{% block title %}Login - Asset Capture{% endblock %}
+
+{% block header_right_extra %}
+{# This fills the placeholder in the header, only for this page. #}
+<img src="{{ url_for('static', filename='logos/ubc-facilities_logo.jpg') }}" alt="UBC Facilities Logo"
+  style="height: 50px;">
+{% endblock %}
+
+{% block content %}
+<div class="card login-card">
+
+  <h2 class="text-xl font-bold text-center mb-4">Asset Capture Login</h2>
+
+  {% with messages = get_flashed_messages(with_categories=true) %}
+  {% if messages %}
+  {% for category, message in messages %}
+  <div class="p-3 mb-4 rounded text-sm bg-red-100 border border-red-200 text-red-800" role="alert">
+    {{ message }}
+  </div>
+  {% endfor %}
+  {% endif %}
+  {% endwith %}
+
+  <form method="POST" action="{{ url_for('auth.login') }}" id="loginForm">
+    <div class="form-stack">
+      <div>
+        <label for="username" class="block text-sm font-medium mb-1">Username</label>
+        <input type="text" id="username" name="username" class="form-input" autocomplete="username" required>
+      </div>
+      <div>
+        <label for="password" class="block text-sm font-medium mb-1">Password</label>
+        <div class="relative">
+          <input type="password" id="password" name="password" class="form-input pr-10" autocomplete="current-password"
+            required>
+          <button type="button" id="togglePassword"
+            class="absolute inset-y-0 right-0 flex items-center px-3 text-gray-500 hover:text-gray-700"
+            aria-label="Toggle password visibility">
+            <svg id="eyeIcon" xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none"
+              stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
+              <circle cx="12" cy="12" r="3"></circle>
+            </svg>
+            <svg id="eyeOffIcon" class="hidden" xmlns="http://www.w3.org/2000/svg" width="20" height="20"
+              viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+              stroke-linejoin="round" aria-hidden="true">
+              <path
+                d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24">
+              </path>
+              <line x1="1" y1="1" x2="23" y2="23"></line>
+            </svg>
+          </button>
+        </div>
+      </div>
+      <div class="flex items-center">
+        <input id="remember" name="remember" type="checkbox"
+          class="h-5 w-5 rounded border-gray-300 text-blue-600 focus:ring-blue-500 cursor-pointer">
+        <label for="remember" class="ml-2 block text-sm text-gray-900 cursor-pointer">Remember Me</label>
+      </div>
+    </div>
+    <button type="submit" id="loginBtn"
+      class="mt-6 w-full bg-blue-600 text-white py-3 rounded hover:bg-blue-700 font-semibold transition-all">
+      <span id="loginBtnText">Log In</span>
+      <svg id="loginSpinner" class="hidden animate-spin ml-2 h-5 w-5 text-white inline-block"
+        xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" aria-hidden="true">
+        <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+        <path class="opacity-75" fill="currentColor"
+          d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z">
+        </path>
+      </svg>
+    </button>
+  </form>
+</div>
+
+<script>
+  (function () {
+    // Password visibility toggle
+    const toggleBtn = document.getElementById('togglePassword');
+    const passwordInput = document.getElementById('password');
+    const eyeIcon = document.getElementById('eyeIcon');
+    const eyeOffIcon = document.getElementById('eyeOffIcon');
+
+    toggleBtn.addEventListener('click', function () {
+      const isPassword = passwordInput.type === 'password';
+      passwordInput.type = isPassword ? 'text' : 'password';
+      eyeIcon.classList.toggle('hidden', !isPassword);
+      eyeOffIcon.classList.toggle('hidden', isPassword);
+    });
+
+    // Form submission with loading state
+    const form = document.getElementById('loginForm');
+    const loginBtn = document.getElementById('loginBtn');
+    const loginBtnText = document.getElementById('loginBtnText');
+    const loginSpinner = document.getElementById('loginSpinner');
+
+    form.addEventListener('submit', function () {
+      loginBtn.disabled = true;
+      loginBtn.classList.add('opacity-75', 'cursor-not-allowed');
+      loginBtnText.textContent = 'Logging in...';
+      loginSpinner.classList.remove('hidden');
+    });
+  })();
+</script>
+{% endblock %}

@@ -1,0 +1,14 @@
+# Core web framework
+Flask>=3.0,<3.1
+
+# Optional (uncomment if you want to run via gunicorn or load .env files)
+# gunicorn>=21.2,<22
+# python-dotenv>=1.0,<2
+PyMuPDF
+
+# Server-side xlsx generation for the SLD download endpoint
+# (sld_blueprint.api_download_xlsx -- see [SLD-008] in integrated_test.md).
+openpyxl>=3.1,<4
+
+# Required by openpyxl for embedding the SLD diagram PNG in the xlsx export.
+pillow>=10

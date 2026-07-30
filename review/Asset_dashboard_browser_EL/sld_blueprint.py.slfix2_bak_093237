@@ -1,0 +1,2715 @@
+"""Single Line Diagram (SLD) blueprint.
+
+Ports the standalone http.server at
+dev_capture_process_from_drawn/single_line_diagram/serve.py into a Flask
+blueprint that lives inside the production EL dashboard app and shares
+QR_codes.db (env var DB_PATH) with the rest of the app.
+
+Routes (all require login):
+    GET    /sld/api/buildings
+    GET    /sld/api/assets[?building=<code>&history=<bool>]
+    POST   /sld/api/assets
+    PUT    /sld/api/assets/<row_id>
+    DELETE /sld/api/assets/<row_id>
+    POST   /sld/api/upload           multipart PDF upload
+    POST   /sld/api/process          runs extract_electrical_schema.py
+
+Config (read from current_app.config):
+    DB_PATH              path to QR_codes.db (shared with main app)
+    SLD_PDF_STORAGE      directory for uploaded PDFs
+    SLD_EXTRACT_SCRIPT   path to extract_electrical_schema.py
+    SLD_EXTRACT_TIMEOUT  seconds (default 600)
+"""
+
+import hashlib
+import json
+import os
+import re
+import sqlite3
+import subprocess
+import sys
+from datetime import datetime, timezone
+from pathlib import Path
+from urllib.parse import quote as urlquote
+
+from flask import Blueprint, current_app, jsonify, request, send_file
+from flask_login import login_required
+from werkzeug.utils import secure_filename
+
+import db as qrdb  # backend-agnostic QR_codes DB layer (Phase C / C4)
+
+from json_persistence import (
+    atomic_write_json,
+    compute_swift_revision,
+    mark_json_processed,
+)
+
+# Feedback-corpus emitter lives in sld/_feedback.py (same dir as the
+# extractor script). Add that dir to sys.path so the import works without
+# requiring sld/ to be a package — and so the extractor script keeps using
+# its existing flat import style ("from _feedback import ...").
+_SLD_HELPERS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "sld")
+if _SLD_HELPERS_DIR not in sys.path:
+    sys.path.insert(0, _SLD_HELPERS_DIR)
+
+# Make the shared `audit/` package importable (sibling of the app folders)
+_PROJECT_ROOT_GUESS = "/home/developer"
+if _PROJECT_ROOT_GUESS not in sys.path:
+    sys.path.insert(0, _PROJECT_ROOT_GUESS)
+try:
+    from audit.logger import log_change as _audit_log_change
+    from audit.diff import diff_dicts as _audit_diff_dicts
+except Exception as _audit_exc:
+    print(f"[audit] import failed in sld_blueprint: {_audit_exc}")
+    _audit_log_change = None
+    _audit_diff_dicts = None
+
+try:
+    from _feedback import (  # noqa: E402
+        DEFAULT_FEEDBACK_DIR,
+        feedback_dir_for,
+        make_run_id,
+        parse_summary_from_stdout,
+        write_corrections_for_changed_fields,
+    )
+except ModuleNotFoundError:
+    # If the helper is unavailable for any reason, fall back to no-op stubs
+    # so the SLD app keeps functioning. Logging is best-effort by design.
+    DEFAULT_FEEDBACK_DIR = "/home/developer/sld_extract_feedback"
+
+    def feedback_dir_for(env=None):
+        return DEFAULT_FEEDBACK_DIR
+
+    def make_run_id(building_code, pdf_sha1):
+        return None
+
+    def parse_summary_from_stdout(stdout):
+        return None
+
+    def write_corrections_for_changed_fields(**kwargs):
+        return 0
+
+
+TABLE = "electrical_building_schema"
+ACTIVE_DRAW_CONDITION = "new_draw = 'TRUE'"
+
+# Mirror of DISTRIBUTION_ASSET_GROUPS in Asset_dashboard_EL.py. Kept as a
+# tuple here to avoid a cross-module import (the dashboards are independent
+# blueprints). Keep this in sync if the canonical set changes.
+DISTRIBUTION_ASSET_GROUPS = (
+    "Panels",
+    "Other Service and Distribution",
+    "Interior Distribution Transformers",
+    "Motor Control Centers",
+    "Enclosed Circuit Breakers",
+    "Automatic Transfer Switches",
+)
+
+
+try:
+    from electrical_equipment_rules import derive_electrical_equipment_type
+except ModuleNotFoundError:
+    _ELECTRICAL_EQUIPMENT_TYPE_MAP = {
+        "MDP": "Main Distribution Panel",
+        "CDP": "Central Distribution Panel",
+        "SPL": "Splitter",
+        "MCC": "Motor Control Center",
+        "PNL": "Panel",
+        "SWBD": "Switchboard",
+        "ATS": "Automatic Transfer Switch",
+        "TX": "Transformer",
+    }
+
+    def derive_electrical_equipment_type(tag_value):
+        tag_upper = str(tag_value or "").strip().upper()
+        for code, name in sorted(_ELECTRICAL_EQUIPMENT_TYPE_MAP.items(), key=lambda item: len(item[0]), reverse=True):
+            if tag_upper.startswith(code):
+                return name
+        return ""
+
+
+sld_bp = Blueprint("sld", __name__, url_prefix="/sld")
+
+
+# ── Logging helpers (best-effort; never raise) ───────────────────────────
+
+def _now_iso():
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+
+
+def _now_local():
+    return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+
+def _file_sha1(path):
+    try:
+        h = hashlib.sha1()
+        with open(path, "rb") as f:
+            for chunk in iter(lambda: f.read(65536), b""):
+                h.update(chunk)
+        return h.hexdigest()
+    except (OSError, TypeError):
+        return ""
+
+
+def _file_size(path):
+    try:
+        return os.path.getsize(path)
+    except OSError:
+        return None
+
+
+def _append_jsonl(path, record):
+    if not path:
+        return
+    try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "a", encoding="utf-8") as f:
+            f.write(json.dumps(record, ensure_ascii=False, default=str) + "\n")
+    except OSError:
+        pass
+
+
+def _append_main_log(path, lines):
+    if not path or not lines:
+        return
+    try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "a", encoding="utf-8") as f:
+            for line in lines:
+                f.write((line if line.endswith("\n") else line + "\n"))
+    except OSError:
+        pass
+
+
+def _append_main_log_raw(path, blob):
+    if not path or not blob:
+        return
+    try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "a", encoding="utf-8") as f:
+            f.write(blob if blob.endswith("\n") else blob + "\n")
+    except OSError:
+        pass
+
+
+# ── Helpers ──────────────────────────────────────────────────────────────
+
+def _db_path():
+    return current_app.config["DB_PATH"]
+
+
+def _connect():
+    conn = qrdb.get_connection(sqlite_path=_db_path())
+    conn.row_factory = sqlite3.Row
+    return conn
+
+
+def _pdf_storage():
+    path = current_app.config["SLD_PDF_STORAGE"]
+    os.makedirs(path, exist_ok=True)
+    return path
+
+
+def _active_match_exists_sql(table_alias=TABLE):
+    return f'''
+        EXISTS (
+            SELECT 1
+            FROM "sdi_dataset_EL" s
+            WHERE TRIM(COALESCE(s."UBC Asset Tag", '')) <> ''
+              AND UPPER(TRIM(COALESCE(s."Building", ''))) = UPPER(TRIM(COALESCE("{table_alias}"."Building", '')))
+              AND UPPER(TRIM(COALESCE(s."UBC Asset Tag", ''))) = UPPER(TRIM(COALESCE("{table_alias}"."Equipment ID", '')))
+        )
+    '''
+
+
+def _table_columns(conn, table_name):
+    return set(qrdb.table_columns(conn, table_name))
+
+
+def _buildings_with_displayable_qr(conn):
+    """UPPER(TRIM)-normalized set of Building codes that have at least one
+    sdi_dataset_EL QR code NOT present in sdi_print_out_arch (the archive).
+
+    Mirrors the main review dashboard's "Hide Archive" notion of displayable,
+    which keys purely on "QR Code" (see get_archived_qrs in Asset_dashboard_EL).
+    Returns None when sdi_dataset_EL is missing/unreadable so callers fail open
+    (no filtering) — and treats every QR as displayable when sdi_print_out_arch
+    is absent. Best-effort; never raises."""
+    if not qrdb.has_table(conn, "sdi_dataset_EL"):
+        return None
+    arch_not_in = (
+        'AND TRIM(s."QR Code") NOT IN (SELECT TRIM("QR Code") FROM "sdi_print_out_arch")'
+        if qrdb.has_table(conn, "sdi_print_out_arch") else ""
+    )
+    try:
+        rows = conn.execute(f'''
+            SELECT DISTINCT UPPER(TRIM(COALESCE(s."Building", ''))) AS b
+            FROM "sdi_dataset_EL" s
+            WHERE TRIM(COALESCE(s."QR Code", '')) <> ''
+            {arch_not_in}
+        ''').fetchall()
+    except qrdb.DatabaseError:
+        return None
+    return {r["b"] for r in rows if r["b"]}
+
+
+def _id_check_value(building, asset_tag, supply_from):
+    return " | ".join([
+        str(building or "").strip(),
+        str(asset_tag or "").strip(),
+        str(supply_from or "").strip(),
+    ])
+
+
+def _sdi_id_check_expression(sdi_columns):
+    if "ID_check" in sdi_columns:
+        return "TRIM(COALESCE(s.\"ID_check\", ''))"
+    return '''
+        TRIM(COALESCE(s."Building", '')) || ' | ' ||
+        TRIM(COALESCE(s."UBC Asset Tag", '')) || ' | ' ||
+        TRIM(COALESCE(s."Supply From", ''))
+    '''
+
+
+def _enrich_asset_display_fields(conn, assets):
+    """Attach display-only SDI fields without changing SLD eligibility."""
+    if not assets:
+        return assets
+
+    sdi_columns = _table_columns(conn, "sdi_dataset_EL")
+    if not sdi_columns:
+        for asset in assets:
+            asset["id_check_match"] = 0
+            asset["QR Code"] = ""
+            asset["Room"] = ""
+            asset["swift_revision"] = compute_swift_revision(asset)
+        return assets
+
+    sdi_id_check_expr = _sdi_id_check_expression(sdi_columns)
+    qr_select = 's."QR Code"' if "QR Code" in sdi_columns else "''"
+    qr_order = 's."QR Code"' if "QR Code" in sdi_columns else "s.\"Equipment ID\""
+
+    # Room is sourced from QR_codes.Location (master location on the QR record),
+    # joined via the QR Code discovered through the sdi_dataset_EL match. The
+    # QR_codes row is the authoritative location store — triggers on QR_codes
+    # propagate Location changes to Space / Floor / Space Details / Floor Code.
+    qr_codes_exists = qrdb.has_table(conn, "QR_codes")
+    if qr_codes_exists and "QR Code" in sdi_columns:
+        room_join = (
+            'LEFT JOIN "QR_codes" qc '
+            'ON TRIM(COALESCE(qc."QR_code_ID", \'\')) = TRIM(COALESCE(s."QR Code", \'\'))'
+        )
+        room_select = 'COALESCE(NULLIF(TRIM(qc."Location"), \'\'), \'\')'
+    else:
+        room_join = ''
+        room_select = "''"
+
+    id_check_query = f'''
+        SELECT 1
+        FROM "sdi_dataset_EL" s
+        WHERE {sdi_id_check_expr} = ?
+        LIMIT 1
+    '''
+    match_query = f'''
+        SELECT {qr_select} AS qr_code, {room_select} AS room
+        FROM "sdi_dataset_EL" s
+        {room_join}
+        WHERE TRIM(COALESCE(s."UBC Asset Tag", '')) <> ''
+          AND UPPER(TRIM(COALESCE(s."Building", ''))) = UPPER(TRIM(COALESCE(?, '')))
+          AND UPPER(TRIM(COALESCE(s."UBC Asset Tag", ''))) = UPPER(TRIM(COALESCE(?, '')))
+        ORDER BY CASE WHEN {sdi_id_check_expr} = ? THEN 0 ELSE 1 END, {qr_order}
+        LIMIT 1
+    '''
+
+    for asset in assets:
+        id_check = str(asset.get("ID_check") or "").strip()
+        if not id_check:
+            id_check = _id_check_value(asset.get("Building"), asset.get("Equipment ID"), asset.get("Supply From"))
+            asset["ID_check"] = id_check
+
+        asset["id_check_match"] = 1 if conn.execute(id_check_query, (id_check,)).fetchone() else 0
+        match = conn.execute(
+            match_query,
+            (asset.get("Building"), asset.get("Equipment ID"), id_check),
+        ).fetchone()
+        asset["QR Code"] = (match["qr_code"] if match else "") or ""
+        asset["Room"] = (match["room"] if match else "") or ""
+        asset["swift_revision"] = compute_swift_revision(asset)
+
+    return assets
+
+
+def _derive_group_of_asset(equipment_id):
+    group = (derive_electrical_equipment_type(equipment_id) or "").strip()
+    if not group:
+        return "Unknown"
+    if group.lower() in {"switchboard", "distribuition", "distribution"}:
+        return "Distribution"
+    return group
+
+
+def ensure_sld_schema():
+    """Idempotent safety net — the migration runner creates the table, but
+    older databases that pre-date migrations may still be missing the
+    version-tracking columns."""
+    conn = _connect()
+    try:
+        # Backend-agnostic column list — includes generated columns (notably the
+        # generated ID_check) so we don't try to ADD COLUMN them again.
+        cols = list(qrdb.table_columns(conn, TABLE))
+        if not cols:
+            # Table missing entirely. Migration runner should have handled this;
+            # bail so the error is visible rather than silently creating
+            # something mis-shaped.
+            return
+        if "new_draw" not in cols:
+            conn.execute(f"ALTER TABLE \"{TABLE}\" ADD COLUMN new_draw TEXT DEFAULT 'TRUE'")
+        if "ID_check" not in cols:
+            conn.execute(
+                f'ALTER TABLE "{TABLE}" ADD COLUMN ID_check TEXT '
+                f'GENERATED ALWAYS AS ('
+                f'TRIM(COALESCE("Building", \'\')) || \' | \' || '
+                f'TRIM(COALESCE("Equipment ID", \'\')) || \' | \' || '
+                f'TRIM(COALESCE("Supply From", \'\'))'
+                f') VIRTUAL'
+            )
+        if "matching_check" not in cols:
+            conn.execute(f'ALTER TABLE "{TABLE}" ADD COLUMN matching_check INTEGER DEFAULT 0')
+        if "source_pdf" not in cols:
+            conn.execute(f"ALTER TABLE \"{TABLE}\" ADD COLUMN source_pdf TEXT DEFAULT ''")
+        if "created_at" not in cols:
+            conn.execute(f"ALTER TABLE \"{TABLE}\" ADD COLUMN created_at TEXT DEFAULT ''")
+        # Feedback corpus join keys (v1+v2): every row carries the run_id of
+        # the AI extraction that produced it and a JSON snapshot of the
+        # AI-output fields at insert time. The snapshot is the diff baseline
+        # for human_correction events.
+        if "sld_extract_run_id" not in cols:
+            conn.execute(f"ALTER TABLE \"{TABLE}\" ADD COLUMN sld_extract_run_id TEXT DEFAULT ''")
+        if "sld_ai_extract_payload" not in cols:
+            conn.execute(f"ALTER TABLE \"{TABLE}\" ADD COLUMN sld_ai_extract_payload TEXT DEFAULT ''")
+        # Wire Rating: a parallel value/UoM pair so a single row can carry both
+        # a Power (KVA) and a Wire (W) rating. Pre-existing rows that stored
+        # the wire info in Power Rating (UoM=W) are migrated into the new
+        # columns so the Switch Over editor can show both inputs cleanly.
+        wire_added = False
+        if "Wire Rating" not in cols:
+            conn.execute(f"ALTER TABLE \"{TABLE}\" ADD COLUMN \"Wire Rating\" TEXT DEFAULT ''")
+            wire_added = True
+        if "Wire Rating (UoM)" not in cols:
+            conn.execute(f"ALTER TABLE \"{TABLE}\" ADD COLUMN \"Wire Rating (UoM)\" TEXT DEFAULT ''")
+            wire_added = True
+        if wire_added:
+            conn.execute(
+                f'UPDATE "{TABLE}" SET '
+                f'"Wire Rating" = COALESCE("Power Rating", \'\'), '
+                f'"Wire Rating (UoM)" = COALESCE("Power Rating (UoM)", \'\'), '
+                f'"Power Rating" = \'\', "Power Rating (UoM)" = \'\' '
+                f'WHERE UPPER(TRIM(COALESCE("Power Rating (UoM)", \'\'))) = \'W\''
+            )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+# ── Data-access functions (direct ports from dev serve.py) ───────────────
+
+def get_all_assets(building=None, include_history=False):
+    conn = _connect()
+    try:
+        query = f'SELECT * FROM "{TABLE}"'
+        conditions = []
+        params = []
+        if not include_history:
+            conditions.append(ACTIVE_DRAW_CONDITION)
+            conditions.append(_active_match_exists_sql())
+        if building:
+            conditions.append('"Building" = ?')
+            params.append(building)
+        if conditions:
+            query += " WHERE " + " AND ".join(conditions)
+        query += ' ORDER BY CAST("Hierarchy" AS INTEGER), "Equipment ID"'
+        rows = conn.execute(query, params).fetchall()
+        assets = [dict(r) for r in rows]
+        return _enrich_asset_display_fields(conn, assets)
+    finally:
+        conn.close()
+
+
+def get_buildings(include_archived=False):
+    conn = _connect()
+    try:
+        rows = conn.execute(
+            f'SELECT "Building", new_draw, COUNT(*) as asset_count, source_pdf '
+            f'FROM "{TABLE}" GROUP BY "Building", new_draw ORDER BY "Building", new_draw DESC'
+        ).fetchall()
+        allowed = _buildings_with_displayable_qr(conn)
+    finally:
+        conn.close()
+    buildings = {}
+    for r in rows:
+        b = r["Building"]
+        if b not in buildings:
+            buildings[b] = {"building": b, "current_count": 0, "history_count": 0, "source_pdf": ""}
+        if r["new_draw"] == "TRUE":
+            buildings[b]["current_count"] = r["asset_count"]
+            buildings[b]["source_pdf"] = r["source_pdf"] or ""
+        else:
+            buildings[b]["history_count"] += r["asset_count"]
+    for entry in buildings.values():
+        entry["display"] = get_building_display(entry["building"])
+    # Restrict to buildings that still have at least one displayable (non-archived)
+    # QR code, mirroring the main review dashboard's "Hide Archive ON" default.
+    # include_archived=True (or a fail-open None) returns the unfiltered list.
+    result = []
+    for entry in buildings.values():
+        keep = (
+            include_archived
+            or allowed is None
+            or (entry["building"] or "").strip().upper() in allowed
+        )
+        if keep:
+            result.append(entry)
+    return result
+
+
+def get_building_locations(building_code):
+    """Distinct Location values from Buildings_with_SpaceUID for a building Code.
+
+    Returns [] when building_code is falsy, the view is missing, or the lookup
+    fails. The Swift Over Room dropdown feeds off this list.
+    """
+    if not building_code:
+        return []
+    conn = _connect()
+    try:
+        rows = conn.execute(
+            'SELECT DISTINCT "Location" FROM "Buildings_with_SpaceUID" '
+            "WHERE \"Code\" = ? AND \"Location\" IS NOT NULL AND TRIM(\"Location\") != '' "
+            'ORDER BY "Location"',
+            (building_code,),
+        ).fetchall()
+    except qrdb.DatabaseError:
+        return []
+    finally:
+        conn.close()
+    return [r["Location"] for r in rows if r["Location"]]
+
+
+def check_building_exists(building_code):
+    conn = _connect()
+    try:
+        count = conn.execute(
+            f'SELECT COUNT(*) AS n FROM "{TABLE}" WHERE "Building" = ? AND {ACTIVE_DRAW_CONDITION}',
+            (building_code,),
+        ).fetchone()["n"]
+        return count > 0
+    finally:
+        conn.close()
+
+
+def get_building_display(code):
+    if not code:
+        return ""
+    code_str = str(code)
+    conn = _connect()
+    try:
+        row = conn.execute(
+            'SELECT "Name", "Owner Rep" FROM "Buildings" WHERE "Code" = ? LIMIT 1',
+            (code_str,),
+        ).fetchone()
+    finally:
+        conn.close()
+    if not row:
+        return code_str
+    name = (row["Name"] or "").strip()
+    rep = (row["Owner Rep"] or "").strip()
+    if name and rep:
+        return f"{name} | {rep}"
+    return name or code_str
+
+
+def recompute_matching_check(row_id=None, building=None):
+    """Refresh matching_check from same-building UBC Asset Tag matches.
+
+    Scope: a single row, all rows for one Building, or the entire table.
+    """
+    conn = _connect()
+    try:
+        if row_id is not None:
+            where, params = "WHERE row_id = ?", (row_id,)
+        elif building is not None:
+            where, params = 'WHERE "Building" = ?', (building,)
+        else:
+            where, params = "", ()
+        conn.execute(f"""
+            UPDATE "{TABLE}"
+            SET matching_check = CASE WHEN EXISTS (
+                SELECT 1 FROM "sdi_dataset_EL" s
+                WHERE TRIM(COALESCE(s."UBC Asset Tag", '')) <> ''
+                  AND UPPER(TRIM(COALESCE(s."Building", ''))) = UPPER(TRIM(COALESCE("{TABLE}"."Building", '')))
+                  AND UPPER(TRIM(COALESCE(s."UBC Asset Tag", ''))) = UPPER(TRIM(COALESCE("{TABLE}"."Equipment ID", '')))
+            ) THEN 1 ELSE 0 END
+            {where}
+        """, params)
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def get_missed_assets(building=None):
+    conn = _connect()
+    try:
+        query = f'''
+            SELECT row_id, "Building", "Equipment ID", "Supply From"
+            FROM "{TABLE}"
+            WHERE {ACTIVE_DRAW_CONDITION}
+              AND NOT {_active_match_exists_sql()}
+        '''
+        params = []
+        if building:
+            query += ' AND "Building" = ?'
+            params.append(building)
+        query += ' ORDER BY CAST("Hierarchy" AS INTEGER), "Equipment ID"'
+        rows = conn.execute(query, params).fetchall()
+        missed = []
+        for row in rows:
+            item = dict(row)
+            item["Group of Asset"] = _derive_group_of_asset(item.get("Equipment ID"))
+            missed.append(item)
+        return missed
+    finally:
+        conn.close()
+
+
+def get_sdi_not_in_sld_assets(building=None):
+    """SDI rows (distribution category) for this building with no active SLD match.
+
+    Inverse of get_missed_assets: reads sdi_dataset_EL as the base table and
+    excludes rows whose UBC Asset Tag appears as an active Equipment ID in the
+    SLD for the same building.
+    """
+    if not building:
+        return []
+    conn = _connect()
+    try:
+        sdi_columns = _table_columns(conn, "sdi_dataset_EL")
+        if not sdi_columns:
+            return []
+
+        select_parts = [
+            's."UBC Asset Tag" AS "UBC Asset Tag"',
+            's."Building" AS "Building"',
+            's."Supply From" AS "Supply From"',
+            's."Asset Group" AS "Asset Group"',
+        ]
+        optional = [
+            "QR Code", "Description",
+            "Voltage Rating", "Voltage Rating (UoM)",
+            "Amperage Rating", "Amperage Rating (UoM)",
+            "Power Rating", "Power Rating (UoM)",
+            "Approved",
+        ]
+        for col in optional:
+            if col in sdi_columns:
+                select_parts.append(f's."{col}" AS "{col}"')
+
+        placeholders = ",".join("?" for _ in DISTRIBUTION_ASSET_GROUPS)
+        approved_filter = ""
+        if "Approved" in sdi_columns:
+            approved_filter = 'AND TRIM(COALESCE(s."Approved", \'\')) <> \'1\''
+        query = f'''
+            SELECT {", ".join(select_parts)}
+            FROM "sdi_dataset_EL" s
+            WHERE TRIM(COALESCE(s."UBC Asset Tag", '')) <> ''
+              AND UPPER(TRIM(COALESCE(s."Building", ''))) = UPPER(TRIM(COALESCE(?, '')))
+              AND s."Asset Group" IN ({placeholders})
+              {approved_filter}
+              AND NOT EXISTS (
+                  SELECT 1 FROM "{TABLE}" e
+                  WHERE e.new_draw = 'TRUE'
+                    AND UPPER(TRIM(COALESCE(e."Building", ''))) = UPPER(TRIM(COALESCE(s."Building", '')))
+                    AND UPPER(TRIM(COALESCE(e."Equipment ID", ''))) = UPPER(TRIM(COALESCE(s."UBC Asset Tag", '')))
+              )
+            ORDER BY s."Asset Group", s."UBC Asset Tag"
+        '''
+        params = [building, *DISTRIBUTION_ASSET_GROUPS]
+        rows = conn.execute(query, params).fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        conn.close()
+
+
+def archive_missed_assets(row_ids, building=None):
+    clean_ids = []
+    seen = set()
+    for row_id in row_ids or []:
+        try:
+            value = int(row_id)
+        except (TypeError, ValueError):
+            continue
+        if value not in seen:
+            clean_ids.append(value)
+            seen.add(value)
+
+    if not clean_ids:
+        return False, "No valid row IDs supplied", []
+
+    placeholders = ",".join("?" for _ in clean_ids)
+    params = list(clean_ids)
+    query = f'''
+        SELECT row_id, "Building", "Equipment ID", "Supply From"
+        FROM "{TABLE}"
+        WHERE row_id IN ({placeholders})
+          AND {ACTIVE_DRAW_CONDITION}
+          AND NOT {_active_match_exists_sql()}
+    '''
+    if building:
+        query += ' AND "Building" = ?'
+        params.append(building)
+
+    conn = _connect()
+    archived_ids = []
+    try:
+        rows = conn.execute(query, params).fetchall()
+        if not rows:
+            return False, "No missed active assets found for exclusion", []
+
+        for row in rows:
+            tag = row["Equipment ID"] or ""
+            parent = row["Supply From"] or ""
+            row_building = row["Building"] or ""
+            conn.execute(
+                f'''
+                UPDATE "{TABLE}"
+                SET "Supply From" = ?
+                WHERE "Building" = ?
+                  AND {ACTIVE_DRAW_CONDITION}
+                  AND "Supply From" = ?
+                ''',
+                (parent, row_building, tag),
+            )
+            conn.execute(
+                f"UPDATE \"{TABLE}\" SET new_draw = 'FALSE' WHERE row_id = ?",
+                (row["row_id"],),
+            )
+            archived_ids.append(row["row_id"])
+        conn.commit()
+        return True, "OK", archived_ids
+    finally:
+        conn.close()
+
+
+def active_asset_exists(equipment_id, building=None):
+    tag = str(equipment_id or "").strip()
+    if not tag:
+        return False
+    conn = _connect()
+    try:
+        query = f'''
+            SELECT 1
+            FROM "{TABLE}"
+            WHERE {ACTIVE_DRAW_CONDITION}
+              AND UPPER(TRIM(COALESCE("Equipment ID", ''))) = UPPER(TRIM(COALESCE(?, '')))
+        '''
+        params = [tag]
+        if building:
+            query += " AND UPPER(TRIM(COALESCE(\"Building\", ''))) = UPPER(TRIM(COALESCE(?, '')))"
+            params.append(str(building or "").strip())
+        query += " LIMIT 1"
+        return conn.execute(query, params).fetchone() is not None
+    finally:
+        conn.close()
+
+
+def _sdi_asset_group_for_equipment(equipment_id):
+    group = _derive_group_of_asset(equipment_id)
+    if group == "Transformer":
+        return "Interior Distribution Transformers"
+    if group == "Automatic Transfer Switch":
+        return "Automatic Transfer Switches"
+    if group == "Motor Control Center":
+        return "Motor Control Centers"
+    if group in {"Panel", "Main Distribution Panel", "Central Distribution Panel", "Distribution"}:
+        return "Panels"
+    return "Other Service and Distribution"
+
+
+def _sanitize_qr_code(raw):
+    return re.sub(r"[^A-Za-z0-9]", "", (raw or "").strip()).upper()
+
+
+def validate_qr_in_sdi(qr, building):
+    sanitized = _sanitize_qr_code(qr)
+    if not sanitized:
+        return False, "QR Code is required"
+    clean_building = (building or "").strip()
+    if not clean_building:
+        return False, "Building is required"
+
+    conn = _connect()
+    try:
+        row = conn.execute(
+            'SELECT 1 FROM "sdi_dataset_EL" WHERE "QR Code" = ? AND "Building" = ? LIMIT 1',
+            (sanitized, clean_building),
+        ).fetchone()
+        if row:
+            return True, "sdi_dataset_EL"
+
+        row = conn.execute(
+            'SELECT 1 FROM sdi_dataset WHERE "QR Code" = ? AND "Building" = ? LIMIT 1',
+            (sanitized, clean_building),
+        ).fetchone()
+        if row:
+            return True, "sdi_dataset"
+    finally:
+        conn.close()
+
+    return False, "QR Code not found for this building in the Asset Capture Application"
+
+
+def add_missed_asset_to_sld(row_id, building=None, qr_code=None):
+    try:
+        clean_row_id = int(row_id)
+    except (TypeError, ValueError):
+        return False, "No valid row ID supplied"
+
+    ok, detail = validate_qr_in_sdi(qr_code, building)
+    if not ok:
+        return False, detail
+    sanitized_qr = _sanitize_qr_code(qr_code)
+
+    conn = _connect()
+    try:
+        query = f'''
+            SELECT row_id, "Building", "Equipment ID", "Supply From",
+                   "Amperage Rating", "Amperage Rating (UoM)",
+                   "Power Rating", "Power Rating (UoM)",
+                   "Voltage Rating", "Voltage Rating (UoM)"
+            FROM "{TABLE}"
+            WHERE row_id = ?
+              AND {ACTIVE_DRAW_CONDITION}
+              AND NOT {_active_match_exists_sql()}
+        '''
+        params = [clean_row_id]
+        if building:
+            query += ' AND "Building" = ?'
+            params.append(building)
+
+        row = conn.execute(query, params).fetchone()
+        if not row:
+            return False, "Missed asset was not found or is already eligible for SLD"
+
+        sdi_columns = _table_columns(conn, "sdi_dataset_EL")
+        if not sdi_columns:
+            return False, "sdi_dataset_EL table was not found"
+
+        values = {
+            "Building": row["Building"] or "",
+            "UBC Asset Tag": row["Equipment ID"] or "",
+            "QR Code": sanitized_qr,
+            "Supply From": row["Supply From"] or "",
+            "Asset Group": _sdi_asset_group_for_equipment(row["Equipment ID"]),
+            "Approved": "",
+            "Description": f'{_derive_group_of_asset(row["Equipment ID"])} - {row["Equipment ID"]}',
+            "Equipment ID": row["Equipment ID"] or "",
+            "Equipment Type": _derive_group_of_asset(row["Equipment ID"]),
+            "Amperage Rating": row["Amperage Rating"] or "",
+            "Amperage Rating (UoM)": row["Amperage Rating (UoM)"] or "",
+            "Power Rating": row["Power Rating"] or "",
+            "Power Rating (UoM)": row["Power Rating (UoM)"] or "",
+            "Voltage Rating": row["Voltage Rating"] or "",
+            "Voltage Rating (UoM)": row["Voltage Rating (UoM)"] or "",
+        }
+        insert_columns = [column for column in values if column in sdi_columns]
+        if "Building" not in insert_columns or "UBC Asset Tag" not in insert_columns:
+            return False, "sdi_dataset_EL is missing required Building or UBC Asset Tag columns"
+
+        placeholders = ", ".join("?" for _ in insert_columns)
+        column_sql = ", ".join(f'"{column}"' for column in insert_columns)
+        conn.execute(
+            f'INSERT INTO "sdi_dataset_EL" ({column_sql}) VALUES ({placeholders})',
+            [values[column] for column in insert_columns],
+        )
+        conn.commit()
+        return True, "OK"
+    finally:
+        conn.close()
+
+
+def create_asset(data):
+    conn = _connect()
+    try:
+        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        cur = conn.execute(
+            f'INSERT INTO "{TABLE}" '
+            f'("Hierarchy", "Supply From", "Equipment ID", "Building", '
+            f'"Amperage Rating", "Amperage Rating (UoM)", '
+            f'"Power Rating", "Power Rating (UoM)", '
+            f'"Voltage Rating", "Voltage Rating (UoM)", ambigous, new_draw, created_at) '
+            f'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+            (
+                data.get("Hierarchy", "1"),
+                data.get("Supply From", ""),
+                data.get("Equipment ID", ""),
+                data.get("Building", ""),
+                data.get("Amperage Rating", ""),
+                data.get("Amperage Rating (UoM)", ""),
+                data.get("Power Rating", ""),
+                data.get("Power Rating (UoM)", ""),
+                data.get("Voltage Rating", ""),
+                data.get("Voltage Rating (UoM)", ""),
+                data.get("ambigous", ""),
+                "TRUE",
+                now,
+            ),
+        )
+        if _audit_log_change:
+            audited_fields = [
+                "Hierarchy", "Supply From", "Equipment ID", "Building",
+                "Amperage Rating", "Amperage Rating (UoM)",
+                "Power Rating", "Power Rating (UoM)",
+                "Voltage Rating", "Voltage Rating (UoM)", "ambigous",
+            ]
+            field_changes = {
+                f: (None, data.get(f, "")) for f in audited_fields
+                if str(data.get(f, "") or "").strip() != ""
+            }
+            try:
+                _audit_log_change(
+                    conn,
+                    qr_code=None,
+                    app_name="reviewer_el",
+                    table_name=TABLE,
+                    record_pk=getattr(cur, "lastrowid", None),
+                    op_type="INSERT",
+                    field_changes=field_changes,
+                    source="human",
+                    description="POST /sld/api/assets (create)",
+                )
+            except Exception as exc:
+                print(f"[audit] EL create_asset audit failed: {exc}")
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def update_asset(row_id, updates):
+    conn = _connect()
+    try:
+        # Pull the full row so we can compare against the AI baseline for
+        # human_correction events. Falls back gracefully if the new
+        # columns don't exist (older schema).
+        cols = _table_columns(conn, TABLE)
+        select_cols = ['row_id', '"Equipment ID"', '"Supply From"', 'ambigous', '"Building"']
+        if "sld_extract_run_id" in cols:
+            select_cols.append("sld_extract_run_id")
+        if "sld_ai_extract_payload" in cols:
+            select_cols.append("sld_ai_extract_payload")
+        old = conn.execute(
+            f'SELECT {", ".join(select_cols)} FROM "{TABLE}" WHERE row_id = ?',
+            (row_id,),
+        ).fetchone()
+        if not old:
+            return False, "Asset not found"
+        current_row = dict(old)
+
+        old_tag = current_row.get("Equipment ID")
+        new_tag = updates.get("Equipment ID", old_tag)
+        if new_tag != old_tag:
+            conn.execute(
+                f'UPDATE "{TABLE}" SET "Supply From" = ? WHERE "Supply From" = ?',
+                (new_tag, old_tag),
+            )
+
+        set_clauses = []
+        params = []
+        if "Equipment ID" in updates:
+            set_clauses.append('"Equipment ID" = ?')
+            params.append(updates["Equipment ID"])
+        if "Supply From" in updates:
+            set_clauses.append('"Supply From" = ?')
+            params.append(updates["Supply From"])
+        if "ambigous" in updates:
+            set_clauses.append("ambigous = ?")
+            params.append(updates["ambigous"])
+        if set_clauses:
+            params.append(row_id)
+            conn.execute(
+                f'UPDATE "{TABLE}" SET {", ".join(set_clauses)} WHERE row_id = ?',
+                params,
+            )
+        conn.commit()
+
+        # Best-effort human_correction capture against the AI baseline.
+        try:
+            _emit_human_corrections_for_row(
+                row_id=row_id,
+                current_row=current_row,
+                submitted_updates=updates,
+                fields=["Equipment ID", "Supply From", "ambigous"],
+                description="PUT /sld/api/assets",
+            )
+        except Exception:
+            pass
+        return True, "OK"
+    finally:
+        conn.close()
+
+
+def _emit_human_corrections_for_row(*, row_id, current_row, submitted_updates, fields, description: str = ""):
+    """Diff submitted updates vs the row's AI baseline and append one
+    human_correction event per changed field. Also emits audit_trail rows:
+    fields whose pre-edit value matched the AI baseline get a paired
+    'ai:gpt-5.5' marker row plus the 'human' override row. Best-effort, no-op
+    when the feedback module isn't available."""
+    baseline = {}
+    raw_payload = current_row.get("sld_ai_extract_payload") if isinstance(current_row, dict) else None
+    if raw_payload:
+        try:
+            parsed = json.loads(raw_payload)
+            if isinstance(parsed, dict):
+                baseline = parsed
+        except (TypeError, ValueError):
+            baseline = {}
+    ai_run_id = current_row.get("sld_extract_run_id") if isinstance(current_row, dict) else None
+    building_code = current_row.get("Building") if isinstance(current_row, dict) else None
+    qr_code = current_row.get("QR Code") if isinstance(current_row, dict) else None
+    user = None
+    try:
+        from flask_login import current_user as _current_user  # noqa: WPS433
+        if getattr(_current_user, "is_authenticated", False):
+            user = getattr(_current_user, "username", None) or getattr(_current_user, "id", None)
+    except Exception:
+        user = None
+
+    # Existing legacy feedback emission (best-effort)
+    if callable(write_corrections_for_changed_fields):
+        try:
+            write_corrections_for_changed_fields(
+                ai_run_id=ai_run_id,
+                ai_baseline=baseline,
+                current_row=current_row,
+                submitted_updates=submitted_updates,
+                fields=fields,
+                building_code=building_code,
+                row_id=row_id,
+                user=user,
+            )
+        except Exception as exc:
+            print(f"[audit] EL legacy feedback emission failed: {exc}")
+
+    if not _audit_log_change:
+        return
+
+    def _normalize(v):
+        if v is None:
+            return ""
+        return str(v).strip()
+
+    human_changes: dict[str, tuple] = {}
+    ai_marker_changes: dict[str, tuple] = {}
+    for field in fields:
+        if field not in submitted_updates:
+            continue
+        pre = current_row.get(field) if isinstance(current_row, dict) else None
+        new = submitted_updates.get(field)
+        if _normalize(pre) == _normalize(new):
+            continue
+        ai_value = baseline.get(field) if isinstance(baseline, dict) else None
+        # Pre-edit matched the AI baseline → user is overriding AI. Anchor the
+        # AI value first, then record the human override.
+        if ai_value is not None and _normalize(pre) == _normalize(ai_value):
+            ai_marker_changes[field] = (None, ai_value)
+        human_changes[field] = (pre, new)
+
+    conn = None
+    try:
+        conn = _connect()
+        if ai_marker_changes:
+            try:
+                _audit_log_change(
+                    conn,
+                    qr_code=qr_code,
+                    app_name="reviewer_el",
+                    table_name=TABLE,
+                    record_pk=row_id,
+                    op_type="UPDATE",
+                    field_changes=ai_marker_changes,
+                    source="ai:gpt-5.5",
+                    modified_by="ai-pipeline",
+                    description=f"AI baseline (overridden): {description}".strip(": "),
+                )
+            except Exception as exc:
+                print(f"[audit] EL AI baseline marker failed: {exc}")
+        if human_changes:
+            try:
+                _audit_log_change(
+                    conn,
+                    qr_code=qr_code,
+                    app_name="reviewer_el",
+                    table_name=TABLE,
+                    record_pk=row_id,
+                    op_type="UPDATE",
+                    field_changes=human_changes,
+                    source="human",
+                    description=description or "_emit_human_corrections_for_row",
+                )
+            except Exception as exc:
+                print(f"[audit] EL human-correction audit failed: {exc}")
+        conn.commit()
+    except Exception as exc:
+        print(f"[audit] EL human-correction connect failed: {exc}")
+    finally:
+        try:
+            if conn:
+                conn.close()
+        except Exception:
+            pass
+
+
+def get_supply_from_children(conn, building, equipment_id, exclude_row_id=None):
+    """Rows whose Supply From == equipment_id (same building, active diagram).
+
+    Returns list of dicts keyed by row_id/Equipment ID plus a qr_code (may be
+    empty if the child has no matching sdi_dataset_EL row). Used for rename
+    cascade previews.
+    """
+    tag = str(equipment_id or "").strip()
+    if not tag:
+        return []
+    rows = conn.execute(
+        f'''
+        SELECT row_id, "Equipment ID", "Building"
+        FROM "{TABLE}"
+        WHERE {ACTIVE_DRAW_CONDITION}
+          AND UPPER(TRIM(COALESCE("Building", ''))) = UPPER(TRIM(COALESCE(?, '')))
+          AND UPPER(TRIM(COALESCE("Supply From", ''))) = UPPER(?)
+          {"AND row_id != ?" if exclude_row_id is not None else ""}
+        ORDER BY CAST("Hierarchy" AS INTEGER), "Equipment ID"
+        ''',
+        (building, tag, exclude_row_id) if exclude_row_id is not None else (building, tag),
+    ).fetchall()
+    children = []
+    sdi_columns = _table_columns(conn, "sdi_dataset_EL")
+    qr_available = "QR Code" in sdi_columns
+    for row in rows:
+        qr = ""
+        if qr_available:
+            qr_row = conn.execute(
+                '''
+                SELECT "QR Code" AS qr
+                FROM "sdi_dataset_EL"
+                WHERE TRIM(COALESCE("UBC Asset Tag", '')) <> ''
+                  AND UPPER(TRIM(COALESCE("Building", ''))) = UPPER(TRIM(COALESCE(?, '')))
+                  AND UPPER(TRIM(COALESCE("UBC Asset Tag", ''))) = UPPER(TRIM(COALESCE(?, '')))
+                LIMIT 1
+                ''',
+                (row["Building"], row["Equipment ID"]),
+            ).fetchone()
+            qr = (qr_row["qr"] if qr_row else "") or ""
+        children.append({
+            "row_id": row["row_id"],
+            "Equipment ID": row["Equipment ID"],
+            "Building": row["Building"],
+            "qr_code": qr,
+        })
+    return children
+
+
+def _qr_codes_available(conn):
+    return qrdb.has_table(conn, "QR_codes")
+
+
+def _get_qr_codes_location(conn, qr_code_id):
+    """Return current QR_codes.Location for a QR, or None if table/row missing."""
+    if not qr_code_id or not _qr_codes_available(conn):
+        return None
+    row = conn.execute(
+        'SELECT "Location" FROM "QR_codes" WHERE "QR_code_ID" = ? LIMIT 1',
+        (str(qr_code_id).strip(),),
+    ).fetchone()
+    if row is None:
+        return None
+    # sqlite3.Row supports both index and key access
+    try:
+        return row["Location"]
+    except Exception:
+        return row[0]
+
+
+def _set_qr_codes_location(conn, qr_code_id, location):
+    """Update QR_codes.Location. Triggers on QR_codes propagate to Space,
+    Floor, Space Details, Floor Code. No-op if the QR row doesn't exist."""
+    if not qr_code_id or not _qr_codes_available(conn):
+        return False
+    cur = conn.execute(
+        'UPDATE "QR_codes" SET "Location" = ? WHERE "QR_code_ID" = ?',
+        ("" if location is None else str(location).strip(), str(qr_code_id).strip()),
+    )
+    return cur.rowcount > 0
+
+
+def _find_sdi_row(conn, building, ubc_tag):
+    """Return matching sdi_dataset_EL row (as dict) or None."""
+    row = conn.execute(
+        '''
+        SELECT * FROM "sdi_dataset_EL"
+        WHERE TRIM(COALESCE("UBC Asset Tag", '')) <> ''
+          AND UPPER(TRIM(COALESCE("Building", ''))) = UPPER(TRIM(COALESCE(?, '')))
+          AND UPPER(TRIM(COALESCE("UBC Asset Tag", ''))) = UPPER(TRIM(COALESCE(?, '')))
+        LIMIT 1
+        ''',
+        (building, ubc_tag),
+    ).fetchone()
+    return dict(row) if row else None
+
+
+def swift_save_asset(row_id, updates, cascade=False):
+    """Save an inline edit from the Swift Over form.
+
+    Keeps three stores in sync when the row has a matched SDI asset:
+      - electrical_building_schema  (always updated)
+      - sdi_dataset_EL              (updated via _sync_db_from_structured)
+      - Output_jason_api/*.json     (updated atomically)
+
+    Returns (status_code, response_dict).
+
+    Rename cascade: if the user changes Equipment ID and other rows reference
+    the old tag as their Supply From, the first call returns 409 with
+    needs_confirmation + children. Re-posting with cascade=True updates all
+    three stores for the parent and for each affected child.
+    """
+    # Lazy imports to avoid circular dependency: Asset_dashboard_EL imports
+    # this blueprint at module load time.
+    try:
+        from Asset_dashboard_EL import (
+            JSON_DIR,
+            PROCESSED_JSON_LOG_EL,
+            json_sync_lock,
+            _apply_el_supply_from_formatting,
+            _sync_db_from_structured,
+        )
+    except Exception as e:  # noqa: BLE001
+        return 500, {"error": f"Server misconfigured: cannot load sync helpers ({e})"}
+
+    # 1. Load current SLD row
+    conn = _connect()
+    try:
+        row = conn.execute(
+            f'SELECT * FROM "{TABLE}" WHERE row_id = ?', (row_id,)
+        ).fetchone()
+        if not row:
+            return 404, {"error": "Asset not found"}
+        current = dict(row)
+        latest_row = _enrich_asset_display_fields(conn, [dict(row)])[0]
+        submitted_revision = str(updates.pop("swift_revision", "") or "").strip()
+        current_revision = compute_swift_revision(latest_row)
+        if not submitted_revision or submitted_revision != current_revision:
+            return 409, {
+                "stale_revision": True,
+                "error": "This row changed since you loaded it. Review the latest values and save again.",
+                "row": latest_row,
+            }
+        building = str(current.get("Building") or "").strip()
+        old_tag = str(current.get("Equipment ID") or "").strip()
+        new_tag = str(updates.get("Equipment ID", old_tag) or "").strip()
+        if not new_tag:
+            return 400, {"error": "Equipment ID cannot be empty"}
+
+        new_supply = _apply_el_supply_from_formatting(
+            updates.get("Supply From", current.get("Supply From", ""))
+        )
+        rename = (new_tag.upper() != old_tag.upper())
+
+        # Reject rename that collides with an existing active row
+        if rename:
+            collision = conn.execute(
+                f'''
+                SELECT row_id FROM "{TABLE}"
+                WHERE {ACTIVE_DRAW_CONDITION}
+                  AND "Building" = ? AND UPPER("Equipment ID") = UPPER(?)
+                  AND row_id != ?
+                LIMIT 1
+                ''',
+                (building, new_tag, row_id),
+            ).fetchone()
+            if collision:
+                return 409, {"error": f'"{new_tag}" already exists in this building.'}
+
+        # Detect children pointing at the old tag
+        children = []
+        if rename:
+            children = get_supply_from_children(
+                conn, building, old_tag, exclude_row_id=row_id
+            )
+        if rename and children and not cascade:
+            return 409, {
+                "needs_confirmation": True,
+                "children": children,
+                "message": (
+                    f'"{old_tag}" is currently Fed From for {len(children)} '
+                    f'child asset(s). Rename and update their Fed From too?'
+                ),
+            }
+
+        # Find matching SDI row for main (pre-rename key is old_tag)
+        sdi_row = _find_sdi_row(conn, building, old_tag)
+    finally:
+        conn.close()
+
+    matched_qr = (str(sdi_row.get("QR Code")).strip() if sdi_row else "") or ""
+
+    # Extract edited values for SLD update
+    def _pick(key, default=""):
+        val = updates.get(key, default)
+        return "" if val is None else str(val).strip()
+
+    new_voltage = _pick("Voltage Rating", current.get("Voltage Rating", ""))
+    new_voltage_uom = _pick("Voltage Rating (UoM)", current.get("Voltage Rating (UoM)", ""))
+    new_amperage = _pick("Amperage Rating", current.get("Amperage Rating", ""))
+    new_amperage_uom = _pick("Amperage Rating (UoM)", current.get("Amperage Rating (UoM)", ""))
+    new_power = _pick("Power Rating", current.get("Power Rating", ""))
+    new_power_uom = _pick("Power Rating (UoM)", current.get("Power Rating (UoM)", ""))
+    new_wire = _pick("Wire Rating", current.get("Wire Rating", ""))
+    new_wire_uom = _pick("Wire Rating (UoM)", current.get("Wire Rating (UoM)", ""))
+    new_room = updates.get("Room")  # may be None (unmatched) or string
+
+    # 2. Update electrical_building_schema (single local transaction).
+    # ID_check is a generated VIRTUAL column derived from Building / Equipment ID
+    # / Supply From, so it tracks edits to those fields automatically.
+    backup_sld = {
+        "Equipment ID": current.get("Equipment ID", ""),
+        "Supply From": current.get("Supply From", ""),
+        "Voltage Rating": current.get("Voltage Rating", ""),
+        "Voltage Rating (UoM)": current.get("Voltage Rating (UoM)", ""),
+        "Amperage Rating": current.get("Amperage Rating", ""),
+        "Amperage Rating (UoM)": current.get("Amperage Rating (UoM)", ""),
+        "Power Rating": current.get("Power Rating", ""),
+        "Power Rating (UoM)": current.get("Power Rating (UoM)", ""),
+        "Wire Rating": current.get("Wire Rating", ""),
+        "Wire Rating (UoM)": current.get("Wire Rating (UoM)", ""),
+    }
+    conn = _connect()
+    try:
+        conn.execute("BEGIN")
+        conn.execute(
+            f'UPDATE "{TABLE}" SET '
+            f'"Equipment ID" = ?, "Supply From" = ?, '
+            f'"Voltage Rating" = ?, "Voltage Rating (UoM)" = ?, '
+            f'"Amperage Rating" = ?, "Amperage Rating (UoM)" = ?, '
+            f'"Power Rating" = ?, "Power Rating (UoM)" = ?, '
+            f'"Wire Rating" = ?, "Wire Rating (UoM)" = ? '
+            f'WHERE row_id = ?',
+            (
+                new_tag, new_supply,
+                new_voltage, new_voltage_uom,
+                new_amperage, new_amperage_uom,
+                new_power, new_power_uom,
+                new_wire, new_wire_uom,
+                row_id,
+            ),
+        )
+        if rename and cascade and children:
+            conn.execute(
+                f'UPDATE "{TABLE}" SET "Supply From" = ? '
+                f'WHERE "Building" = ? AND UPPER(COALESCE("Supply From", \'\')) = UPPER(?) '
+                f'AND row_id != ?',
+                (new_tag, building, old_tag, row_id),
+            )
+        conn.commit()
+    except Exception as e:  # noqa: BLE001
+        conn.rollback()
+        conn.close()
+        return 500, {"error": f"Failed to update diagram row: {e}"}
+    finally:
+        conn.close()
+
+    def _rollback_sld():
+        try:
+            c = _connect()
+            try:
+                c.execute(
+                    f'UPDATE "{TABLE}" SET '
+                    f'"Equipment ID" = ?, "Supply From" = ?, '
+                    f'"Voltage Rating" = ?, "Voltage Rating (UoM)" = ?, '
+                    f'"Amperage Rating" = ?, "Amperage Rating (UoM)" = ?, '
+                    f'"Power Rating" = ?, "Power Rating (UoM)" = ?, '
+                    f'"Wire Rating" = ?, "Wire Rating (UoM)" = ? '
+                    f'WHERE row_id = ?',
+                    (
+                        backup_sld["Equipment ID"], backup_sld["Supply From"],
+                        backup_sld["Voltage Rating"], backup_sld["Voltage Rating (UoM)"],
+                        backup_sld["Amperage Rating"], backup_sld["Amperage Rating (UoM)"],
+                        backup_sld["Power Rating"], backup_sld["Power Rating (UoM)"],
+                        backup_sld["Wire Rating"], backup_sld["Wire Rating (UoM)"],
+                        row_id,
+                    ),
+                )
+                if rename and cascade and children:
+                    c.execute(
+                        f'UPDATE "{TABLE}" SET "Supply From" = ? '
+                        f'WHERE "Building" = ? AND UPPER(COALESCE("Supply From", \'\')) = UPPER(?) '
+                        f'AND row_id != ?',
+                        (old_tag, building, new_tag, row_id),
+                    )
+                c.commit()
+            finally:
+                c.close()
+        except Exception as exc:  # noqa: BLE001
+            current_app.logger.error("[sld swift-save] SLD rollback failed: %s", exc)
+
+    # 2b. If Room changed and we have a matched QR, write QR_codes.Location.
+    # QR_codes is the master location store — its Location triggers cascade to
+    # Space / Floor / Space Details / Floor Code automatically.
+    qr_location_backup = None  # (qr, old_location) for rollback
+    qr_location_written = False
+    if matched_qr and new_room is not None:
+        desired_room = str(new_room).strip()
+        c = _connect()
+        try:
+            current_loc = _get_qr_codes_location(c, matched_qr)
+            if current_loc is None or (current_loc or "") != desired_room:
+                qr_location_backup = (matched_qr, current_loc if current_loc is not None else "")
+                try:
+                    updated = _set_qr_codes_location(c, matched_qr, desired_room)
+                    c.commit()
+                    qr_location_written = bool(updated)
+                    if not qr_location_written:
+                        # QR row missing — don't treat as hard failure; fall through
+                        # so sdi_dataset_EL and JSON still get the Room update.
+                        qr_location_backup = None
+                except Exception as e:  # noqa: BLE001
+                    c.rollback()
+                    c.close()
+                    _rollback_sld()
+                    return 500, {"error": f"Failed to update QR_codes.Location: {e}"}
+        finally:
+            c.close()
+
+    def _rollback_qr_location():
+        if not qr_location_written or qr_location_backup is None:
+            return
+        try:
+            c = _connect()
+            try:
+                _set_qr_codes_location(c, qr_location_backup[0], qr_location_backup[1])
+                c.commit()
+            finally:
+                c.close()
+        except Exception as exc:  # noqa: BLE001
+            current_app.logger.error(
+                "[sld swift-save] QR_codes.Location rollback failed: %s", exc,
+            )
+
+    # 3. If main row has a matched SDI asset, sync JSON + sdi_dataset_EL
+    json_backups = []  # list of (path, content-or-None) for rollback
+    children_updated = []
+    children_failed = []
+
+    # SDI columns that the inline editor must NOT modify. Equipment ID and
+    # Supply From (its UBC Asset Tag mirror too) are the identity/parent keys
+    # that participate in the composite ID_check match. Per product decision
+    # the inline editor edits only electrical_building_schema + the JSON file
+    # for those keys; sdi_dataset_EL is left untouched so the Check Mark can
+    # flip red when the two sides diverge.
+    SDI_PROTECTED_KEYS = ("UBC Asset Tag", "Equipment ID", "Supply From")
+
+    def _sync_matched_row(qr, structured_patch, asset_type="EL",
+                          sync_sdi=True, sdi_preserve=None):
+        """Write merged JSON; optionally sync sdi_dataset_EL.
+
+        sync_sdi=False → write JSON only (caller wants SDI untouched).
+        sdi_preserve → dict of field→value overrides applied to the payload
+            sent to _sync_db_from_structured. Use this to pin the SDI
+            identity/parent keys to their current values so they survive the
+            sync even though the JSON reflects the new edits.
+        Appends a (path, original) entry to json_backups for rollback."""
+        doc_id = f"{qr}_EL_{building}"
+        json_path = os.path.join(JSON_DIR, f"{doc_id}.json")
+        if not os.path.isfile(json_path):
+            raise FileNotFoundError(f"JSON not found for QR {qr}: {json_path}")
+        with open(json_path, "r", encoding="utf-8") as f:
+            original = json.load(f)
+        json_backups.append((json_path, original))
+        merged = json.loads(json.dumps(original))
+        structured = merged.setdefault("structured_data", {})
+        for k, v in structured_patch.items():
+            if v is not None:
+                structured[k] = v
+        merged["modified"] = True
+        atomic_write_json(json_path, merged)
+        if not sync_sdi:
+            return
+        sdi_payload = dict(structured)
+        if sdi_preserve:
+            for k, v in sdi_preserve.items():
+                sdi_payload[k] = "" if v is None else v
+        avg = None
+        try:
+            avg_val = merged.get("Avg_ai_conf") or merged.get("avg_ai_conf")
+            if avg_val not in (None, ""):
+                avg = float(avg_val)
+        except Exception:
+            avg = None
+        _sync_db_from_structured(qr, building, sdi_payload, asset_type=asset_type, avg_ai_conf=avg)
+
+    def _preserve_from_sdi(sdi_dict):
+        # Only pin keys the sdi row actually has values for. Preserving an
+        # empty string here entrenches a prior wipe: the merged JSON's real
+        # UBC Asset Tag / Equipment ID / Supply From would then be overridden
+        # with "" during _sync_db_from_structured, leaving identity fields
+        # blank forever. If sdi has nothing for a protected key, let the
+        # merged JSON's value flow through untouched.
+        if not sdi_dict:
+            return None
+        out = {}
+        for k in SDI_PROTECTED_KEYS:
+            v = (sdi_dict.get(k) or "")
+            if isinstance(v, str):
+                v = v.strip()
+            if v:
+                out[k] = v
+        return out or None
+
+    # Hold json_sync_lock for the whole JSON-write + log-update window so the
+    # before_request watcher (sync_json_directory_to_db_el) cannot race in
+    # between our write and our "already processed" marker. The watcher uses
+    # acquire(blocking=False), so concurrent calls will simply no-op.
+    json_sync_lock.acquire()
+    try:
+        try:
+            if matched_qr:
+                main_patch = {
+                    "UBC Asset Tag": new_tag,
+                    "Equipment ID": new_tag,
+                    "Supply From": new_supply,
+                    "Voltage Rating": new_voltage,
+                    "Voltage Rating (UoM)": new_voltage_uom,
+                    "Amperage Rating": new_amperage,
+                    "Amperage Rating (UoM)": new_amperage_uom,
+                    "Power Rating": new_power,
+                    "Power Rating (UoM)": new_power_uom,
+                    "Wire Rating": new_wire,
+                    "Wire Rating (UoM)": new_wire_uom,
+                }
+                if new_room is not None:
+                    main_patch["Location"] = str(new_room).strip()
+                _sync_matched_row(
+                    matched_qr, main_patch, asset_type="EL",
+                    sdi_preserve=_preserve_from_sdi(sdi_row),
+                )
+
+            if rename and cascade and children:
+                for child in children:
+                    child_qr = child.get("qr_code") or ""
+                    if not child_qr:
+                        # Unmatched children only need the SLD update (already done)
+                        children_updated.append({
+                            "row_id": child["row_id"],
+                            "Equipment ID": child["Equipment ID"],
+                            "json_synced": False,
+                        })
+                        continue
+                    try:
+                        # Supply From is a protected SDI key — the child's JSON gets
+                        # the new parent tag, but sdi_dataset_EL is NOT touched.
+                        _sync_matched_row(
+                            child_qr,
+                            {"Supply From": new_tag},
+                            asset_type="EL",
+                            sync_sdi=False,
+                        )
+                        children_updated.append({
+                            "row_id": child["row_id"],
+                            "Equipment ID": child["Equipment ID"],
+                            "json_synced": True,
+                        })
+                    except Exception as exc:  # noqa: BLE001
+                        children_failed.append({
+                            "row_id": child["row_id"],
+                            "Equipment ID": child["Equipment ID"],
+                            "error": str(exc),
+                        })
+        except Exception as e:  # noqa: BLE001
+            # Best-effort rollback: restore all JSON backups in reverse order.
+            # _sync_db_from_structured already committed for any row that got past
+            # step 3; we cannot undo those, but we can re-sync with backup
+            # structured_data so the DB matches the restored JSON.
+            for path, backup in reversed(json_backups):
+                try:
+                    if backup is None:
+                        if os.path.isfile(path):
+                            os.remove(path)
+                        continue
+                    atomic_write_json(path, backup)
+                    # Re-sync SDI with backup structured_data
+                    try:
+                        m = re.match(r"^([^_]+)_EL_([^_]+)\.json$", os.path.basename(path))
+                        if m:
+                            r_qr, r_building = m.group(1), m.group(2)
+                            r_struct = backup.get("structured_data", {}) or {}
+                            _sync_db_from_structured(
+                                r_qr, r_building, r_struct,
+                                asset_type=backup.get("asset_type") or "EL",
+                                avg_ai_conf=backup.get("Avg_ai_conf"),
+                            )
+                    except Exception as exc:  # noqa: BLE001
+                        current_app.logger.error(
+                            "[sld swift-save] SDI rollback failed for %s: %s", path, exc,
+                        )
+                except Exception as exc:  # noqa: BLE001
+                    current_app.logger.error(
+                        "[sld swift-save] JSON rollback failed for %s: %s", path, exc,
+                    )
+            # Even on rollback, record the (now-restored) JSON mtimes as
+            # processed so the watcher doesn't re-run _sync_db_from_structured
+            # on the restored content — we already did that ourselves above.
+            try:
+                mark_json_processed(
+                    PROCESSED_JSON_LOG_EL,
+                    file_paths=[p for (p, _) in json_backups],
+                )
+            except Exception as exc:  # noqa: BLE001
+                current_app.logger.warning(
+                    "[sld swift-save] processed log update failed: %s", exc,
+                )
+            _rollback_qr_location()
+            _rollback_sld()
+            return 500, {"error": f"Failed to sync captured asset: {e}"}
+
+        # Success: pin the just-written JSON mtimes in processed_json_el.log
+        # so the before_request watcher does NOT re-sync SDI from them.
+        try:
+            mark_json_processed(
+                PROCESSED_JSON_LOG_EL,
+                file_paths=[p for (p, _) in json_backups],
+            )
+        except Exception as exc:  # noqa: BLE001
+            current_app.logger.warning(
+                "[sld swift-save] processed log update failed: %s", exc,
+            )
+    finally:
+        json_sync_lock.release()
+
+    # 4. Recompute matching_check
+    try:
+        recompute_matching_check(building=building)
+    except Exception as exc:  # noqa: BLE001
+        current_app.logger.warning("[sld swift-save] matching_check refresh failed: %s", exc)
+
+    # 5. Re-read enriched row
+    updated_assets = get_all_assets(building=building)
+    updated_row = next((a for a in updated_assets if a.get("row_id") == row_id), None)
+
+    payload = {
+        "status": "ok",
+        "row": updated_row,
+        "children_updated": children_updated,
+    }
+    if children_failed:
+        payload["children_failed"] = children_failed
+
+    # Best-effort human_correction capture: diff the swift-save submission
+    # against the AI baseline (sld_ai_extract_payload) for the fields that
+    # the inline editor lets the user touch.
+    try:
+        _emit_human_corrections_for_row(
+            row_id=row_id,
+            current_row=current,
+            submitted_updates=updates,
+            fields=[
+                "Equipment ID", "Supply From", "Hierarchy", "ambigous",
+                "Amperage Rating", "Amperage Rating (UoM)",
+                "Power Rating", "Power Rating (UoM)",
+                "Wire Rating", "Wire Rating (UoM)",
+                "Voltage Rating", "Voltage Rating (UoM)",
+            ],
+            description="POST /sld/api/assets/<row_id>/swift-save",
+        )
+    except Exception:
+        pass
+    return 200, payload
+
+
+_RECONCILE_CHOICES = ("sld", "sdi", "custom")
+
+
+def reconcile_asset(row_id, choice, value=None, reason=""):
+    """Reconcile a Supply From divergence between electrical_building_schema
+    (SLD diagram) and sdi_dataset_EL (captured asset) for one active SLD row.
+
+    choice = 'sld'    -> push SLD's current Supply From to SDI + JSON.
+    choice = 'sdi'    -> push SDI's current Supply From to SLD.
+    choice = 'custom' -> write the supplied value to both sides + JSON.
+
+    Both sides record an audit_trail row. The generated ID_check on each
+    table tracks the new Supply From automatically.
+    """
+    try:
+        from Asset_dashboard_EL import (
+            JSON_DIR,
+            PROCESSED_JSON_LOG_EL,
+            json_sync_lock,
+            _apply_el_supply_from_formatting,
+            _sync_db_from_structured,
+        )
+    except Exception as e:  # noqa: BLE001
+        return 500, {"error": f"Server misconfigured: cannot load sync helpers ({e})"}
+
+    choice = (choice or "").strip().lower()
+    if choice not in _RECONCILE_CHOICES:
+        return 400, {"error": f"choice must be one of {_RECONCILE_CHOICES}"}
+    reason = str(reason or "").strip()
+
+    conn = _connect()
+    try:
+        sld_row = conn.execute(
+            f'SELECT * FROM "{TABLE}" WHERE row_id = ? AND {ACTIVE_DRAW_CONDITION}',
+            (row_id,),
+        ).fetchone()
+        if not sld_row:
+            return 404, {"error": "Active SLD row not found"}
+        sld = dict(sld_row)
+        building = str(sld.get("Building") or "").strip()
+        equipment_id = str(sld.get("Equipment ID") or "").strip()
+        sdi = _find_sdi_row(conn, building, equipment_id)
+    finally:
+        conn.close()
+
+    sld_supply = str(sld.get("Supply From") or "")
+    sdi_supply = str(sdi.get("Supply From") or "") if sdi else None
+
+    if choice == "sld":
+        target_raw = sld_supply
+    elif choice == "sdi":
+        if sdi is None:
+            return 400, {"error": "No matching sdi_dataset_EL row — choice 'sdi' has nothing to copy"}
+        target_raw = sdi_supply or ""
+    else:  # custom
+        if value is None:
+            return 400, {"error": "choice='custom' requires a value"}
+        target_raw = str(value)
+
+    target = _apply_el_supply_from_formatting(target_raw)
+    sld_changed = (sld_supply or "") != target
+    sdi_changed = sdi is not None and (sdi_supply or "") != target
+
+    if not sld_changed and not sdi_changed:
+        return 200, {
+            "status": "noop",
+            "message": "Both sides already agree on Supply From",
+            "target": target,
+        }
+
+    matched_qr = (str(sdi.get("QR Code")).strip() if sdi else "") or ""
+    description = f"reconcile:{choice}" + (f" reason={reason}" if reason else "")
+
+    sld_rollback_value = sld_supply if sld_changed else None
+    json_backup = None  # (path, original_dict) for SDI/JSON rollback
+
+    if sdi_changed and not matched_qr:
+        # No QR ⇒ no JSON file ⇒ can't safely sync SDI through the standard
+        # pipeline. Refuse rather than write a half-updated row.
+        return 400, {
+            "error": "Matching sdi_dataset_EL row has no QR Code; cannot reconcile SDI side automatically.",
+        }
+
+    json_sync_lock.acquire()
+    try:
+        if sld_changed:
+            conn = _connect()
+            try:
+                conn.execute(
+                    f'UPDATE "{TABLE}" SET "Supply From" = ? WHERE row_id = ?',
+                    (target, row_id),
+                )
+                if _audit_log_change:
+                    try:
+                        _audit_log_change(
+                            conn,
+                            qr_code=matched_qr or None,
+                            app_name="reviewer_el",
+                            table_name=TABLE,
+                            record_pk=row_id,
+                            op_type="UPDATE",
+                            field_changes={"Supply From": (sld_supply, target)},
+                            source="human",
+                            description=description,
+                        )
+                    except Exception as exc:  # noqa: BLE001
+                        print(f"[audit] reconcile SLD audit failed: {exc}")
+                conn.commit()
+            except Exception as e:  # noqa: BLE001
+                conn.rollback()
+                conn.close()
+                return 500, {"error": f"Failed to update SLD Supply From: {e}"}
+            finally:
+                try:
+                    conn.close()
+                except Exception:
+                    pass
+
+        if sdi_changed:
+            doc_id = f"{matched_qr}_EL_{building}"
+            json_path = os.path.join(JSON_DIR, f"{doc_id}.json")
+            try:
+                if not os.path.isfile(json_path):
+                    raise FileNotFoundError(f"JSON not found for QR {matched_qr}: {json_path}")
+                with open(json_path, "r", encoding="utf-8") as f:
+                    original = json.load(f)
+                json_backup = (json_path, original)
+                merged = json.loads(json.dumps(original))
+                structured = merged.setdefault("structured_data", {})
+                structured["Supply From"] = target
+                merged["modified"] = True
+                atomic_write_json(json_path, merged)
+                avg = None
+                try:
+                    avg_val = merged.get("Avg_ai_conf") or merged.get("avg_ai_conf")
+                    if avg_val not in (None, ""):
+                        avg = float(avg_val)
+                except Exception:
+                    avg = None
+                _sync_db_from_structured(
+                    matched_qr, building, dict(structured),
+                    asset_type=merged.get("asset_type") or "EL",
+                    avg_ai_conf=avg,
+                )
+
+                if _audit_log_change:
+                    sdi_conn = _connect()
+                    try:
+                        _audit_log_change(
+                            sdi_conn,
+                            qr_code=matched_qr,
+                            app_name="reviewer_el",
+                            table_name="sdi_dataset_EL",
+                            record_pk=matched_qr,
+                            op_type="UPDATE",
+                            field_changes={"Supply From": (sdi_supply or "", target)},
+                            source="human",
+                            description=description,
+                        )
+                        sdi_conn.commit()
+                    except Exception as exc:  # noqa: BLE001
+                        print(f"[audit] reconcile SDI audit failed: {exc}")
+                    finally:
+                        sdi_conn.close()
+            except Exception as e:  # noqa: BLE001
+                # Rollback SLD if we already wrote it, and restore the JSON.
+                if json_backup is not None:
+                    try:
+                        atomic_write_json(json_backup[0], json_backup[1])
+                        # Re-sync SDI with the original structured_data
+                        try:
+                            r_struct = (json_backup[1] or {}).get("structured_data", {}) or {}
+                            _sync_db_from_structured(
+                                matched_qr, building, dict(r_struct),
+                                asset_type=(json_backup[1] or {}).get("asset_type") or "EL",
+                                avg_ai_conf=(json_backup[1] or {}).get("Avg_ai_conf"),
+                            )
+                        except Exception:
+                            pass
+                    except Exception:
+                        pass
+                if sld_rollback_value is not None:
+                    try:
+                        c = _connect()
+                        try:
+                            c.execute(
+                                f'UPDATE "{TABLE}" SET "Supply From" = ? WHERE row_id = ?',
+                                (sld_rollback_value, row_id),
+                            )
+                            c.commit()
+                        finally:
+                            c.close()
+                    except Exception as exc:  # noqa: BLE001
+                        current_app.logger.error(
+                            "[sld reconcile] SLD rollback failed: %s", exc,
+                        )
+                return 500, {"error": f"Failed to sync captured asset: {e}"}
+
+            try:
+                mark_json_processed(PROCESSED_JSON_LOG_EL, file_paths=[json_path])
+            except Exception as exc:  # noqa: BLE001
+                current_app.logger.warning(
+                    "[sld reconcile] processed log update failed: %s", exc,
+                )
+    finally:
+        json_sync_lock.release()
+
+    try:
+        recompute_matching_check(building=building)
+    except Exception as exc:  # noqa: BLE001
+        current_app.logger.warning("[sld reconcile] matching_check refresh failed: %s", exc)
+
+    updated_assets = get_all_assets(building=building)
+    updated_row = next((a for a in updated_assets if a.get("row_id") == row_id), None)
+    return 200, {
+        "status": "ok",
+        "target": target,
+        "sld_changed": sld_changed,
+        "sdi_changed": sdi_changed,
+        "row": updated_row,
+    }
+
+
+def delete_asset(row_id):
+    conn = _connect()
+    try:
+        full_row = conn.execute(
+            f'SELECT * FROM "{TABLE}" WHERE row_id = ?',
+            (row_id,),
+        ).fetchone()
+        if not full_row:
+            return False, "Asset not found"
+        before_row = dict(full_row)
+        tag = before_row.get("Equipment ID")
+        parent = before_row.get("Supply From")
+        conn.execute(
+            f'UPDATE "{TABLE}" SET "Supply From" = ? WHERE "Supply From" = ?',
+            (parent, tag),
+        )
+        conn.execute(f'DELETE FROM "{TABLE}" WHERE row_id = ?', (row_id,))
+        if _audit_log_change:
+            try:
+                _audit_log_change(
+                    conn,
+                    qr_code=before_row.get("QR Code"),
+                    app_name="reviewer_el",
+                    table_name=TABLE,
+                    record_pk=row_id,
+                    op_type="DELETE",
+                    field_changes={
+                        k: (v, None) for k, v in before_row.items() if v not in (None, "")
+                    },
+                    source="human",
+                    description="DELETE /sld/api/assets",
+                )
+            except Exception as exc:
+                print(f"[audit] EL delete_asset audit failed: {exc}")
+        conn.commit()
+        return True, "OK"
+    finally:
+        conn.close()
+
+
+def backup_all_rows():
+    conn = _connect()
+    try:
+        rows = conn.execute(f'SELECT * FROM "{TABLE}"').fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        conn.close()
+
+
+def _insert_rows_into_schema(rows, new_draw_value):
+    """Re-insert previously-backed-up rows into electrical_building_schema
+    with the given ``new_draw`` value.
+
+    Both ``restore_archived_rows`` (state="FALSE") and
+    ``restore_active_rows`` (state="TRUE") delegate here. Centralizing the
+    INSERT means schema migrations (e.g. the ``sld_extract_run_id`` /
+    ``sld_ai_extract_payload`` columns added in [SLD-005]) are handled in
+    one place and both call sites stay in sync.
+    """
+    if not rows:
+        return
+    conn = _connect()
+    try:
+        cols = _table_columns(conn, TABLE)
+        has_run_id_col = "sld_extract_run_id" in cols
+        has_payload_col = "sld_ai_extract_payload" in cols
+        has_wire_col = "Wire Rating" in cols and "Wire Rating (UoM)" in cols
+        base_cols = [
+            '"Hierarchy"', '"Supply From"', '"Equipment ID"', '"Building"',
+            '"Amperage Rating"', '"Amperage Rating (UoM)"',
+            '"Power Rating"', '"Power Rating (UoM)"',
+            '"Voltage Rating"', '"Voltage Rating (UoM)"',
+            'ambigous', 'new_draw', 'source_pdf', 'created_at',
+        ]
+        if has_wire_col:
+            base_cols.append('"Wire Rating"')
+            base_cols.append('"Wire Rating (UoM)"')
+        if has_run_id_col:
+            base_cols.append('sld_extract_run_id')
+        if has_payload_col:
+            base_cols.append('sld_ai_extract_payload')
+        placeholders = ", ".join(["?"] * len(base_cols))
+        for row in rows:
+            params = [
+                row["Hierarchy"],
+                row["Supply From"],
+                row["Equipment ID"],
+                row["Building"],
+                row.get("Amperage Rating", ""),
+                row.get("Amperage Rating (UoM)", ""),
+                row.get("Power Rating", ""),
+                row.get("Power Rating (UoM)", ""),
+                row.get("Voltage Rating", ""),
+                row.get("Voltage Rating (UoM)", ""),
+                row.get("ambigous", ""),
+                new_draw_value,
+                row.get("source_pdf", ""),
+                row.get("created_at", ""),
+            ]
+            if has_wire_col:
+                params.append(row.get("Wire Rating", "") or "")
+                params.append(row.get("Wire Rating (UoM)", "") or "")
+            if has_run_id_col:
+                params.append(row.get("sld_extract_run_id", "") or "")
+            if has_payload_col:
+                params.append(row.get("sld_ai_extract_payload", "") or "")
+            conn.execute(
+                f'INSERT INTO "{TABLE}" ({", ".join(base_cols)}) '
+                f'VALUES ({placeholders})',
+                params,
+            )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def restore_archived_rows(archived_rows):
+    """Re-insert rows with ``new_draw='FALSE'`` (i.e. into the archive).
+    Used for rows that were already archived AND for the prior active set
+    of a building that's being re-extracted (those rows are superseded)."""
+    _insert_rows_into_schema(archived_rows, "FALSE")
+
+
+def restore_active_rows(active_rows):
+    """Re-insert rows preserving their active state (``new_draw='TRUE'``).
+    Used for OTHER buildings' active rows that the table-drop step would
+    otherwise wipe — they have nothing to do with the building being
+    extracted and must remain active afterward."""
+    _insert_rows_into_schema(active_rows, "TRUE")
+
+
+def mark_new_rows_and_source(building_code, pdf_filename):
+    conn = _connect()
+    try:
+        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        conn.execute(
+            f"UPDATE \"{TABLE}\" SET new_draw = 'TRUE', source_pdf = ?, created_at = ? "
+            f"WHERE \"Building\" = ? AND (new_draw IS NULL OR new_draw = '')",
+            (pdf_filename, now, building_code),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def validate_pdf_filename(filename):
+    if not filename.lower().endswith(".pdf"):
+        return False, "File must be a PDF (.pdf)"
+    return True, ""
+
+
+# ── Routes ───────────────────────────────────────────────────────────────
+
+@sld_bp.route("/api/buildings", methods=["GET"])
+@login_required
+def api_buildings():
+    include_archived = (request.args.get("include_archived", "").lower() == "true")
+    return jsonify(get_buildings(include_archived=include_archived))
+
+
+@sld_bp.route("/api/locations", methods=["GET"])
+@login_required
+def api_locations():
+    building = (request.args.get("building") or "").strip() or None
+    return jsonify(get_building_locations(building))
+
+
+@sld_bp.route("/api/assets", methods=["GET"])
+@login_required
+def api_assets_list():
+    building = request.args.get("building") or None
+    include_history = request.args.get("history", "").lower() == "true"
+    if not include_history:
+        recompute_matching_check(building=building)
+    return jsonify(get_all_assets(building=building, include_history=include_history))
+
+
+@sld_bp.route("/api/assets", methods=["POST"])
+@login_required
+def api_assets_create():
+    body = request.get_json(silent=True) or {}
+    tag = (body.get("Equipment ID") or "").strip()
+    if not tag:
+        return jsonify({"error": "Equipment ID is required"}), 400
+    building = (body.get("Building") or "").strip()
+    qr_code = (body.get("QR Code") or "").strip()
+    qr_ok, qr_detail = validate_qr_in_sdi(qr_code, building)
+    if not qr_ok:
+        return jsonify({"error": qr_detail}), 400
+    if active_asset_exists(tag, building=building or None):
+        return jsonify({"error": f"{tag} already exists in the active SLD"}), 409
+    create_asset(body)
+    recompute_matching_check(building=building or None)
+    return jsonify({
+        "status": "ok",
+        "assets": get_all_assets(building=building or None),
+        "missed_assets": get_missed_assets(building=building or None),
+        "sdi_not_in_sld": get_sdi_not_in_sld_assets(building=building or None),
+    }), 201
+
+
+@sld_bp.route("/api/assets/<int:row_id>", methods=["PUT"])
+@login_required
+def api_assets_update(row_id):
+    body = request.get_json(silent=True) or {}
+    building = request.args.get("building") or None
+    ok, msg = update_asset(row_id, body)
+    if not ok:
+        return jsonify({"error": msg}), 404
+    recompute_matching_check(building=building)
+    return jsonify({
+        "status": "ok",
+        "assets": get_all_assets(building=building),
+        "missed_assets": get_missed_assets(building=building),
+        "sdi_not_in_sld": get_sdi_not_in_sld_assets(building=building),
+    })
+
+
+@sld_bp.route("/api/assets/<int:row_id>/swift-save", methods=["POST"])
+@login_required
+def api_assets_swift_save(row_id):
+    body = request.get_json(silent=True) or {}
+    cascade = bool(body.pop("cascade", False))
+    status, payload = swift_save_asset(row_id, body, cascade=cascade)
+    return jsonify(payload), status
+
+
+@sld_bp.route("/api/assets/<int:row_id>/reconcile", methods=["POST"])
+@login_required
+def api_assets_reconcile(row_id):
+    body = request.get_json(silent=True) or {}
+    status, payload = reconcile_asset(
+        row_id,
+        choice=body.get("choice"),
+        value=body.get("value"),
+        reason=body.get("reason", ""),
+    )
+    return jsonify(payload), status
+
+
+@sld_bp.route("/api/assets/<int:row_id>", methods=["DELETE"])
+@login_required
+def api_assets_delete(row_id):
+    building = request.args.get("building") or None
+    ok, msg = delete_asset(row_id)
+    if not ok:
+        return jsonify({"error": msg}), 404
+    recompute_matching_check(building=building)
+    return jsonify({
+        "status": "ok",
+        "assets": get_all_assets(building=building),
+        "missed_assets": get_missed_assets(building=building),
+        "sdi_not_in_sld": get_sdi_not_in_sld_assets(building=building),
+    })
+
+
+@sld_bp.route("/api/download-xlsx", methods=["GET"])
+@login_required
+def api_download_xlsx():
+    """Server-side xlsx download for the SLD asset table.
+
+    Why this exists: the client-side ExcelJS path produces a blob URL,
+    which Edge's iframe download manager selectively blocks for Office
+    MIME types ("Couldn't download — Network issue"). The blob path
+    survives FileSaver.js because the blocking is at a layer below the
+    download-trigger mechanism. A standard HTTP response with a
+    ``Content-Disposition: attachment`` header is the canonical
+    download path and works wherever any download works (proven by the
+    PDF export's success in the same iframe).
+
+    Mirrors the columns and ordering of the client export
+    (``exportSwiftExcel`` in static/sld/sld.js) so users see the same
+    spreadsheet shape regardless of which path produced it.
+    """
+    from io import BytesIO
+    from openpyxl import Workbook
+    from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
+
+    building = (request.args.get("building") or "").strip()
+    if not building:
+        return jsonify({"error": "missing building parameter"}), 400
+
+    assets = get_all_assets(building=building)
+    headers = [
+        "Hierarchy", "Equip QR Code", "Equipment ID", "Fed QR Code",
+        "Fed From", "Room", "Voltage", "Amperage", "Power", "Wire",
+        "Check",
+    ]
+    # Indices of the Fed QR Code / Fed From header cells, tinted #FCD5B4
+    # to match the on-screen pairing in the Switch Over inline editor.
+    fed_header_indices = {4, 5}
+
+    def _lookup_key(value):
+        return re.sub(r"\s+", " ", str(value or "").strip()).upper()
+
+    equipment_qr_lookup = {}
+    for asset in assets:
+        key = _lookup_key(asset.get("Equipment ID"))
+        if key and key not in equipment_qr_lookup:
+            equipment_qr_lookup[key] = str(asset.get("QR Code") or "").strip()
+
+    def _fed_qr(asset):
+        return equipment_qr_lookup.get(_lookup_key(asset.get("Supply From")), "")
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Assets"
+
+    title_cell = ws.cell(row=1, column=2, value="UBC Facilities — Single Line Diagram Assets")
+    title_cell.font = Font(name="Calibri", size=14, bold=True, color="FF002145")
+    title_cell.alignment = Alignment(vertical="center", horizontal="left")
+
+    display_name = get_building_display(building) or building
+    sub_text = (
+        f"Building: {display_name}   |   "
+        f"Generated {datetime.now().strftime('%Y-%m-%d %H:%M')}"
+    )
+    sub_cell = ws.cell(row=2, column=2, value=sub_text)
+    sub_cell.font = Font(name="Calibri", size=10, italic=True, color="FF64748B")
+    sub_cell.alignment = Alignment(vertical="center", horizontal="left")
+
+    ws.row_dimensions[1].height = 22
+    ws.row_dimensions[2].height = 18
+    ws.row_dimensions[3].height = 6
+
+    header_fill = PatternFill(start_color="FF002145", end_color="FF002145", fill_type="solid")
+    fed_header_fill = PatternFill(start_color="FFFCD5B4", end_color="FFFCD5B4", fill_type="solid")
+    header_font = Font(name="Calibri", size=11, bold=True, color="FFFFFFFF")
+    fed_header_font = Font(name="Calibri", size=11, bold=True, color="FF002145")
+    header_align = Alignment(horizontal="center", vertical="center")
+    border_color = "FFE2E8F0"
+    cell_border = Border(
+        top=Side(style="thin", color=border_color),
+        bottom=Side(style="thin", color=border_color),
+        left=Side(style="thin", color=border_color),
+        right=Side(style="thin", color=border_color),
+    )
+
+    HEADER_ROW = 4
+    for col_idx, header in enumerate(headers, start=1):
+        c = ws.cell(row=HEADER_ROW, column=col_idx, value=header)
+        if col_idx in fed_header_indices:
+            c.font = fed_header_font
+            c.fill = fed_header_fill
+        else:
+            c.font = header_font
+            c.fill = header_fill
+        c.alignment = header_align
+    ws.row_dimensions[HEADER_ROW].height = 22
+    ws.freeze_panes = ws.cell(row=HEADER_ROW + 1, column=1)
+
+    band_fills = ["FFF8FAFC", "FFEEF2F8"]
+    band_idx = 0
+    prev_hierarchy = None
+    matched_font = Font(name="Calibri", size=12, bold=True, color="FF10B981")
+    unmatched_font = Font(name="Calibri", size=12, bold=True, color="FFEF4444")
+    body_align_left = Alignment(horizontal="left", vertical="center")
+    body_align_center = Alignment(horizontal="center", vertical="center")
+
+    def _join(value, uom):
+        a = (str(value) if value is not None else "").strip()
+        b = (str(uom) if uom is not None else "").strip()
+        return f"{a} {b}".strip()
+
+    for offset, asset in enumerate(assets):
+        row_idx = HEADER_ROW + 1 + offset
+        hierarchy_value = asset.get("Hierarchy", "")
+        if offset > 0 and str(hierarchy_value or "") != str(prev_hierarchy or ""):
+            band_idx = (band_idx + 1) % len(band_fills)
+        prev_hierarchy = hierarchy_value
+        band_fill = PatternFill(
+            start_color=band_fills[band_idx],
+            end_color=band_fills[band_idx],
+            fill_type="solid",
+        )
+
+        matched = bool(asset.get("id_check_match"))
+        values = [
+            hierarchy_value if hierarchy_value is not None else "",
+            asset.get("QR Code") or "",
+            asset.get("Equipment ID") or "",
+            _fed_qr(asset),
+            asset.get("Supply From") or "",
+            asset.get("Room") or "",
+            _join(asset.get("Voltage Rating"), asset.get("Voltage Rating (UoM)")),
+            _join(asset.get("Amperage Rating"), asset.get("Amperage Rating (UoM)")),
+            _join(asset.get("Power Rating"), asset.get("Power Rating (UoM)")),
+            _join(asset.get("Wire Rating"), asset.get("Wire Rating (UoM)")),
+            "✓" if matched else "✗",
+        ]
+        for col_idx, v in enumerate(values, start=1):
+            c = ws.cell(row=row_idx, column=col_idx, value=v)
+            c.fill = band_fill
+            c.border = cell_border
+            if col_idx in (1, 11):
+                c.alignment = body_align_center
+            else:
+                c.alignment = body_align_left
+            c.font = Font(name="Calibri", size=11)
+        check_cell = ws.cell(row=row_idx, column=11)
+        check_cell.font = matched_font if matched else unmatched_font
+
+    # Auto-fit each column to the widest visible value (incl. header).
+    min_widths = [11, 16, 16, 16, 16, 11, 14, 14, 14, 10, 8]
+    for col_idx, header in enumerate(headers, start=1):
+        widest = len(str(header))
+        for row_idx in range(HEADER_ROW + 1, ws.max_row + 1):
+            v = ws.cell(row=row_idx, column=col_idx).value
+            if v is not None:
+                widest = max(widest, len(str(v)))
+        col_letter = ws.cell(row=1, column=col_idx).column_letter
+        ws.column_dimensions[col_letter].width = max(min_widths[col_idx - 1], widest + 3)
+
+    buf = BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    safe_building = re.sub(r"[^\w\-]", "_", building) or "unknown"
+    return send_file(
+        buf,
+        mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        as_attachment=True,
+        download_name=f"EL_Assets_{safe_building}.xlsx",
+    )
+
+
+@sld_bp.route("/api/missed-assets", methods=["GET"])
+@login_required
+def api_missed_assets_list():
+    building = request.args.get("building") or None
+    recompute_matching_check(building=building)
+    return jsonify(get_missed_assets(building=building))
+
+
+@sld_bp.route("/api/sdi-not-in-sld", methods=["GET"])
+@login_required
+def api_sdi_not_in_sld_list():
+    building = request.args.get("building") or None
+    return jsonify(get_sdi_not_in_sld_assets(building=building))
+
+
+@sld_bp.route("/api/missed-assets/exclude", methods=["POST"])
+@login_required
+def api_missed_assets_exclude():
+    body = request.get_json(silent=True) or {}
+    building = (body.get("building") or request.args.get("building") or "").strip() or None
+    ok, msg, archived_ids = archive_missed_assets(body.get("row_ids"), building=building)
+    if not ok:
+        return jsonify({"error": msg}), 400
+    recompute_matching_check(building=building)
+    return jsonify({
+        "status": "ok",
+        "archived_row_ids": archived_ids,
+        "assets": get_all_assets(building=building),
+        "missed_assets": get_missed_assets(building=building),
+        "sdi_not_in_sld": get_sdi_not_in_sld_assets(building=building),
+        "all_buildings": get_buildings(),
+    })
+
+
+@sld_bp.route("/api/missed-assets/add-to-sld", methods=["POST"])
+@login_required
+def api_missed_assets_add_to_sld():
+    body = request.get_json(silent=True) or {}
+    building = (body.get("building") or request.args.get("building") or "").strip() or None
+    qr_code = (body.get("qr_code") or "").strip()
+    ok, msg = add_missed_asset_to_sld(body.get("row_id"), building=building, qr_code=qr_code)
+    if not ok:
+        return jsonify({"error": msg}), 400
+    recompute_matching_check(building=building)
+    return jsonify({
+        "status": "ok",
+        "assets": get_all_assets(building=building),
+        "missed_assets": get_missed_assets(building=building),
+        "sdi_not_in_sld": get_sdi_not_in_sld_assets(building=building),
+        "all_buildings": get_buildings(),
+    }), 201
+
+
+@sld_bp.route("/api/qr-codes/validate", methods=["GET"])
+@login_required
+def api_qr_codes_validate():
+    qr = request.args.get("qr") or ""
+    building = (request.args.get("building") or "").strip()
+    ok, detail = validate_qr_in_sdi(qr, building)
+    if not ok:
+        return jsonify({"valid": False, "error": detail}), 200
+    return jsonify({"valid": True, "source": detail}), 200
+
+
+_PHOTO_INDEX_RE = re.compile(r"-\s*(\d+)\s*$")
+
+
+def _find_photos_for_qr(qr_code, discipline="EL"):
+    """Return all captured photos for ``qr_code`` sorted by trailing index.
+
+    Filenames follow ``<QR> <Building> <Discipline> - <Index>.<ext>``. The
+    discipline filter is *soft*: when at least one filename for this QR
+    contains ` <discipline> ` (space-bounded), the result is restricted to
+    those; otherwise every match is returned (legacy files).
+    """
+    sanitized = re.sub(r"[^A-Za-z0-9_-]", "", qr_code or "")
+    if not sanitized:
+        return []
+    img_dir = current_app.config.get("IMG_DIR")
+    if not img_dir:
+        return []
+    base = Path(img_dir)
+    if not base.is_dir():
+        return []
+    matches = []
+    discipline_token = f" {discipline} " if discipline else ""
+    try:
+        for path in sorted(base.glob(f"{sanitized}*")):
+            if not path.is_file():
+                continue
+            stem = path.stem.rstrip()
+            if not stem.lower().startswith(sanitized.lower()):
+                continue
+            m = _PHOTO_INDEX_RE.search(stem)
+            if not m:
+                continue
+            matches.append({
+                "index": int(m.group(1)),
+                "filename": path.name,
+            })
+    except Exception as exc:  # noqa: BLE001
+        current_app.logger.warning(
+            "[sld] _find_photos_for_qr scan failed for %r: %s", qr_code, exc,
+        )
+        return []
+    if discipline_token:
+        preferred = [m for m in matches if discipline_token in f" {m['filename']} "]
+        if preferred:
+            matches = preferred
+    matches.sort(key=lambda m: m["index"])
+    return matches
+
+
+@sld_bp.route("/api/photos/<path:qr_code>", methods=["GET"])
+@login_required
+def api_asset_photos(qr_code):
+    """List captured photos for a QR. Drives the SLD photo popover."""
+    qr = (qr_code or "").strip()
+    if not qr:
+        return jsonify({"error": "QR required"}), 400
+    photos = _find_photos_for_qr(qr, discipline="EL")
+    if not photos:
+        return jsonify({"qr": qr, "photos": [], "message": "Photo not found"}), 404
+    items = [
+        {"index": m["index"], "url": f"/images/{urlquote(m['filename'])}"}
+        for m in photos
+    ]
+    default_idx = next((i for i, m in enumerate(photos) if m["index"] == 1), 0)
+    return jsonify({
+        "qr": qr,
+        "default_idx_in_list": default_idx,
+        "photos": items,
+    })
+
+
+@sld_bp.route("/api/refresh_matching", methods=["POST"])
+@login_required
+def api_refresh_matching():
+    building = request.args.get("building") or None
+    recompute_matching_check(building=building)
+    return jsonify({
+        "status": "ok",
+        "scope": "building" if building else "all",
+        "building": building,
+    })
+
+
+@sld_bp.route("/api/upload", methods=["POST"])
+@login_required
+def api_upload():
+    file = request.files.get("file") or request.files.get("pdf")
+    if file is None:
+        return jsonify({"error": "No file received"}), 400
+
+    original_name = file.filename or ""
+    safe_name = secure_filename(original_name)
+    if not safe_name:
+        return jsonify({"error": "Invalid filename"}), 400
+
+    valid, err = validate_pdf_filename(original_name)
+    if not valid:
+        return jsonify({"error": err}), 400
+
+    building_code = (request.form.get("building_code") or "").strip()
+    if not building_code:
+        return jsonify({"error": "Building code is required"}), 400
+    exists = check_building_exists(building_code)
+
+    dest_path = os.path.join(_pdf_storage(), safe_name)
+    file.save(dest_path)
+
+    return jsonify({
+        "status": "uploaded",
+        "filename": safe_name,
+        "original_filename": original_name,
+        "building_code": building_code,
+        "building_display": get_building_display(building_code),
+        "building_exists": exists,
+        "saved_to": dest_path,
+    })
+
+
+def _is_dashboard_admin() -> bool:
+    """Mirror of Dashboard's is_dashboard_admin(): membership of the
+    DASHBOARD_ADMIN_USERS env var (CSV). Both apps load the same
+    auth_service.env so the same admin set applies cross-service."""
+    try:
+        from flask_login import current_user as _current_user  # noqa: WPS433
+    except Exception:
+        return False
+    if not getattr(_current_user, "is_authenticated", False):
+        return False
+    raw = os.getenv("DASHBOARD_ADMIN_USERS", "")
+    admins = {p.strip().lower() for p in raw.split(",") if p.strip()}
+    uname = str(getattr(_current_user, "username", "") or "").strip().lower()
+    return bool(uname) and uname in admins
+
+
+def _read_run_meta(run_id: str):
+    """Read the run_meta event from a feedback JSONL by run_id."""
+    if not run_id:
+        return None
+    fb_dir = feedback_dir_for()
+    candidate = os.path.join(fb_dir, f"{run_id}.jsonl")
+    if not os.path.isfile(candidate):
+        return None
+    try:
+        with open(candidate, "r", encoding="utf-8", errors="replace") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    rec = json.loads(line)
+                except Exception:
+                    continue
+                if rec.get("kind") == "run_meta":
+                    return rec
+    except OSError:
+        return None
+    return None
+
+
+def _run_extraction(filename: str, building_code: str, replace: bool):
+    """Core SLD extraction pipeline shared by /api/process and /api/rerun.
+
+    Returns a Flask response (jsonify + status code) so callers can
+    `return _run_extraction(...)` directly. All Channel A/B logging,
+    backup/restore, and JSON-replay behavior is preserved.
+    """
+    pdf_path = os.path.join(_pdf_storage(), filename)
+    if not os.path.isfile(pdf_path):
+        return jsonify({"error": f"PDF not found: {filename}"}), 400
+
+    existing = check_building_exists(building_code)
+    if existing and not replace:
+        return jsonify({
+            "error": "conflict",
+            "message": (
+                f"Building {building_code} already has an active drawing. "
+                "Set replace=true to proceed."
+            ),
+        }), 409
+
+    all_old_rows = backup_all_rows()
+    old_rows_to_archive = [r for r in all_old_rows if r.get("new_draw") != "FALSE"]
+
+    extract_script = current_app.config["SLD_EXTRACT_SCRIPT"]
+    timeout = current_app.config.get("SLD_EXTRACT_TIMEOUT", 600)
+
+    # ── Feedback-corpus envelope (Channel A + B). Best-effort: any failure
+    # writing logs is swallowed so the user's extraction completes either
+    # way. See sld/_feedback.py for the schema. ─────────────────────────
+    fb_dir = feedback_dir_for()
+    try:
+        os.makedirs(fb_dir, exist_ok=True)
+    except OSError:
+        pass
+    pdf_sha1 = _file_sha1(pdf_path)
+    script_sha1 = _file_sha1(extract_script)
+    run_id = make_run_id(building_code, pdf_sha1) or "sld_unknown"
+    feedback_file = os.path.join(fb_dir, f"{run_id}.jsonl")
+    main_log_path = os.environ.get("SLD_EXTRACT_LOG", "/home/developer/sld_extract.log")
+    run_meta = {
+        "kind": "run_meta",
+        "run_id": run_id,
+        "ts": _now_iso(),
+        "building_code": building_code,
+        "pdf_filename": filename,
+        "pdf_path": pdf_path,
+        "pdf_sha1": pdf_sha1,
+        "pdf_bytes": _file_size(pdf_path),
+        "script_path": extract_script,
+        "script_sha1": script_sha1,
+        "timeout_s": timeout,
+        "feedback_file": feedback_file,
+        "main_log": main_log_path,
+        "replace": replace,
+    }
+    _append_jsonl(feedback_file, run_meta)
+    _append_main_log(
+        main_log_path,
+        [
+            "",
+            "==================================================",
+            f"[{_now_local()}] INFO: --- START sld_extract ---",
+            f"[{_now_local()}] INFO: run_id={run_id} building={building_code} "
+            f"pdf={filename} pdf_sha1={pdf_sha1[:12]} script_sha1={script_sha1[:12]} "
+            f"feedback={feedback_file}",
+            "==================================================",
+        ],
+    )
+    _wrapper_start_ts = datetime.now(timezone.utc)
+
+    try:
+        result = subprocess.run(
+            [
+                sys.executable,
+                extract_script,
+                "--input", pdf_path,
+                "--db", _db_path(),
+                "--building-code", building_code,
+                "--feedback-file", feedback_file,
+                "--run-id", run_id,
+            ],
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
+    except subprocess.TimeoutExpired:
+        _append_jsonl(feedback_file, {
+            "kind": "wrapper_event", "run_id": run_id, "ts": _now_iso(),
+            "subkind": "timeout", "timeout_s": timeout,
+        })
+        _append_main_log(main_log_path, [
+            f"[{_now_local()}] ERROR: --- END sld_extract --- (exit=TIMEOUT, duration={timeout}s)",
+            "---------------------------------------------------",
+        ])
+        return jsonify({"error": f"Extraction timed out after {timeout}s"}), 504
+    except FileNotFoundError:
+        _append_jsonl(feedback_file, {
+            "kind": "wrapper_event", "run_id": run_id, "ts": _now_iso(),
+            "subkind": "script_not_found", "script_path": extract_script,
+        })
+        _append_main_log(main_log_path, [
+            f"[{_now_local()}] ERROR: --- END sld_extract --- (script not found: {extract_script})",
+            "---------------------------------------------------",
+        ])
+        return jsonify({"error": f"Extraction script not found: {extract_script}"}), 500
+
+    duration_s = int((datetime.now(timezone.utc) - _wrapper_start_ts).total_seconds())
+
+    # Channel A: append captured stdout/stderr regardless of exit code so
+    # the human-readable trail survives both success and failure.
+    if result.stdout:
+        _append_main_log_raw(main_log_path, result.stdout)
+    if result.stderr:
+        _append_main_log_raw(main_log_path, result.stderr)
+
+    summary = parse_summary_from_stdout(result.stdout or "") or {}
+
+    if result.returncode != 0:
+        stderr_tail = (result.stderr or "")[-2000:]
+        _append_jsonl(feedback_file, {
+            "kind": "wrapper_event", "run_id": run_id, "ts": _now_iso(),
+            "subkind": "non_zero_exit", "exit_code": result.returncode,
+            "stderr_tail": stderr_tail, "duration_s": duration_s,
+        })
+        _append_main_log(main_log_path, [
+            f"[{_now_local()}] ERROR: --- END sld_extract --- (exit={result.returncode}, duration={duration_s}s)",
+            "---------------------------------------------------",
+        ])
+        restore_archived_rows(old_rows_to_archive)
+        ensure_sld_schema()
+        current_app.logger.error("[sld] extraction failed rc=%s stderr=%s", result.returncode, stderr_tail)
+        return jsonify({"error": "Extraction failed", "stderr": stderr_tail}), 502
+
+    _append_jsonl(feedback_file, {
+        "kind": "run_summary", "run_id": run_id, "ts": _now_iso(),
+        "exit_code": 0, "duration_s": duration_s, **summary,
+    })
+    _append_main_log(main_log_path, [
+        f"[{_now_local()}] INFO: --- END sld_extract --- "
+        f"(exit=0, duration={duration_s}s, "
+        f"assets={summary.get('asset_count', '?')}, "
+        f"hierarchies={summary.get('hierarchy_count', '?')}, "
+        f"model_calls={summary.get('model_calls', '?')})",
+        "---------------------------------------------------",
+    ])
+
+    ensure_sld_schema()
+    mark_new_rows_and_source(building_code, filename)
+
+    # Re-insert previously-backed-up rows after the table-drop in extraction.
+    # Three buckets, three different new_draw states:
+    #   1. Already-archived rows (any building)        -> stay FALSE.
+    #   2. THIS building's prior active rows (replace) -> become FALSE (superseded).
+    #   3. OTHER buildings' active rows                -> stay TRUE (preserved).
+    # Bucket 3 used to call restore_archived_rows (which always wrote FALSE),
+    # silently archiving every other building each time anyone ran Process.
+    # That was the cause of the "0 active rows for building X after building Y
+    # was processed" symptom; now uses restore_active_rows.
+    restore_archived_rows([r for r in all_old_rows if r.get("new_draw") == "FALSE"])
+    if existing:
+        restore_archived_rows([r for r in old_rows_to_archive if r["Building"] == building_code])
+    restore_active_rows([r for r in old_rows_to_archive if r["Building"] != building_code])
+
+    recompute_matching_check(building=building_code)
+
+    return jsonify({
+        "status": "ok",
+        "run_id": run_id,
+        "duration_s": duration_s,
+        "asset_count": summary.get("asset_count"),
+        "building_code": building_code,
+        "assets": get_all_assets(building=building_code),
+        "missed_assets": get_missed_assets(building=building_code),
+        "sdi_not_in_sld": get_sdi_not_in_sld_assets(building=building_code),
+        "all_buildings": get_buildings(),
+    })
+
+
+@sld_bp.route("/api/process", methods=["POST"])
+@login_required
+def api_process():
+    body = request.get_json(silent=True) or {}
+    return _run_extraction(
+        filename=body.get("filename", ""),
+        building_code=body.get("building_code", ""),
+        replace=bool(body.get("replace", False)),
+    )
+
+
+@sld_bp.route("/api/rerun/<run_id>", methods=["POST"])
+@login_required
+def api_rerun(run_id):
+    """Admin-only re-run of a prior extraction by run_id.
+
+    Reads the original run_meta from <feedback_dir>/<run_id>.jsonl to
+    recover the source PDF and building, then invokes the same pipeline
+    as /api/process with replace=True. A NEW run_id is minted by the
+    pipeline; this endpoint returns that new run_id in the response.
+    """
+    if not _is_dashboard_admin():
+        return jsonify({"error": "Administrator access required"}), 403
+    meta = _read_run_meta(run_id)
+    if not meta:
+        return jsonify({"error": f"Run not found: {run_id}"}), 404
+    filename = meta.get("pdf_filename") or ""
+    building_code = meta.get("building_code") or ""
+    if not filename or not building_code:
+        return jsonify({"error": f"Run {run_id} missing pdf_filename or building_code"}), 422
+    return _run_extraction(filename=filename, building_code=building_code, replace=True)

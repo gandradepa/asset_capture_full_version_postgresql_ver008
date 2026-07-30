@@ -1,0 +1,35 @@
+#!/usr/bin/env python3
+"""Print full row content for every reference to a given QR.
+
+Usage: python3 dump_qr_rows.py 0000084088
+"""
+from __future__ import annotations
+import sqlite3, sys
+
+DB = "/home/developer/asset_capture_app_dev/data/QR_codes.db"
+
+QUERIES = [
+    ("QR_code_assets", 'code_assets LIKE ?', lambda q: f"{q} %"),
+    ("QR_codes",       '"QR_code_ID" = ?', lambda q: q),
+    ("process_type",   '"QR Code" = ?',    lambda q: q),
+    ("sdi_dataset",    '"QR Code" = ?',    lambda q: q),
+]
+
+
+def main(qr: str) -> int:
+    con = sqlite3.connect(DB)
+    con.row_factory = sqlite3.Row
+    for tbl, where, paramfn in QUERIES:
+        print(f"--- {tbl} (WHERE {where}) ---")
+        for r in con.execute(f'SELECT * FROM "{tbl}" WHERE {where}', (paramfn(qr),)):
+            d = dict(r)
+            non_empty = {k: v for k, v in d.items() if v not in (None, "", 0, "0")}
+            print(non_empty)
+        print()
+    return 0
+
+
+if __name__ == "__main__":
+    if len(sys.argv) < 2:
+        print("usage: dump_qr_rows.py <QR>"); sys.exit(2)
+    sys.exit(main(sys.argv[1]))

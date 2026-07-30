@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 64 64" aria-labelledby="title">
+  <title>VMware Cloud</title>
+  <g fill="none" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M12 48c8.5 11 23.7 14 35.5 8.6" stroke="#00c7d7" stroke-width="4"/>
+    <path d="M27 53a24 24 0 1 1 27.8-19.8" stroke="#00c7d7" stroke-width="4"/>
+    <path d="M41.5 19.9A19 19 0 0 1 54 32" stroke="#00c7d7" stroke-width="4"/>
+    <path d="M24 38.5a14 14 0 1 1 26.7-5.7" stroke="#00a2e8" stroke-width="4"/>
+    <path d="M29.5 38.5a6.5 6.5 0 0 1 2.2-12.6 8.5 8.5 0 0 1 16.6 2 7.5 7.5 0 0 1 8.2 8.5" stroke="#00a2e8" stroke-width="4"/>
+    <circle cx="32" cy="17" r="4.5" stroke="#00a2e8" stroke-width="4"/>
+    <circle cx="22" cy="44" r="4.5" stroke="#00a2e8" stroke-width="4"/>
+    <circle cx="46" cy="58" r="6" stroke="#7d3fbf" stroke-width="4"/>
+    <circle cx="35" cy="48" r="11" stroke="#7d3fbf" stroke-width="4"/>
+    <circle cx="52" cy="40" r="8" stroke="#7d3fbf" stroke-width="4"/>
+    <path d="M42.5 43.5 52 38" stroke="#7d3fbf" stroke-width="4"/>
+    <path d="M42.5 52.5 50 59" stroke="#7d3fbf" stroke-width="4"/>
+  </g>
+</svg>

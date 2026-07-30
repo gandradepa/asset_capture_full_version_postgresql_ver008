@@ -1,0 +1,123 @@
+#!/usr/bin/env python3
+"""Backfill QR_codes.ai_status='1' for fully-completed EL assets.
+
+Safe scope: only updates rows that ALL of:
+  - currently have ai_status in ('0', '', NULL)
+  - are Approved='1'
+  - have at least one JSON file in Output_jason_api/ matching ``<QR>_EL_*.json``
+  - have NO ME or BF photos in Capture_photos_upload/ (so we don't accidentally
+    mark a multi-discipline asset as fully AI-processed when only EL is done)
+
+Usage:
+  python3 backfill_ai_status_el_done.py --dry-run   # preview what would change
+  python3 backfill_ai_status_el_done.py             # apply (creates backup)
+"""
+from __future__ import annotations
+import argparse
+import glob
+import os
+import shutil
+import sqlite3
+import sys
+from datetime import datetime
+
+# Backend-agnostic DB layer (SQLite default; PostgreSQL when DB_BACKEND=postgres).
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import db as qrdb
+
+DB = "/home/developer/asset_capture_app_dev/data/QR_codes.db"
+IMG = "/home/developer/Capture_photos_upload"
+JSON = "/home/developer/Output_jason_api"
+
+
+def discover_targets(con):
+    rows = con.execute(
+        'SELECT "QR_code_ID", ai_status, "Approved" FROM "QR_codes" '
+        "WHERE (ai_status = '0' OR ai_status IS NULL OR ai_status = '') "
+        '  AND "Approved" = \'1\''
+    ).fetchall()
+    targets = []
+    for qr_id, ai_status, approved in rows:
+        qr = str(qr_id) if qr_id is not None else ""
+        if not qr or qr.lower() == "none":
+            continue
+        # Must have at least one EL JSON
+        el_json = glob.glob(os.path.join(JSON, f"{qr}_EL_*.json"))
+        if not el_json:
+            continue
+        # Must NOT have any ME or BF photos (defensive: don't claim AI done on a
+        # multi-discipline asset where only EL ran).
+        me_photos = glob.glob(os.path.join(IMG, f"{qr} * ME *"))
+        bf_photos = glob.glob(os.path.join(IMG, f"{qr} * BF *"))
+        if me_photos or bf_photos:
+            continue
+        # Should also have at least one EL photo (sanity)
+        el_photos = glob.glob(os.path.join(IMG, f"{qr} * EL *"))
+        if not el_photos:
+            continue
+        targets.append((qr, ai_status, approved, len(el_json), len(el_photos)))
+    return targets
+
+
+def backup_db() -> str:
+    if qrdb.is_postgres():
+        return ""  # SQLite-file backup is meaningless on PostgreSQL; use pg_dump.
+    stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    dest = DB.replace(".db", f".bak_{stamp}_ai_status_el_backfill.db")
+    shutil.copy2(DB, dest)
+    return dest
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--dry-run", action="store_true", help="Report only; no changes.")
+    args = ap.parse_args()
+
+    con = qrdb.get_connection(sqlite_path=DB)
+    targets = discover_targets(con)
+
+    print(f"Found {len(targets)} candidate rows to flip ai_status -> '1':")
+    print(f"{'QR':<12} | {'ai_status':>10} {'Approved':>9} {'EL_JSON':>8} {'EL_IMG':>7}")
+    print("-" * 60)
+    for qr, ai_status, approved, jcount, icount in targets:
+        print(f"{qr:<12} | {repr(ai_status):>10} {repr(approved):>9} {jcount:>8} {icount:>7}")
+
+    if args.dry_run:
+        print("\n[DRY RUN] No changes applied.")
+        return 0
+
+    if not targets:
+        print("Nothing to do.")
+        return 0
+
+    backup = backup_db()
+    if backup:
+        print(f"\nDB backed up to: {backup}")
+    else:
+        print("\n[WARN] PostgreSQL backend: SQLite-file backup skipped. "
+              "Take a pg_dump first if you need a restore point.")
+
+    qrs = [t[0] for t in targets]
+    placeholders = ",".join(["?"] * len(qrs))
+    cur = con.execute(
+        f'UPDATE "QR_codes" SET ai_status = \'1\' WHERE "QR_code_ID" IN ({placeholders})',
+        qrs,
+    )
+    con.commit()
+    print(f"UPDATE applied. Rows changed: {cur.rowcount} (expected {len(qrs)})")
+
+    print("\nPost-state — pending pool now contains:")
+    after = con.execute(
+        'SELECT "QR_code_ID", ai_status, "Approved" FROM "QR_codes" '
+        "WHERE ai_status = '0' OR ai_status IS NULL OR ai_status = '' "
+        'ORDER BY "QR_code_ID"'
+    ).fetchall()
+    print(f"  {len(after)} rows remaining at ai_status='0'/NULL")
+    for r in after:
+        print(f"   {r[0]} | ai_status={r[1]!r} approved={r[2]!r}")
+
+    return 0 if cur.rowcount == len(qrs) else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

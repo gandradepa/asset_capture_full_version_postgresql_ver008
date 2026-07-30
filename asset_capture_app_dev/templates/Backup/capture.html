@@ -1,0 +1,771 @@
+{% extends "base.html" %}
+{% block title %}Capture Asset Photos{% endblock %}
+
+{% block content %}
+<!-- New Layout Container -->
+<div class="w-full max-w-2xl mx-auto pb-32">
+
+  <!-- Header -->
+  <div class="mb-6 px-4 pt-2">
+    <h2 class="text-2xl font-bold text-gray-900">Capture Photos</h2>
+    <p class="text-sm text-gray-500 mt-1">Document the asset condition for review.</p>
+  </div>
+
+  <form method="POST" action="{{ url_for('submit') }}" enctype="multipart/form-data" id="captureForm" class="px-4">
+
+    <!-- Status Card (Replacement for disabled select) -->
+    <div
+      class="bg-blue-50 border border-blue-100 rounded-xl p-4 mb-8 flex items-start gap-4 shadow-sm relative overflow-hidden">
+      <!-- Decorative background accent -->
+      <div class="absolute -right-6 -top-6 w-24 h-24 bg-blue-100 rounded-full opacity-50"></div>
+
+      <div class="bg-white p-2.5 rounded-full text-blue-600 shadow-sm z-10">
+        <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none"
+          stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path>
+          <polyline points="22 4 12 14.01 9 11.01"></polyline>
+        </svg>
+      </div>
+      <div class="flex-1 z-10">
+        <p class="text-xs font-bold text-blue-600 uppercase tracking-wide mb-1">Current Process</p>
+        <p class="text-gray-900 font-semibold text-lg leading-tight">
+          {% if capture_process=='0' %}New Asset <span class="text-sm font-normal text-gray-500 block sm:inline">(QR
+            Required)</span>
+          {% elif capture_process=='1' %}Existing Asset <span
+            class="text-sm font-normal text-gray-500 block sm:inline">(QR Required)</span>
+          {% elif capture_process=='2' %}Replacing / Checking <span
+            class="text-sm font-normal text-gray-500 block sm:inline">(No QR)</span>
+          {% else %}Unknown Process{% endif %}
+        </p>
+      </div>
+
+      <!-- Hidden input to preserve value for form submission -->
+      <input type="hidden" name="capture_process" value="{{ capture_process }}">
+    </div>
+
+    <!-- Hidden form data -->
+    <input type="hidden" name="qr_code" value="{{ qr_code }}">
+    <input type="hidden" name="building_code" value="{{ building_code }}">
+    <input type="hidden" name="location" value="{{ location }}">
+    <input type="hidden" name="asset_type" value="{{ asset_type }}">
+    <input type="hidden" name="overwrite" value="{{ overwrite|default('0') }}">
+
+    {% if asset_type == 'Mechanical' %}
+    {% set fields = [
+    ('image_0','Asset Plate'),
+    ('image_1','UBC Tag'),
+    ('image_2','Main Asset Photo'),
+    ('image_3','Technical Safety BC')
+    ] %}
+
+    {% elif asset_type in ['Back Flow','Backflow'] %}
+    {% set fields = [
+    ('image_0','Asset Plate'),
+    ('image_1','Asset Plate (additional)'),
+    ('image_2','Main Photo')
+    ] %}
+
+    {% elif asset_type == 'Electrical' %}
+    {% set fields = [
+    ('image_0','Asset Plate (Optional)'),
+    ('image_1','UBC Asset Tag'),
+    ('image_2','Panel Schedule')
+    ] %}
+
+    {% else %}
+    {% set fields = [
+    ('image_0','Asset Plate'),
+    ('image_1','UBC Tag'),
+    ('image_2','Main Asset Photo')
+    ] %}
+    {% endif %}
+
+    <!-- Photo Upload Grid -->
+    <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+      {% for name, label in fields %}
+      <div
+        class="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden flex flex-col group hover:shadow-md transition-shadow">
+
+        <!-- Field Header -->
+        <div class="px-4 py-3 border-b border-gray-100 bg-gray-50/50 flex justify-between items-center">
+          <label class="text-sm font-semibold text-gray-700 m-0">{{ label }}</label>
+          <!-- Status Indicator Dot -->
+          <div id="status_dot_{{ name }}" class="w-4 h-4 rounded-full bg-gray-300 transition-colors"></div>
+        </div>
+
+        <!-- Tile Body -->
+        <div class="p-4 flex-1 flex flex-col items-center justify-center min-h-[220px] relative">
+
+          <!-- Image Preview Container -->
+          <div id="preview_container_{{ name }}"
+            class="relative w-full h-full flex flex-col items-center justify-center">
+
+            <img id="preview_{{ loop.index }}"
+              class="hidden w-full h-48 object-cover rounded-lg shadow-sm border border-gray-100 mb-3"
+              alt="Preview {{ loop.index }}" data-label="{{ label }}">
+
+            <!-- Empty State Illustration/Icon -->
+            <div id="empty_state_{{ name }}" class="flex flex-col items-center justify-center text-gray-400 mb-4">
+              <svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24" fill="none"
+                stroke="currentColor" stroke-width="1" stroke-linecap="round" stroke-linejoin="round"
+                class="mb-2 opacity-50">
+                <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
+                <circle cx="8.5" cy="8.5" r="1.5"></circle>
+                <polyline points="21 15 16 10 5 21"></polyline>
+              </svg>
+              <span class="text-xs">No photo</span>
+            </div>
+
+            <!-- Upload/Camera Button -->
+            <div class="file-upload-wrapper w-full">
+              <div class="file-upload-btn w-full bg-blue-50 text-blue-600 hover:bg-blue-100 border-blue-200"
+                id="label_{{ name }}" onclick="openCamera('{{ name }}', '{{ label }}')">
+                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none"
+                  stroke="currentColor" stroke-width="2">
+                  <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"></path>
+                  <circle cx="12" cy="13" r="4"></circle>
+                </svg>
+                <span id="text_{{ name }}">Take Photo</span>
+              </div>
+              <input type="file" name="{{ name }}" id="{{ name }}" accept="image/*"
+                onchange="previewImage(event, 'preview_{{ loop.index }}', '{{ name }}')" style="display: none;">
+            </div>
+
+            <!-- File Info & Retake -->
+            <div id="fileinfo_{{ name }}"
+              class="hidden w-full mt-3 pt-3 border-t border-gray-100 flex items-center justify-between text-xs">
+              <span id="filename_{{ name }}" class="text-gray-500 truncate max-w-[60%]">filename.jpg</span>
+              <a href="javascript:void(0)" onclick="resetFile('{{ name }}', 'preview_{{ loop.index }}')"
+                class="text-gray-500 hover:text-blue-600 font-medium flex items-center gap-1.5 transition-colors">
+                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none"
+                  stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"></path>
+                  <path d="M3 3v5h5"></path>
+                  <path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"></path>
+                  <path d="M16 21h5v-5"></path>
+                </svg>
+                Replace
+              </a>
+            </div>
+
+          </div>
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+
+    <!-- Sticky Bottom Actions -->
+    <div
+      class="fixed bottom-0 left-0 right-0 bg-white/95 backdrop-blur-md border-t border-gray-200 p-4 pb-safe z-40 shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.05)]">
+      <div class="max-w-2xl mx-auto flex gap-3">
+        <button type="button" id="previewAllBtn" class="flex-1 btn btn-secondary text-sm font-medium py-3">
+          Preview
+        </button>
+        <a href="{{ url_for('start', building_code=building_code, asset_type=asset_type) }}"
+          class="flex-initial btn btn-outline px-6">
+          Back
+        </a>
+        <button type="submit" id="submitBtn"
+          class="flex-[2] btn btn-success text-base font-bold shadow-md shadow-green-500/20 py-3">
+          Submit Photos
+        </button>
+      </div>
+    </div>
+
+  </form>
+</div>
+
+<!-- Preview Modal -->
+<div id="previewModal" class="hidden"
+  style="position:fixed; inset:0; background:rgba(0,0,0,0.55); z-index:50; display:flex; align-items:center; justify-content:center; padding:1rem;">
+  <div
+    style="background:#fff; border-radius:0.75rem; max-width:960px; width:100%; max-height:90vh; overflow:auto; box-shadow:0 10px 40px rgba(0,0,0,0.2); padding:1.25rem;">
+    <div class="flex" style="justify-content:space-between; align-items:center; margin-bottom:0.75rem;">
+      <h3 class="text-lg font-semibold">Preview Captured Photos</h3>
+      <button type="button" id="previewClose" class="btn btn-outline" style="min-width:100px;">Close</button>
+    </div>
+    <div id="previewGrid" style="display:grid; grid-template-columns:repeat(auto-fit,minmax(200px,1fr)); gap:1rem;">
+    </div>
+  </div>
+</div>
+
+<!-- Camera Modal -->
+<!-- Camera Modal (Updated for full screen & modern UI) -->
+<!-- Camera Modal (Updated for full screen & modern UI) -->
+<div id="cameraModal" class="hidden fixed inset-0 z-50 bg-black">
+  <video id="cameraFeed" autoplay playsinline muted class="absolute inset-0 w-full h-full object-cover"></video>
+  <canvas id="cameraCanvas" style="display:none;"></canvas>
+
+  <!-- Top Bar -->
+  <div
+    class="absolute top-0 left-0 right-0 p-4 pt-safe flex justify-between items-start z-10 bg-gradient-to-b from-black/50 to-transparent">
+    <div id="zoomControl"
+      class="hidden flex-col items-center bg-black/30 backdrop-blur-md rounded-full px-3 py-2 text-white">
+      <div class="flex items-center gap-1 mb-2">
+        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none"
+          stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="11" cy="11" r="8"></circle>
+          <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+        </svg>
+        <span id="zoomValue" class="text-xs font-mono">1.0x</span>
+      </div>
+      <input type="range" id="zoomSlider" min="1" max="5" step="0.1" value="1" oninput="handleZoomSlider(this.value)"
+        class="h-32 w-2 appearance-none bg-white/20 rounded-full outline-none vertical-slider">
+    </div>
+
+    <button type="button" id="torchBtn" class="bg-black/30 backdrop-blur-md rounded-full p-3 text-white hidden"
+      onclick="toggleTorch()">
+      <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none"
+        stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"></path>
+      </svg>
+    </button>
+  </div>
+
+  <!-- Bottom Controls -->
+  <div
+    class="absolute bottom-0 left-0 right-0 p-8 pb-safe bg-gradient-to-t from-black/80 via-black/40 to-transparent flex flex-col items-center justify-end gap-8 z-10">
+
+    <div class="w-full flex justify-between items-center">
+      <button type="button" class="text-white font-medium p-4" onclick="closeCamera()">
+        Cancel
+      </button>
+
+      <!-- Capture Button -->
+      <button type="button" id="captureBtn"
+        class="w-20 h-20 rounded-full border-4 border-white flex items-center justify-center relative"
+        onclick="capturePhoto()">
+        <div class="w-16 h-16 bg-white rounded-full active:scale-90 transition-transform"></div>
+      </button>
+
+      <div class="w-[70px]"></div> <!-- Spacer to center the button -->
+    </div>
+  </div>
+</div>
+
+<style>
+  /* Vertical Range Slider Override */
+  input[type=range].vertical-slider {
+    writing-mode: bt-lr;
+    /* IE/Edge */
+    -webkit-appearance: slider-vertical;
+    /* WebKit */
+    appearance: slider-vertical;
+    /* Standard */
+    width: 8px;
+    height: 100px;
+    padding: 0 5px;
+  }
+</style>
+
+<script>
+  let currentStream = null;
+  let currentInputName = null;
+  let currentLabel = null;
+  let videoTrack = null;
+  let imageCapture = null;
+  let torchEnabled = false;
+  let hiResMode = false;
+
+  // Zoom-related variables
+  let zoomSupported = false;
+  let zoomMin = 1;
+  let zoomMax = 1;
+  let currentZoom = 1;
+  let initialPinchDistance = null;
+  let initialPinchZoom = 1;
+
+  async function openCamera(inputName, label) {
+    currentInputName = inputName;
+    currentLabel = label || 'capture';
+    hiResMode = (inputName || '').endsWith('_0');
+    const modal = document.getElementById('cameraModal');
+    const video = document.getElementById('cameraFeed');
+    const torchBtn = document.getElementById('torchBtn');
+
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: {
+          facingMode: { ideal: 'environment' },
+          width: { ideal: hiResMode ? 1920 : 1280 },
+          height: { ideal: hiResMode ? 1080 : 720 }
+        }
+      });
+      currentStream = stream;
+      video.srcObject = stream;
+      modal.classList.remove('hidden');
+      modal.classList.add('flex', 'flex-col');
+
+      videoTrack = stream.getVideoTracks()[0];
+      if ('ImageCapture' in window && videoTrack) {
+        try { imageCapture = new ImageCapture(videoTrack); } catch { imageCapture = null; }
+      }
+
+      // Try to align resolution based on the target profile
+      try {
+        const caps = videoTrack.getCapabilities ? videoTrack.getCapabilities() : null;
+        if (caps && caps.width && caps.height) {
+          const maxW = caps.width.max || (hiResMode ? 1920 : 1280);
+          const maxH = caps.height.max || (hiResMode ? 1080 : 720);
+          const target = {
+            width: hiResMode ? maxW : Math.min(maxW, 1280),
+            height: hiResMode ? maxH : Math.min(maxH, 720)
+          };
+          await videoTrack.applyConstraints({ advanced: [target] });
+        }
+      } catch (e) {
+        console.warn('Could not adjust resolution', e);
+      }
+
+      // Check for torch and zoom capabilities
+      try {
+        const capabilities = videoTrack.getCapabilities();
+
+        // Torch capability
+        if (capabilities.torch) {
+          torchBtn.classList.remove('hidden');
+        } else {
+          torchBtn.classList.add('hidden');
+        }
+
+        // Zoom capability
+        const zoomControl = document.getElementById('zoomControl');
+        const zoomSlider = document.getElementById('zoomSlider');
+        if (capabilities.zoom) {
+          zoomSupported = true;
+          zoomMin = capabilities.zoom.min || 1;
+          zoomMax = capabilities.zoom.max || 1;
+          currentZoom = zoomMin;
+
+          // Configure the slider
+          zoomSlider.min = zoomMin;
+          zoomSlider.max = zoomMax;
+          zoomSlider.step = (zoomMax - zoomMin) / 50; // 50 steps
+          zoomSlider.value = zoomMin;
+          updateZoomDisplay(zoomMin);
+
+          zoomControl.classList.remove('hidden');
+          zoomControl.classList.add('flex');
+          console.log(`Zoom supported: ${zoomMin}x - ${zoomMax}x`);
+        } else {
+          zoomSupported = false;
+          zoomControl.classList.add('hidden');
+          zoomControl.classList.remove('flex');
+          console.log('Zoom not supported on this device');
+        }
+      } catch (e) {
+        console.log("Could not check capabilities", e);
+        torchBtn.classList.add('hidden');
+        document.getElementById('zoomControl').classList.add('hidden');
+      }
+
+      // Set up pinch-to-zoom event listeners
+      setupPinchToZoom(video);
+
+    } catch (err) {
+      console.error("Error opening camera:", err);
+      alert("Could not access camera. Please ensure permissions are granted and you are using a secure context (HTTPS).");
+    }
+  }
+
+  function closeCamera() {
+    const modal = document.getElementById('cameraModal');
+    const video = document.getElementById('cameraFeed');
+    const torchBtn = document.getElementById('torchBtn');
+    const zoomControl = document.getElementById('zoomControl');
+    const zoomSlider = document.getElementById('zoomSlider');
+
+    if (currentStream) {
+      currentStream.getTracks().forEach(track => {
+        track.stop();
+      });
+      currentStream = null;
+    }
+
+    video.srcObject = null;
+    modal.classList.add('hidden');
+    modal.classList.remove('flex', 'flex-col');
+    torchEnabled = false;
+    torchBtn.classList.remove('active');
+    torchBtn.style.backgroundColor = '';
+    torchBtn.style.color = '';
+    videoTrack = null;
+    imageCapture = null;
+
+    // Reset zoom state
+    zoomSupported = false;
+    currentZoom = 1;
+    zoomMin = 1;
+    zoomMax = 1;
+    initialPinchDistance = null;
+    zoomSlider.value = 1;
+    zoomControl.classList.add('hidden');
+
+    // Remove pinch-to-zoom event listeners
+    removePinchToZoom(video);
+  }
+
+  async function toggleTorch() {
+    if (!videoTrack) return;
+    const torchBtn = document.getElementById('torchBtn');
+    try {
+      torchEnabled = !torchEnabled;
+      await videoTrack.applyConstraints({
+        advanced: [{ torch: torchEnabled }]
+      });
+      if (torchEnabled) {
+        torchBtn.classList.add('text-yellow-400');
+        torchBtn.classList.add('bg-black/50');
+      } else {
+        torchBtn.classList.remove('text-yellow-400');
+        torchBtn.classList.remove('bg-black/50');
+      }
+    } catch (err) {
+      console.error("Error toggling torch:", err);
+      torchEnabled = !torchEnabled;
+      alert("Flashlight control failed: " + err.message);
+    }
+  }
+
+  // ========== ZOOM FUNCTIONS ==========
+
+  function updateZoomDisplay(zoomLevel) {
+    const zoomValueEl = document.getElementById('zoomValue');
+    if (zoomValueEl) {
+      zoomValueEl.textContent = parseFloat(zoomLevel).toFixed(1) + 'x';
+    }
+  }
+
+  async function applyZoom(zoomLevel) {
+    if (!videoTrack || !zoomSupported) return;
+    // Clamp zoom level
+    zoomLevel = Math.max(zoomMin, Math.min(zoomMax, zoomLevel));
+    try {
+      await videoTrack.applyConstraints({
+        advanced: [{ zoom: zoomLevel }]
+      });
+      currentZoom = zoomLevel;
+      updateZoomDisplay(zoomLevel);
+      const slider = document.getElementById('zoomSlider');
+      if (slider) {
+        slider.value = zoomLevel;
+      }
+    } catch (err) {
+      console.error('Error applying zoom:', err);
+    }
+  }
+
+  function handleZoomSlider(value) {
+    applyZoom(parseFloat(value));
+  }
+
+  // ========== PINCH-TO-ZOOM FUNCTIONS ==========
+  function getDistance(touch1, touch2) {
+    const dx = touch1.clientX - touch2.clientX;
+    const dy = touch1.clientY - touch2.clientY;
+    return Math.sqrt(dx * dx + dy * dy);
+  }
+
+  function handleTouchStart(e) {
+    if (e.touches.length === 2) {
+      e.preventDefault();
+      initialPinchDistance = getDistance(e.touches[0], e.touches[1]);
+      initialPinchZoom = currentZoom;
+    }
+  }
+
+  function handleTouchMove(e) {
+    if (e.touches.length === 2 && initialPinchDistance !== null && zoomSupported) {
+      e.preventDefault();
+      const currentDistance = getDistance(e.touches[0], e.touches[1]);
+      const scale = currentDistance / initialPinchDistance;
+      let newZoom = initialPinchZoom * scale;
+      newZoom = Math.max(zoomMin, Math.min(zoomMax, newZoom));
+      applyZoom(newZoom);
+    }
+  }
+
+  function handleTouchEnd(e) {
+    if (e.touches.length < 2) {
+      initialPinchDistance = null;
+    }
+  }
+
+  function setupPinchToZoom(videoElement) {
+    if (!videoElement) return;
+    videoElement.addEventListener('touchstart', handleTouchStart, { passive: false });
+    videoElement.addEventListener('touchmove', handleTouchMove, { passive: false });
+    videoElement.addEventListener('touchend', handleTouchEnd, { passive: true });
+    videoElement.addEventListener('touchcancel', handleTouchEnd, { passive: true });
+  }
+
+  function removePinchToZoom(videoElement) {
+    if (!videoElement) return;
+    videoElement.removeEventListener('touchstart', handleTouchStart);
+    videoElement.removeEventListener('touchmove', handleTouchMove);
+    videoElement.removeEventListener('touchend', handleTouchEnd);
+    videoElement.removeEventListener('touchcancel', handleTouchEnd);
+  }
+
+  async function capturePhoto() {
+    const canvas = document.getElementById('cameraCanvas');
+    const video = document.getElementById('cameraFeed');
+
+    if (!video.videoWidth) return;
+
+    let blob = null;
+    const isPrimary = (currentInputName || '').endsWith('_0');
+
+    // Prefer ImageCapture
+    if (imageCapture && typeof imageCapture.takePhoto === 'function') {
+      try {
+        const caps = videoTrack && videoTrack.getCapabilities ? videoTrack.getCapabilities() : {};
+        const photoSettings = {};
+        if (caps.imageWidth && caps.imageWidth.max) photoSettings.imageWidth = isPrimary ? caps.imageWidth.max : Math.min(caps.imageWidth.max, 1280);
+        if (caps.imageHeight && caps.imageHeight.max) photoSettings.imageHeight = isPrimary ? caps.imageHeight.max : Math.min(caps.imageHeight.max, 720);
+        blob = await imageCapture.takePhoto(photoSettings);
+      } catch (e) {
+        console.warn("takePhoto failed, falling back to canvas", e);
+      }
+    }
+
+    if (!blob) {
+      const w = video.videoWidth || 1280;
+      const h = video.videoHeight || 720;
+      const targetW = isPrimary ? w : 1280;
+      const targetH = isPrimary ? h : 720;
+      canvas.width = targetW;
+      canvas.height = targetH;
+      const ctx = canvas.getContext('2d');
+      ctx.drawImage(video, 0, 0, targetW, targetH);
+      blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/jpeg', 0.9));
+    }
+
+    if (!blob) {
+      alert("Capture failed");
+      return;
+    }
+
+    blob = await ensurePortraitOrientation(blob, isPrimary);
+
+    // Replicate app.py filename logic
+    const qrCode = document.querySelector('input[name="qr_code"]').value;
+    const buildingCode = document.querySelector('input[name="building_code"]').value;
+    const assetType = document.querySelector('input[name="asset_type"]').value;
+
+    const safeQr = sanitizeComponent(qrCode, true);
+    const safeBldg = sanitizeComponent(buildingCode, false);
+    const safeType = sanitizeComponent(mapAssetTypeToAbbrev(assetType), false);
+
+    const seq = currentInputName.replace('image_', '');
+    const filename = `${safeQr} ${safeBldg} ${safeType} - ${seq}.jpg`;
+
+    const file = new File([blob], filename, { type: "image/jpeg" });
+
+    const input = document.getElementById(currentInputName);
+    const dataTransfer = new DataTransfer();
+    dataTransfer.items.add(file);
+    input.files = dataTransfer.files;
+
+    // Trigger change event
+    input.dispatchEvent(new Event('change'));
+    closeCamera();
+  }
+
+  // ========== PORTRAIT ORIENTATION HELPER (Unchanged) ==========
+  async function ensurePortraitOrientation(blob, highQuality = false) {
+    return new Promise((resolve) => {
+      const img = new Image();
+      img.onload = async () => {
+        const width = img.width;
+        const height = img.height;
+        if (height >= width) {
+          resolve(blob);
+          return;
+        }
+        const rotationCanvas = document.createElement('canvas');
+        rotationCanvas.width = height;
+        rotationCanvas.height = width;
+        const ctx = rotationCanvas.getContext('2d');
+        ctx.translate(rotationCanvas.width / 2, rotationCanvas.height / 2);
+        ctx.rotate(90 * Math.PI / 180);
+        ctx.drawImage(img, -width / 2, -height / 2);
+        rotationCanvas.toBlob((rotatedBlob) => {
+          resolve(rotatedBlob || blob);
+        }, 'image/jpeg', highQuality ? 0.98 : 0.9);
+      };
+      img.onerror = () => resolve(blob);
+      img.src = URL.createObjectURL(blob);
+    });
+  }
+
+  // --- Helper Functions Mirroring app.py ---
+  function sanitizeComponent(s, preferDigits = true) {
+    s = (s || "").trim();
+    if (preferDigits) {
+      const m = s.match(/(\d{6,})/);
+      if (m) s = m[1];
+    }
+    s = s.replace(/^[a-zA-Z]+:/, '').replace(/^\/+|\/+$/g, '');
+    s = s.replace(/[<>:"/\\|?*]+/g, '_').replace(/\s+/g, '_');
+    s = s.replace(/[^A-Za-z0-9._-]+/g, '').replace(/^[._-]+|[._-]+$/g, '');
+    return s.substring(0, 80) || "fallback";
+  }
+
+  function mapAssetTypeToAbbrev(t) {
+    t = (t || "").trim().toLowerCase();
+    if (t.startsWith("mech")) return "ME";
+    if (t.startsWith("elec")) return "EL";
+    if (t.startsWith("back")) return "BF";
+    return (t.substring(0, 2).toUpperCase()) || "AS";
+  }
+
+  // ========== UPDATED UI LOGIC ==========
+
+  function previewImage(event, previewId, inputName) {
+    const img = document.getElementById(previewId);
+    const file = event.target.files[0];
+    const labelBtn = document.getElementById('label_' + inputName);
+    const textSpan = document.getElementById('text_' + inputName);
+    const fileInfo = document.getElementById('fileinfo_' + inputName);
+    const filename = document.getElementById('filename_' + inputName);
+    const emptyState = document.getElementById('empty_state_' + inputName);
+    const statusDot = document.getElementById('status_dot_' + inputName);
+
+    if (!file) {
+      resetFile(inputName, previewId);
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = e => {
+      img.src = e.target.result;
+      img.classList.remove('hidden');
+      if (emptyState) {
+        emptyState.classList.add('hidden');
+        emptyState.classList.remove('flex');
+      }
+
+      labelBtn.innerHTML = '<span class="text-xs">Change Photo</span>';
+      labelBtn.classList.remove('w-full', 'bg-blue-50', 'text-blue-600');
+      labelBtn.classList.add('px-3', 'py-1', 'w-auto', 'bg-white', 'text-gray-600', 'border', 'border-gray-300', 'shadow-sm', 'text-xs');
+
+      if (textSpan) textSpan.textContent = 'Change';
+
+      fileInfo.classList.remove('hidden');
+      filename.textContent = file.name;
+
+      // Update dot
+      if (statusDot) {
+        statusDot.classList.remove('bg-gray-300');
+        statusDot.classList.add('bg-green-500');
+      }
+    };
+    reader.readAsDataURL(file);
+  }
+
+  function resetFile(inputName, previewId) {
+    const input = document.getElementById(inputName);
+    const img = document.getElementById(previewId);
+    const labelBtn = document.getElementById('label_' + inputName);
+    const textSpan = document.getElementById('text_' + inputName);
+    const fileInfo = document.getElementById('fileinfo_' + inputName);
+    const emptyState = document.getElementById('empty_state_' + inputName);
+    const statusDot = document.getElementById('status_dot_' + inputName);
+
+    input.value = '';
+    img.classList.add('hidden');
+    img.src = '';
+    if (emptyState) {
+      emptyState.classList.remove('hidden');
+      emptyState.classList.add('flex');
+    }
+
+    // Reset button style
+    labelBtn.innerHTML = `
+      <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"></path>
+        <circle cx="12" cy="13" r="4"></circle>
+      </svg>
+      <span id="text_${inputName}">Take Photo</span>
+    `;
+    labelBtn.classList.remove('px-3', 'py-1', 'w-auto', 'bg-white', 'text-gray-600', 'border', 'border-gray-300', 'shadow-sm', 'text-xs');
+    labelBtn.classList.add('w-full', 'bg-blue-50', 'text-blue-600');
+
+    fileInfo.classList.add('hidden');
+
+    // Reset dot
+    if (statusDot) {
+      statusDot.classList.remove('bg-green-500');
+      statusDot.classList.add('bg-gray-300');
+    }
+  }
+
+  // Preview Modal
+  const previewAllBtn = document.getElementById('previewAllBtn');
+  const previewModal = document.getElementById('previewModal');
+  const previewGrid = document.getElementById('previewGrid');
+  const previewClose = document.getElementById('previewClose');
+
+  function openPreviewModal() {
+    if (!previewModal || !previewGrid) return;
+    previewGrid.innerHTML = '';
+    const previews = document.querySelectorAll('[id^="preview_"]');
+    let hasPhotos = false;
+
+    previews.forEach(img => {
+      if (img && img.src && !img.classList.contains('hidden')) {
+        hasPhotos = true;
+        const wrap = document.createElement('div');
+        wrap.className = "bg-white p-2 rounded-lg shadow-sm border border-gray-100 break-inside-avoid mb-4";
+
+        const labelText = img.dataset.label || "Photo";
+        wrap.innerHTML = `
+          <p class="text-xs font-bold text-gray-500 mb-2 uppercase tracking-wide">${labelText}</p>
+          <img src="${img.src}" class="w-full h-auto rounded-md" loading="lazy">
+        `;
+        previewGrid.appendChild(wrap);
+      }
+    });
+
+    if (!hasPhotos) {
+      previewGrid.innerHTML = `
+         <div class="col-span-full flex flex-col items-center justify-center py-10 text-gray-400">
+           <svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1" class="mb-4 opacity-50"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect><circle cx="8.5" cy="8.5" r="1.5"></circle><polyline points="21 15 16 10 5 21"></polyline></svg>
+           <p>No photos captured yet.</p>
+         </div>
+       `;
+    }
+
+    previewModal.classList.remove('hidden');
+    document.body.style.overflow = 'hidden';
+  }
+
+  function closePreviewModal() {
+    previewModal.classList.add('hidden');
+    document.body.style.overflow = '';
+  }
+
+  if (previewAllBtn) previewAllBtn.addEventListener('click', openPreviewModal);
+  if (previewClose) previewClose.addEventListener('click', closePreviewModal);
+  if (previewModal) {
+    previewModal.addEventListener('click', (e) => {
+      if (e.target === previewModal) closePreviewModal();
+    });
+  }
+
+  // Form submission with loading state
+  document.getElementById('captureForm').addEventListener('submit', function (e) {
+    const submitBtn = document.getElementById('submitBtn');
+    submitBtn.classList.add('opacity-75', 'cursor-not-allowed');
+    submitBtn.innerHTML = `
+      <svg class="animate-spin -ml-1 mr-3 h-5 w-5 text-white inline-block" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+        <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+        <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+      </svg>
+      Submitting...
+    `;
+    submitBtn.disabled = true;
+  });
+</script>
+{% endblock %}

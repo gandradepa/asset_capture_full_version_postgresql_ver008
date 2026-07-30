@@ -1,0 +1,62 @@
+#!/usr/bin/env python3
+"""Inspect every table in QR_codes.db for any row referencing the given QR.
+
+Usage:
+  python3 trace_qr_in_db.py 0000084088
+"""
+from __future__ import annotations
+import sqlite3
+import sys
+
+DB = "/home/developer/asset_capture_app_dev/data/QR_codes.db"
+
+
+def main(qr: str) -> int:
+    con = sqlite3.connect(DB)
+    con.row_factory = sqlite3.Row
+    tables = [
+        r["name"]
+        for r in con.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' "
+            "AND name NOT LIKE 'sqlite_%' ORDER BY name"
+        )
+    ]
+    total_hits = 0
+    print(f"Tracing QR={qr!r} across {len(tables)} tables\n")
+    for tbl in tables:
+        cols = [r["name"] for r in con.execute(f'PRAGMA table_info("{tbl}")')]
+        # Find columns that look textual and might hold the QR / a string containing it.
+        text_cols = [c for c in cols]
+        where_parts = []
+        params = []
+        for c in text_cols:
+            where_parts.append(f'"{c}" = ?')
+            params.append(qr)
+            where_parts.append(f'"{c}" LIKE ?')
+            params.append(f"%{qr}%")
+        if not where_parts:
+            continue
+        sql = f'SELECT * FROM "{tbl}" WHERE ' + " OR ".join(where_parts)
+        try:
+            rows = con.execute(sql, params).fetchall()
+        except sqlite3.OperationalError as e:
+            print(f"[{tbl}] skipped: {e}")
+            continue
+        if rows:
+            total_hits += len(rows)
+            print(f"[{tbl}] {len(rows)} row(s):")
+            for r in rows:
+                d = dict(r)
+                # Show only fields that contain the QR for readability.
+                rel = {k: v for k, v in d.items() if v is not None and qr in str(v)}
+                print(f"   pk?={d.get('ID') or d.get('rowid')} :: {rel}")
+            print()
+    print(f"Total hits across all tables: {total_hits}")
+    return 0
+
+
+if __name__ == "__main__":
+    if len(sys.argv) < 2:
+        print("usage: trace_qr_in_db.py <QR>")
+        sys.exit(2)
+    sys.exit(main(sys.argv[1]))

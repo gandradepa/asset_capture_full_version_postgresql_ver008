@@ -1,0 +1,194 @@
+/* --- UPDATE THESE SECTIONS IN YOUR style.css --- */
+
+:root{
+  --ubc-blue:#002145;
+  --ubc-blue-light:#0055b7;
+  --light-grey:#f4f7fb;
+  --white: #ffffff;
+  --dark-grey:#2d2d2d;
+  --divider:#e6edf5;
+  --radius-md: 10px;
+  --shadow-sm: 0 2px 8px rgba(0,0,0,0.04);
+  --shadow-hover: 0 8px 16px rgba(0,33,69,0.08);
+}
+
+/* Page basics - cleaner typography */
+.ubc-body{
+  background: var(--light-grey);
+  font-family: 'Segoe UI', -apple-system, BlinkMacSystemFont, Roboto, "Helvetica Neue", Arial, sans-serif;
+  color: var(--dark-grey);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* --- BRAND BAR & RESPONSIVE LOGOS --- */
+.ubc-navbar {
+  background: var(--white);
+  border-bottom: 1px solid rgba(0,0,0,0.05);
+  padding: 1rem 0;
+  box-shadow: var(--shadow-sm);
+}
+
+.ubc-brandbar {
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+/* Fluid Brand Title Size: Scales between 1.1rem and 1.8rem based on screen width */
+.ubc-brand {
+  color: var(--ubc-blue);
+  font-weight: 700;
+  line-height: 1.1;
+  text-align: center;
+  font-size: clamp(1.1rem, 2.5vw, 1.8rem); 
+  white-space: normal; /* Allow wrap on tiny screens */
+  margin: 0 15px;
+}
+
+/* Fluid Logo Sizing: 
+   Height scales automatically. 
+   Max-height constrains it on desktop. 
+   Max-width constrains it relative to viewport width on mobile.
+*/
+.ubc-logo, 
+.ubc-facilities-logo {
+  height: auto !important; 
+  width: auto !important;
+  max-height: 70px;         /* Cap height on large screens */
+  max-width: 15vw;          /* Cap width relative to screen so they don't dominate */
+  object-fit: contain;
+  transition: transform 0.2s ease;
+}
+
+/* Responsive adjustment for small devices */
+@media (max-width: 768px) {
+  .ubc-navbar { padding: 0.75rem 0; }
+  .ubc-logo, .ubc-facilities-logo { max-height: 50px; max-width: 25vw; }
+}
+
+@media (max-width: 500px) {
+  /* Stack logos and title on very small phones if needed, or keep compact row */
+  .ubc-brandbar { gap: 0.5rem; }
+  .ubc-brand { font-size: 1rem; }
+  .ubc-logo, .ubc-facilities-logo { max-height: 40px; }
+}
+
+
+/* --- MODERN TILES & CARDS --- */
+.tile, .card {
+  border: none !important;
+  border-radius: var(--radius-md) !important;
+  background-color: #fff;
+  box-shadow: var(--shadow-sm);
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.tile:hover, .card:hover {
+  box-shadow: var(--shadow-hover);
+}
+
+.card-header {
+  background-color: transparent !important;
+  border-bottom: 1px solid var(--divider) !important;
+  padding: 1.25rem 1.5rem !important;
+}
+
+.card-body {
+  padding: 1.5rem !important;
+}
+
+/* --- MODERN FORM ELEMENTS --- */
+.form-select, .form-control {
+  border-radius: 8px !important;
+  border: 1px solid #dfe6ec;
+  padding: 0.6rem 1rem;
+  box-shadow: none !important; /* Flatten inputs */
+  transition: border-color 0.2s ease;
+}
+
+.form-select:focus, .form-control:focus {
+  border-color: var(--ubc-blue-light);
+  ring: 2px solid rgba(0, 85, 183, 0.2);
+}
+
+.ubc-btn, .btn-primary {
+  background-color: var(--ubc-blue) !important;
+  border-color: var(--ubc-blue) !important;
+  color: #fff !important;
+  border-radius: 50px !important; /* Pill buttons */
+  padding: 0.4rem 1.25rem !important;
+  font-size: 0.9rem;
+  font-weight: 500;
+  letter-spacing: 0.3px;
+}
+.ubc-btn:hover {
+  background-color: var(--ubc-blue-light) !important;
+  transform: translateY(-1px);
+}
+
+/* --- DATA TABLES CLEANUP --- */
+.table {
+  border-collapse: separate;
+  border-spacing: 0;
+}
+/* Header Styling */
+.table thead th {
+  background-color: #fafbfc !important;
+  color: #556070;
+  text-transform: uppercase;
+  font-size: 0.75rem !important;
+  letter-spacing: 0.05em;
+  font-weight: 700;
+  border-bottom: 2px solid var(--divider) !important;
+  padding: 12px 10px !important;
+}
+/* Body Styling */
+.table tbody td {
+  border-top: 1px solid var(--divider);
+  font-size: 0.85rem !important;
+  padding: 10px 10px !important;
+  color: var(--dark-grey);
+}
+.table-bordered {
+  border: none !important; /* Remove outer ugly borders */
+}
+
+.dataTables_length .form-select,
+.dataTables_length select{
+  width:44.93% !important;
+  min-width:5.85rem !important;
+  padding-right:2.2rem !important;
+}
+
+/* Floor Code alignment */
+.floor-code-col{
+  text-align:center !important;
+}
+
+/* Package actions sizing */
+.sdi-control-group{
+  width:20.736%;
+  min-width:250px;
+  max-width:20.736%;
+  flex:0 0 20.736% !important;
+  flex-grow:0 !important;
+}
+.sdi-control-group.input-group{
+  width:20.736%;
+  min-width:250px;
+}
+.sdi-control-group .form-select{
+  min-width:0;
+}
+@media (max-width: 992px){
+  .sdi-control-group{
+    width:100%;
+    max-width:none;
+    flex:1 1 100%;
+  }
+  .sdi-control-group.input-group{
+    width:100%;
+  }
+}

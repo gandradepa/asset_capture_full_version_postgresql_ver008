@@ -1,0 +1,72 @@
+#!/usr/bin/env python3
+"""One-off diagnostic: report on QR_codes rows stuck at ai_status=0 / NULL.
+
+For each row, cross-reference:
+- Photo files in Capture_photos_upload/ matching the QR prefix
+- JSON files in Output_jason_api/ matching the QR
+- Capture rows in QR_code_assets
+
+Use: python3 diagnose_stuck_qrs.py
+"""
+from __future__ import annotations
+import sqlite3, os, glob, sys
+
+# Backend-agnostic DB layer (SQLite default; PostgreSQL when DB_BACKEND=postgres).
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import db as qrdb
+
+DB = "/home/developer/asset_capture_app_dev/data/QR_codes.db"
+IMG = "/home/developer/Capture_photos_upload"
+JSON = "/home/developer/Output_jason_api"
+
+
+def main() -> None:
+    con = qrdb.get_connection(sqlite_path=DB)
+    con.row_factory = sqlite3.Row
+    stuck = con.execute(
+        'SELECT * FROM "QR_codes" '
+        "WHERE ai_status = '0' OR ai_status IS NULL OR ai_status = ''"
+    ).fetchall()
+    print("Stuck rows:", len(stuck))
+    print(f"{'QR':<12} | {'Appr':>5} {'IMG':>4} {'JSON':>5} {'ASSETS':>7} | img_disc / json_disc / db_disc")
+    print("-" * 120)
+    for row in stuck:
+        qr = str(row["QR_code_ID"])
+        appr = row["Approved"]
+        img_files = glob.glob(os.path.join(IMG, qr + " *"))
+        img_disc = sorted({
+            os.path.basename(p).split(" ")[2]
+            for p in img_files
+            if len(os.path.basename(p).split(" ")) >= 3
+        })
+        json_files = glob.glob(os.path.join(JSON, qr + "_*.json"))
+        json_disc = sorted({
+            os.path.basename(p).split("_")[1]
+            for p in json_files
+            if len(os.path.basename(p).split("_")) >= 2
+        })
+        asset_rows = con.execute(
+            'SELECT code_assets FROM "QR_code_assets" WHERE code_assets LIKE ?',
+            (qr + " %",),
+        ).fetchall()
+        db_disc = sorted({
+            x["code_assets"].split(" ")[2]
+            for x in asset_rows
+            if len(x["code_assets"].split(" ")) >= 3
+        })
+        print(
+            "{:<12} | {:>5} {:>4} {:>5} {:>7} | img={} json={} db={}".format(
+                qr,
+                str(appr),
+                len(img_files),
+                len(json_files),
+                len(asset_rows),
+                img_disc,
+                json_disc,
+                db_disc,
+            )
+        )
+
+
+if __name__ == "__main__":
+    main()

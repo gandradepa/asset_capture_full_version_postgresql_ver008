@@ -1,0 +1,1163 @@
+<!doctype html>
+<html lang="en">
+
+<head>
+    <meta charset="utf-8" />
+    <title>Mapping New Assets by Properties</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600&family=Inter:wght@400;500&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --ubc-blue: #002145;
+            --ubc-sand: #f5efe6;
+            --card: #ffffff;
+            --ink: #1f1f2b;
+            --border: #d6d9df;
+            --muted: #6c7280;
+            --accent: #3178c6;
+            --accent-2: #3db4a2;
+        }
+
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            margin: 0;
+            background: radial-gradient(circle at 10% 20%, #e8f0ff, #f7fbff 25%, #fdfdfd 60%, #eef4ff 100%);
+            color: var(--ink);
+            font-family: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+            min-height: 100vh;
+        }
+
+        .page {
+            width: 98%;
+            max-width: 2600px;
+            margin: 24px auto 48px;
+            padding: 0 24px;
+        }
+
+        .hero {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 16px;
+            margin-bottom: 24px;
+        }
+
+        .title {
+            font-family: 'Space Grotesk', 'Inter', sans-serif;
+            font-size: 2rem;
+            letter-spacing: -0.5px;
+            margin: 0;
+            color: var(--ubc-blue);
+        }
+
+        .subtitle {
+            margin: 6px 0 0;
+            color: var(--muted);
+            font-size: 0.97rem;
+        }
+
+        .home-link {
+            text-decoration: none;
+            background: white;
+            color: var(--ubc-blue);
+            padding: 10px 24px;
+            border-radius: 30px;
+            font-family: 'Space Grotesk', sans-serif;
+            font-weight: 600;
+            font-size: 0.95rem;
+            box-shadow: 0 4px 12px rgba(0, 33, 69, 0.08);
+            border: 1px solid rgba(255,255,255,0.5);
+            transition: all 0.2s ease;
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .home-link:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 20px rgba(0, 33, 69, 0.12);
+            color: var(--accent);
+            border-color: var(--accent);
+        }
+        
+        .home-link svg {
+            width: 18px;
+            height: 18px;
+            fill: currentColor;
+        }
+
+        .panel {
+            background: var(--card);
+            border: 1px solid var(--border);
+            border-radius: 16px;
+            box-shadow: 0 25px 60px rgba(0, 33, 69, 0.08);
+            padding: 24px;
+            width: 100%;
+        }
+
+        .controls {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+            gap: 20px;
+            align-items: stretch;
+        }
+
+        .control {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            justify-content: flex-end;
+        }
+
+        label {
+            font-size: 0.9rem;
+            color: var(--muted);
+            font-weight: 600;
+        }
+
+        input[type="text"],
+        select {
+            padding: 12px 16px;
+            border-radius: 12px;
+            border: 1px solid var(--border);
+            font-size: 1rem;
+            font-family: inherit;
+            background: #f8fafc;
+            width: 100%;
+            height: 48px;
+            transition: border-color 0.15s ease, box-shadow 0.15s ease;
+        }
+
+        input[type="text"]:focus,
+        select:focus {
+            outline: none;
+            border-color: var(--accent);
+            box-shadow: 0 0 0 3px rgba(49, 120, 198, 0.15);
+        }
+        
+        select:disabled {
+            background-color: #eef2f6;
+            color: #a0a5b0;
+            cursor: not-allowed;
+        }
+
+        .stat-card {
+            background: linear-gradient(135deg, var(--ubc-blue) 0%, var(--accent) 100%);
+            color: white;
+            padding: 12px 20px;
+            border-radius: 14px;
+            box-shadow: 0 8px 20px -4px rgba(0, 33, 69, 0.25);
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            min-height: 80px;
+            position: relative;
+            overflow: hidden;
+            transition: transform 0.2s ease;
+        }
+
+        .stat-card:hover {
+            transform: translateY(-2px);
+        }
+
+        .stat-card::after {
+            content: "";
+            position: absolute;
+            top: -20px;
+            right: -20px;
+            width: 80px;
+            height: 80px;
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 50%;
+        }
+
+        .stat-label {
+            font-size: 0.8rem;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            opacity: 0.9;
+            font-weight: 600;
+            margin-bottom: 4px;
+        }
+
+        .stat-value {
+            font-size: 2rem;
+            font-weight: 700;
+            font-family: 'Space Grotesk', sans-serif;
+            line-height: 1;
+            text-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+
+        #photo-preview {
+            position: fixed;
+            z-index: 9999;
+            display: none;
+            pointer-events: auto;
+            background: rgba(0, 33, 69, 0.85);
+            color: #fff;
+            padding: 10px;
+            border-radius: 12px;
+            box-shadow: 0 12px 30px rgba(0, 33, 69, 0.28);
+            width: min(420px, calc(100vw - 24px));
+            max-width: 420px;
+            backdrop-filter: blur(8px);
+        }
+
+        #photo-preview .photo-preview-toolbar {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            flex-wrap: wrap;
+            gap: 10px;
+            margin-bottom: 8px;
+        }
+
+        #photo-preview .photo-preview-toolbar__group {
+            display: inline-flex;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 8px;
+        }
+
+        #photo-preview .photo-preview-btn {
+            border: 1px solid rgba(255, 255, 255, 0.16);
+            background: rgba(255, 255, 255, 0.12);
+            color: #fff;
+            border-radius: 8px;
+            min-width: 34px;
+            height: 34px;
+            padding: 0 10px;
+            font: inherit;
+            font-weight: 600;
+            cursor: pointer;
+            transition: background 0.15s ease, border-color 0.15s ease;
+        }
+
+        #photo-preview .photo-preview-btn:hover {
+            background: rgba(255, 255, 255, 0.2);
+            border-color: rgba(255, 255, 255, 0.3);
+        }
+
+        #photo-preview .photo-preview-zoom {
+            min-width: 54px;
+            text-align: center;
+            font-size: 0.84rem;
+            color: #e5e7eb;
+            font-weight: 600;
+        }
+
+        #photo-preview .photo-preview-viewport {
+            position: relative;
+            width: 100%;
+            height: min(360px, calc(100vh - 180px));
+            min-height: 220px;
+            overflow: hidden;
+            border-radius: 10px;
+            background: #0b1f3a;
+            border: 1px solid rgba(255, 255, 255, 0.12);
+            cursor: grab;
+            touch-action: none;
+        }
+
+        #photo-preview.is-dragging .photo-preview-viewport {
+            cursor: grabbing;
+        }
+
+        #photo-preview .photo-preview-viewport img {
+            display: block;
+            width: 100%;
+            height: 100%;
+            object-fit: contain;
+            background: #0b1f3a;
+            border-radius: 10px;
+            transform-origin: center center;
+            transition: transform 0.12s ease-out;
+            user-select: none;
+            -webkit-user-drag: none;
+            pointer-events: none;
+        }
+
+        #photo-preview .caption {
+            margin-top: 6px;
+            font-size: 0.85rem;
+            color: #e5e7eb;
+            text-align: center;
+        }
+
+        #photo-preview .hint {
+            margin-top: 6px;
+            font-size: 0.78rem;
+            color: #c7d2e3;
+            text-align: center;
+        }
+
+        #photo-preview .notice {
+            margin: 4px 2px;
+            font-size: 0.95rem;
+            color: #f7fafc;
+            text-align: center;
+            line-height: 1.4;
+            max-width: 260px;
+        }
+
+        .flow-wrap {
+            margin-top: 24px;
+            position: relative;
+            background: radial-gradient(circle at 20% 20%, rgba(0, 84, 166, 0.04), transparent 40%), #fff;
+            border: 1px solid var(--border);
+            border-radius: 18px;
+            box-shadow: inset 0 0 20px rgba(0,0,0,0.01);
+            overflow: auto; 
+            padding: 0;
+            min-height: 500px;
+            width: 100%;
+        }
+
+        #flowSvg {
+            display: block;
+            min-width: 100%; 
+        }
+
+        .node-group {
+            cursor: pointer;
+            transition: opacity 0.3s ease;
+        }
+        .node-group:hover rect {
+            stroke: var(--ink);
+            stroke-width: 2px;
+        }
+        
+        .drill-active rect {
+            stroke: var(--ubc-blue);
+            stroke-width: 3px;
+        }
+
+        .empty-state {
+            padding: 80px 20px;
+            text-align: center;
+            color: var(--muted);
+            font-weight: 600;
+            font-size: 1.1rem;
+        }
+
+        .footer {
+            margin-top: 16px;
+            padding: 0 8px;
+            color: var(--muted);
+            font-size: 0.92rem;
+            display: flex;
+            flex-wrap: wrap;
+            gap: 12px;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .reset-btn {
+            background: #fff;
+            border: 1px solid var(--accent);
+            color: var(--accent);
+            padding: 6px 12px;
+            border-radius: 8px;
+            font-size: 0.85rem;
+            font-weight: 600;
+            cursor: pointer;
+            display: none; 
+        }
+        .reset-btn:hover {
+            background: #f0f7ff;
+        }
+
+        @media (max-width: 720px) {
+            .hero {
+                flex-direction: column;
+                align-items: flex-start;
+            }
+            .title {
+                font-size: 1.6rem;
+            }
+            .page {
+                padding: 0 16px;
+                width: 100%;
+            }
+        }
+    </style>
+    {% include "_shell.html" %}
+</head>
+
+<body>
+    <div class="page">
+        <div class="hero">
+            <div>
+                <h1 class="title">Mapping New Assets by Properties</h1>
+                <p class="subtitle">View QR-coded assets and their assigned property.</p>
+            </div>
+            
+            <a href="/" class="home-link">
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M10 20v-6h4v6h5v-8h3L12 3 2 12h3v8z"/></svg>
+                <span>Return Home</span>
+            </a>
+        </div>
+
+        <div class="panel">
+            <div class="controls">
+                
+                <div class="control">
+                    <label for="propertyFilter">1. Select Property</label>
+                    <select id="propertyFilter">
+                        <option value="">Loading properties...</option>
+                    </select>
+                </div>
+
+                <div class="control">
+                    <label for="groupFilter">2. Select Asset Group (Optional)</label>
+                    <select id="groupFilter" disabled>
+                        <option value="">Select a property first</option>
+                    </select>
+                </div>
+
+                <div class="control">
+                    <label for="search">Search</label>
+                    <input type="text" id="search" placeholder="Filter descriptions..." />
+                </div>
+
+                <div class="stat-card">
+                    <div class="stat-label">Asset Quantity Selected</div>
+                    <div class="stat-value" id="statValue">0</div>
+                </div>
+            </div>
+
+            <div class="footer">
+                <div class="muted">Sequence: Asset Group → Space → QR & UBC Tag → Description</div>
+                <button id="resetViewBtn" class="reset-btn" onclick="resetDrillDown()">Reset View</button>
+            </div>
+
+            <div class="flow-wrap" id="flowWrap">
+                <div class="empty-state">Select a property to view the map.</div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // --- Sample Data Fallback ---
+        const sampleData = [
+            { "QR Code": "QR-001234", "Description": "Domestic Water Expansion Tanks - Main", "UBC Tag": "UBC-7789", "Asset Group": "Lab Equipment", "Space": "BIO-204", "Property": "Biological Sciences Building" },
+            { "QR Code": "QR-001235", "Description": "Air Handling Units - Rooftop Addition", "UBC Tag": "UBC-4511", "Asset Group": "HVAC", "Space": "MECH-110", "Property": "Engineering Services Building" },
+            { "QR Code": "QR-001236", "Description": "Generator A", "UBC Tag": "UBC-3391", "Asset Group": "Electrical", "Space": "PWR-001", "Property": "Central Power Plant" },
+            { "QR Code": "QR-001237", "Description": "Heating Water Expansion Tanks", "UBC Tag": "UBC-8820", "Asset Group": "Mechanical", "Space": "PLT-017", "Property": "Life Sciences Centre" },
+            { "QR Code": "QR-001238", "Description": "Emergency Light Panel", "UBC Tag": "UBC-6730", "Asset Group": "Electrical", "Space": "EGR-002", "Property": "Buchanan Tower" },
+            { "QR Code": "QR-009999", "Description": "Microscope", "UBC Tag": "UBC-1111", "Asset Group": "Lab Equipment", "Space": "BIO-205", "Property": "Biological Sciences Building" }
+        ];
+
+        // --- State ---
+        let allRows = [];          
+        let filteredRows = [];     
+        let activeDrillId = null; 
+        
+        // NEW: Track exactly what is currently shown to prevent reset on zoom
+        let currentDataSet = []; 
+
+        // --- DOM Elements ---
+        const statValue = document.getElementById("statValue");
+        const propertyFilter = document.getElementById("propertyFilter");
+        const groupFilter = document.getElementById("groupFilter");
+        const searchInput = document.getElementById("search");
+        const flowWrap = document.getElementById("flowWrap");
+        const resetViewBtn = document.getElementById("resetViewBtn");
+        const photoPreview = document.createElement("div");
+        photoPreview.id = "photo-preview";
+        document.body.appendChild(photoPreview);
+        const photoCache = new Map();
+        const previewState = {
+            qrCode: "",
+            hideTimer: null,
+            zoom: 1,
+            rotation: 0,
+            panX: 0,
+            panY: 0,
+            isDragging: false,
+            dragStartX: 0,
+            dragStartY: 0,
+            dragOriginX: 0,
+            dragOriginY: 0
+        };
+
+        const columns = ["Asset Group", "Space", "QR & UBC Tag", "Description"];
+        
+        const colors = {
+            "Asset Group": "#5a4fd8",
+            "Space": "#1b877a",
+            "QR & UBC Tag": "#3178c6", 
+            "Description": "#e14d4d"
+        };
+
+        // --- Core Logic ---
+
+        function normalizeRow(obj) {
+            const qr = obj["QR Code"] ?? "";
+            const tag = obj["UBC Tag"] ?? "";
+            const combined = `QR Code: ${qr} | UBC Tag: ${tag}`;
+
+            return {
+                "QR Code": qr,
+                "Description": obj["Description"] ?? "",
+                "UBC Tag": tag,
+                "QR & UBC Tag": combined, 
+                "Asset Group": obj["Asset Group"] ?? "",
+                "Space": obj["Space"] ?? "",
+                "Property": obj["Property"] ?? obj["Name"] ?? ""
+            };
+        }
+
+        function initFilters(data) {
+            const uniqueProps = Array.from(new Set(data.map(r => r.Property).filter(Boolean))).sort();
+            propertyFilter.innerHTML = `<option value="" selected disabled hidden>Select Property</option>` + 
+                                       uniqueProps.map(p => `<option value="${p}">${p}</option>`).join("");
+            groupFilter.innerHTML = `<option value="">Select a property first</option>`;
+            groupFilter.disabled = true;
+        }
+
+        function handlePropertyChange() {
+            const selectedProp = propertyFilter.value;
+            if (!selectedProp) {
+                groupFilter.innerHTML = `<option value="">Select a property first</option>`;
+                groupFilter.disabled = true;
+                applyTopFilters();
+                return;
+            }
+            const relevantRows = allRows.filter(r => r.Property === selectedProp);
+            const uniqueGroups = Array.from(new Set(relevantRows.map(r => r["Asset Group"]).filter(Boolean))).sort();
+            
+            groupFilter.innerHTML = `<option value="">All Asset Groups</option>` + 
+                                    uniqueGroups.map(g => `<option value="${g}">${g}</option>`).join("");
+            
+            groupFilter.disabled = false;
+            applyTopFilters(); 
+        }
+
+        function applyTopFilters() {
+            const term = searchInput.value.trim().toLowerCase();
+            const property = propertyFilter.value;
+            const group = groupFilter.value;
+
+            activeDrillId = null; 
+            resetViewBtn.style.display = "none";
+
+            if (!property) {
+                flowWrap.innerHTML = `<div class="empty-state">Select a property to view the map.</div>`;
+                statValue.textContent = "0";
+                filteredRows = [];
+                currentDataSet = []; // Clear current data
+                hidePhotoPreview(true);
+                return;
+            }
+
+            filteredRows = allRows.filter(item => {
+                const matchesProperty = item.Property === property;
+                const matchesGroup = !group || item["Asset Group"] === group;
+                const text = Object.values(item).join(" ").toLowerCase();
+                const matchesSearch = !term || text.includes(term);
+                return matchesProperty && matchesGroup && matchesSearch;
+            });
+
+            render(filteredRows);
+        }
+
+        function render(data) {
+            // Update state variable so resize listener uses correct data
+            currentDataSet = data;
+            hidePhotoPreview(true);
+
+            statValue.textContent = data.length;
+
+            if (!data.length) {
+                flowWrap.innerHTML = `<div class="empty-state">No assets found.</div>`;
+                return;
+            }
+
+            data.sort((a, b) => {
+                for (const col of columns) {
+                    const valA = (a[col] || "").toString().toLowerCase();
+                    const valB = (b[col] || "").toString().toLowerCase();
+                    if (valA < valB) return -1;
+                    if (valA > valB) return 1;
+                }
+                return 0;
+            });
+
+            buildFlow(data);
+        }
+
+        function wrapText(text, maxChars = 26) {
+            const words = String(text).split(' ');
+            const lines = [];
+            let currentLine = words[0] || "";
+            for (let i = 1; i < words.length; i++) {
+                if (currentLine.length + 1 + words[i].length <= maxChars) {
+                    currentLine += " " + words[i];
+                } else {
+                    lines.push(currentLine);
+                    currentLine = words[i];
+                }
+            }
+            if(currentLine) lines.push(currentLine);
+            return lines;
+        }
+
+        function clearPhotoPreviewHideTimer() {
+            if (previewState.hideTimer) {
+                clearTimeout(previewState.hideTimer);
+                previewState.hideTimer = null;
+            }
+        }
+
+        function clampPhotoPreviewPan() {
+            const viewport = photoPreview.querySelector(".photo-preview-viewport");
+            const img = photoPreview.querySelector(".photo-preview-viewport img");
+            if (!viewport || !img) return;
+
+            const maxPanX = Math.max(0, ((img.clientWidth * previewState.zoom) - viewport.clientWidth) / 2);
+            const maxPanY = Math.max(0, ((img.clientHeight * previewState.zoom) - viewport.clientHeight) / 2);
+
+            previewState.panX = Math.max(-maxPanX, Math.min(maxPanX, previewState.panX));
+            previewState.panY = Math.max(-maxPanY, Math.min(maxPanY, previewState.panY));
+        }
+
+        function applyPhotoPreviewTransform() {
+            const img = photoPreview.querySelector(".photo-preview-viewport img");
+            const zoomValue = photoPreview.querySelector('[data-preview-role="zoom-value"]');
+            if (!img) return;
+
+            clampPhotoPreviewPan();
+            img.style.transform = `translate(${previewState.panX}px, ${previewState.panY}px) scale(${previewState.zoom}) rotate(${previewState.rotation}deg)`;
+
+            if (zoomValue) {
+                zoomValue.textContent = `${Math.round(previewState.zoom * 100)}%`;
+            }
+        }
+
+        function resetPhotoPreviewTransform() {
+            previewState.zoom = 1;
+            previewState.rotation = 0;
+            previewState.panX = 0;
+            previewState.panY = 0;
+            applyPhotoPreviewTransform();
+        }
+
+        function rotatePhotoPreview(direction) {
+            previewState.rotation = (((previewState.rotation + direction) % 360) + 360) % 360;
+            previewState.panX = 0;
+            previewState.panY = 0;
+            applyPhotoPreviewTransform();
+        }
+
+        async function downloadPhotoPreviewImage() {
+            const img = photoPreview.querySelector(".photo-preview-viewport img");
+            const src = img ? (img.currentSrc || img.src) : "";
+            const rotation = (((previewState.rotation % 360) + 360) % 360);
+            if (!src) return;
+
+            try {
+                const source = new Image();
+                const imageReady = new Promise((resolve, reject) => {
+                    source.onload = resolve;
+                    source.onerror = reject;
+                });
+                source.src = src;
+                await imageReady;
+
+                const swapSides = rotation === 90 || rotation === 270;
+                const canvas = document.createElement("canvas");
+                canvas.width = swapSides ? source.naturalHeight : source.naturalWidth;
+                canvas.height = swapSides ? source.naturalWidth : source.naturalHeight;
+
+                const ctx = canvas.getContext("2d");
+                if (!ctx) throw new Error("Canvas context unavailable");
+
+                ctx.translate(canvas.width / 2, canvas.height / 2);
+                ctx.rotate(rotation * Math.PI / 180);
+                ctx.drawImage(source, -source.naturalWidth / 2, -source.naturalHeight / 2);
+
+                const link = document.createElement("a");
+                const suffix = rotation ? `_rot${rotation}` : "";
+                link.href = canvas.toDataURL("image/png");
+                link.download = `${previewState.qrCode || "asset-photo"}${suffix}.png`;
+                document.body.appendChild(link);
+                link.click();
+                link.remove();
+            } catch (error) {
+                console.warn("Could not download rotated image:", error);
+            }
+        }
+
+        function scheduleHidePhotoPreview(delay = 120) {
+            clearPhotoPreviewHideTimer();
+            previewState.hideTimer = window.setTimeout(() => {
+                if (previewState.isDragging || photoPreview.matches(":hover")) {
+                    return;
+                }
+                hidePhotoPreview(true);
+            }, delay);
+        }
+
+        function hidePhotoPreview(force = false) {
+            clearPhotoPreviewHideTimer();
+            if (!force && previewState.isDragging) return;
+
+            previewState.qrCode = "";
+            previewState.zoom = 1;
+            previewState.rotation = 0;
+            previewState.panX = 0;
+            previewState.panY = 0;
+            previewState.isDragging = false;
+            photoPreview.classList.remove("is-dragging");
+            photoPreview.style.display = "none";
+            photoPreview.innerHTML = "";
+        }
+
+        function movePhotoPreview(evt) {
+            if (getComputedStyle(photoPreview).display === "none" || previewState.isDragging) return;
+            const padding = 18;
+            const { clientX, clientY } = evt;
+            const rect = photoPreview.getBoundingClientRect();
+            const maxX = window.innerWidth - rect.width - 12;
+            const maxY = window.innerHeight - rect.height - 12;
+            photoPreview.style.left = Math.min(clientX + padding, maxX) + "px";
+            photoPreview.style.top = Math.min(clientY + padding, maxY) + "px";
+        }
+
+        function adjustPhotoPreviewZoom(direction) {
+            const nextZoom = Math.max(1, Math.min(4, +(previewState.zoom + direction).toFixed(2)));
+            if (nextZoom === previewState.zoom) return;
+
+            previewState.zoom = nextZoom;
+            if (previewState.zoom === 1) {
+                previewState.panX = 0;
+                previewState.panY = 0;
+            }
+            applyPhotoPreviewTransform();
+        }
+
+        function handlePhotoPreviewWheel(evt) {
+            const viewport = evt.target.closest(".photo-preview-viewport");
+            if (!viewport || !photoPreview.querySelector(".photo-preview-viewport img")) return;
+
+            evt.preventDefault();
+            clearPhotoPreviewHideTimer();
+            adjustPhotoPreviewZoom(evt.deltaY < 0 ? 0.2 : -0.2);
+        }
+
+        function handlePhotoPreviewToolbarClick(evt) {
+            const btn = evt.target.closest("[data-preview-action]");
+            if (!btn) return;
+
+            const action = btn.dataset.previewAction;
+            clearPhotoPreviewHideTimer();
+
+            if (action === "zoom-in") {
+                adjustPhotoPreviewZoom(0.2);
+            } else if (action === "zoom-out") {
+                adjustPhotoPreviewZoom(-0.2);
+            } else if (action === "rotate-left") {
+                rotatePhotoPreview(-90);
+            } else if (action === "rotate-right") {
+                rotatePhotoPreview(90);
+            } else if (action === "download") {
+                downloadPhotoPreviewImage();
+            } else if (action === "reset") {
+                resetPhotoPreviewTransform();
+            } else if (action === "close") {
+                hidePhotoPreview(true);
+            }
+        }
+
+        function handlePhotoPreviewMouseDown(evt) {
+            const viewport = evt.target.closest(".photo-preview-viewport");
+            if (!viewport || !photoPreview.querySelector(".photo-preview-viewport img")) return;
+            if (previewState.zoom <= 1) return;
+
+            evt.preventDefault();
+            clearPhotoPreviewHideTimer();
+            previewState.isDragging = true;
+            previewState.dragStartX = evt.clientX;
+            previewState.dragStartY = evt.clientY;
+            previewState.dragOriginX = previewState.panX;
+            previewState.dragOriginY = previewState.panY;
+            photoPreview.classList.add("is-dragging");
+        }
+
+        function handlePhotoPreviewMouseMove(evt) {
+            if (!previewState.isDragging) return;
+
+            evt.preventDefault();
+            previewState.panX = previewState.dragOriginX + (evt.clientX - previewState.dragStartX);
+            previewState.panY = previewState.dragOriginY + (evt.clientY - previewState.dragStartY);
+            applyPhotoPreviewTransform();
+        }
+
+        function handlePhotoPreviewMouseUp() {
+            if (!previewState.isDragging) return;
+
+            previewState.isDragging = false;
+            photoPreview.classList.remove("is-dragging");
+            if (!photoPreview.matches(":hover")) {
+                scheduleHidePhotoPreview(90);
+            }
+        }
+
+        async function showPhotoPreview(qrCode, evt) {
+            clearPhotoPreviewHideTimer();
+            const code = (qrCode || "").trim();
+            if (!code) { hidePhotoPreview(true); return; }
+            const resetTransform = previewState.qrCode !== code;
+            previewState.qrCode = code;
+
+            let cached = photoCache.get(code);
+            if (cached === undefined) {
+                try {
+                    const resp = await fetch(`/api/asset-photo/${encodeURIComponent(code)}`);
+                    if (!resp.ok) throw new Error("not found");
+                    const data = await resp.json();
+                    cached = { url: data.url || null, message: null };
+                } catch (error) {
+                    cached = { url: null, message: "Asset Photo is Archived. It can be found in Planon" };
+                }
+                photoCache.set(code, cached);
+            }
+
+            const hasUrl = cached && cached.url;
+            const message = cached && cached.message;
+
+            photoPreview.innerHTML = hasUrl
+                ? `<div class="photo-preview-toolbar">
+                       <div class="photo-preview-toolbar__group">
+                           <button type="button" class="photo-preview-btn" data-preview-action="zoom-out" aria-label="Zoom out">-</button>
+                           <span class="photo-preview-zoom" data-preview-role="zoom-value">100%</span>
+                           <button type="button" class="photo-preview-btn" data-preview-action="zoom-in" aria-label="Zoom in">+</button>
+                       </div>
+                       <div class="photo-preview-toolbar__group">
+                           <button type="button" class="photo-preview-btn" data-preview-action="rotate-left" aria-label="Rotate left">Left</button>
+                           <button type="button" class="photo-preview-btn" data-preview-action="rotate-right" aria-label="Rotate right">Right</button>
+                           <button type="button" class="photo-preview-btn" data-preview-action="download">Save</button>
+                           <button type="button" class="photo-preview-btn" data-preview-action="reset">Reset</button>
+                           <button type="button" class="photo-preview-btn" data-preview-action="close" aria-label="Close preview">x</button>
+                       </div>
+                   </div>
+                   <div class="photo-preview-viewport">
+                       <img src="${cached.url}" alt="Asset photo for ${escapeText(code)}" draggable="false">
+                   </div>
+                   <div class="caption">${escapeText(code)}</div>
+                   <div class="hint">Use the mouse wheel to zoom, drag to pan, rotate left or right, and Save to download.</div>`
+                : `<div class="notice">${escapeText(message || "Asset Photo is Archived. It can be found in Planon")}</div>`;
+
+            photoPreview.style.display = "block";
+            photoPreview.classList.remove("is-dragging");
+
+            if (hasUrl) {
+                if (resetTransform) {
+                    previewState.zoom = 1;
+                    previewState.rotation = 0;
+                    previewState.panX = 0;
+                    previewState.panY = 0;
+                }
+
+                const previewImg = photoPreview.querySelector(".photo-preview-viewport img");
+                if (previewImg) {
+                    previewImg.addEventListener("load", () => applyPhotoPreviewTransform(), { once: true });
+                }
+                requestAnimationFrame(() => applyPhotoPreviewTransform());
+            } else {
+                previewState.zoom = 1;
+                previewState.rotation = 0;
+                previewState.panX = 0;
+                previewState.panY = 0;
+            }
+
+            movePhotoPreview(evt);
+        }
+
+        function handleNodeClick(nodeId, colName, val) {
+            if (activeDrillId === nodeId) {
+                resetDrillDown();
+                return;
+            }
+            const subset = filteredRows.filter(row => {
+                const rowVal = row[colName] || "—";
+                return rowVal === val; 
+            });
+            activeDrillId = nodeId;
+            resetViewBtn.style.display = "inline-block";
+            render(subset);
+        }
+
+        function resetDrillDown() {
+            activeDrillId = null;
+            resetViewBtn.style.display = "none";
+            render(filteredRows);
+        }
+
+        // --- DRAWING LOGIC ---
+        function buildFlow(data) {
+            const qrNodeLookup = {};
+            data.forEach(row => {
+                const combinedVal = row["QR & UBC Tag"] || `QR Code: ${row["QR Code"] || ""} | UBC Tag: ${row["UBC Tag"] || ""}`;
+                if (row["QR Code"]) {
+                    qrNodeLookup[`QR & UBC Tag::${combinedVal}`] = row["QR Code"];
+                }
+            });
+
+            // Layout Config
+            const nodeWidth = 230; 
+            const nodeHalfWidth = nodeWidth / 2;
+            const nodeBaseHeight = 44;
+            const lineHeight = 16;
+            
+            // 1. Build Node Map
+            const nodeMap = new Map();
+            const columnNodes = columns.map(() => []);
+
+            data.forEach(row => {
+                columns.forEach((col, idx) => {
+                    const val = row[col] || "—";
+                    const key = `${col}::${val}`;
+                    
+                    if (!nodeMap.has(key)) {
+                        const lines = wrapText(val, 28);
+                        const height = nodeBaseHeight + Math.max(0, lines.length - 1) * lineHeight;
+                        
+                        nodeMap.set(key, { 
+                            id: key, 
+                            col, 
+                            val, 
+                            lines, 
+                            height,
+                            parents: []
+                        });
+                        columnNodes[idx].push(key);
+                    }
+                });
+            });
+
+            // 2. Identify Parents (for layout sorting)
+            data.forEach(row => {
+                for (let i = 1; i < columns.length; i++) {
+                    const parentVal = row[columns[i-1]] || "—";
+                    const parentKey = `${columns[i-1]}::${parentVal}`;
+                    const childVal = row[columns[i]] || "—";
+                    const childKey = `${columns[i]}::${childVal}`;
+
+                    const childNode = nodeMap.get(childKey);
+                    if (childNode && !childNode.parents.includes(parentKey)) {
+                        childNode.parents.push(parentKey);
+                    }
+                }
+            });
+
+            // 3. Barycentric Sort (Untangle)
+            for (let c = 1; c < columnNodes.length; c++) {
+                const currentColKeys = columnNodes[c];
+                const prevColKeys = columnNodes[c - 1];
+                const prevOrder = new Map(prevColKeys.map((key, i) => [key, i]));
+
+                const nodeWeights = currentColKeys.map(key => {
+                    const node = nodeMap.get(key);
+                    if (!node.parents.length) return { key, weight: 99999 };
+
+                    const sum = node.parents.reduce((acc, pKey) => {
+                        return acc + (prevOrder.has(pKey) ? prevOrder.get(pKey) : 0);
+                    }, 0);
+                    return { key, weight: sum / node.parents.length };
+                });
+
+                nodeWeights.sort((a, b) => a.weight - b.weight);
+                columnNodes[c] = nodeWeights.map(n => n.key);
+            }
+
+            // 4. Calculate Coordinates (Auto-Centering)
+            const containerWidth = flowWrap.clientWidth;
+            const marginX = nodeHalfWidth + 25; 
+            const marginY = 90; 
+            const minColSpacing = nodeWidth + 60; 
+            const availableWidth = containerWidth - (marginX * 2);
+            let colSpacing = availableWidth / (columns.length - 1);
+            if (colSpacing < minColSpacing) colSpacing = minColSpacing;
+
+            const rowSpacing = 110; 
+            const maxRows = Math.max(1, ...columnNodes.map(colList => colList.length));
+            const svgWidth = (marginX * 2) + ((columns.length - 1) * colSpacing);
+            const svgHeight = (marginY * 2) + ((maxRows - 1) * rowSpacing) + 40;
+
+            const positions = {};
+            columnNodes.forEach((keys, colIdx) => {
+                // Vertical Center Logic
+                const colRows = keys.length;
+                const offsetRows = (maxRows - colRows) / 2;
+                const verticalOffset = offsetRows * rowSpacing;
+
+                keys.forEach((key, rowIdx) => {
+                    positions[key] = {
+                        x: marginX + colIdx * colSpacing,
+                        y: marginY + verticalOffset + rowIdx * rowSpacing + (colIdx % 2 === 0 ? 20 : 0)
+                    };
+                });
+            });
+
+            // 5. Build Links
+            const linksMap = new Map();
+            data.forEach(row => {
+                for (let i = 0; i < columns.length - 1; i++) {
+                    const fromKey = `${columns[i]}::${row[columns[i]] || "—"}`;
+                    const toKey = `${columns[i + 1]}::${row[columns[i + 1]] || "—"}`;
+                    const linkKey = `${fromKey}=>${toKey}`;
+                    if (!linksMap.has(linkKey)) {
+                        linksMap.set(linkKey, { fromKey, toKey, colIdx: i });
+                    }
+                }
+            });
+
+            // 6. Draw SVG
+            const svgParts = [];
+            svgParts.push(`<svg id="flowSvg" width="${svgWidth}" height="${svgHeight}" viewBox="0 0 ${svgWidth} ${svgHeight}" style="min-width:${svgWidth}px" xmlns="http://www.w3.org/2000/svg">`);
+            svgParts.push(`
+                <defs>
+                    <filter id="shadow" x="-50%" y="-50%" width="200%" height="200%">
+                        <feDropShadow dx="0" dy="4" stdDeviation="6" flood-color="rgba(0,33,69,0.15)"/>
+                    </filter>
+                </defs>
+            `);
+            
+            // Legend
+            svgParts.push(`<g transform="translate(${marginX - 40}, 30)">`);
+            columns.forEach((col, idx) => {
+                const x = idx * (Math.min(colSpacing, 250));
+                svgParts.push(`
+                    <rect x="${x}" y="-12" width="16" height="16" rx="4" fill="${colors[col]}"></rect>
+                    <text x="${x + 24}" y="1" font-size="12" fill="#6c7280" font-family="'Inter', sans-serif" font-weight="500">${col}</text>
+                `);
+            });
+            svgParts.push(`</g>`);
+
+            // Links
+            const links = Array.from(linksMap.values());
+            links.forEach(link => {
+                const fromPos = positions[link.fromKey];
+                const toPos = positions[link.toKey];
+                const fromH = nodeMap.get(link.fromKey).height;
+                const toH = nodeMap.get(link.toKey).height;
+                const stroke = colors[columns[link.colIdx]] || "#999";
+                
+                const startY = fromPos.y + (fromH / 2);
+                const endY = toPos.y + (toH / 2);
+                const startX = fromPos.x + nodeHalfWidth;
+                const endX = toPos.x - nodeHalfWidth;
+                const dist = endX - startX;
+                const ctrlOffset = Math.min(dist * 0.5, 120); 
+
+                const path = `M ${startX} ${startY} C ${startX + ctrlOffset} ${startY}, ${endX - ctrlOffset} ${endY}, ${endX} ${endY}`;
+                svgParts.push(`<path d="${path}" fill="none" stroke="${stroke}" stroke-width="2" stroke-opacity="0.5" />`);
+            });
+
+            // Nodes
+            const nodes = Array.from(nodeMap.values());
+            nodes.forEach(node => {
+                const pos = positions[node.id];
+                const color = colors[node.col] || "#555";
+                const startTextY = (node.height / 2) - ((node.lines.length - 1) * 16 / 2) + 4;
+
+                let textSvg = "";
+                node.lines.forEach((line, idx) => {
+                    const dy = idx === 0 ? 0 : 16;
+                    textSvg += `<tspan x="0" dy="${dy}">${escapeText(line)}</tspan>`;
+                });
+
+                // Safe ID & Interaction
+                // Escaping strings for use in JS function call
+                const safeId = node.id.replace(/'/g, "\\'");
+                const safeVal = node.val.replace(/'/g, "\\'");
+                const isActive = (node.id === activeDrillId) ? "drill-active" : "";
+                const qrCodeForNode = node.col === "QR & UBC Tag" ? (qrNodeLookup[node.id] || "") : "";
+                const safeQrCode = qrCodeForNode.replace(/\\/g, "\\\\").replace(/'/g, "\\'");
+                const hoverAttrs = qrCodeForNode ? ` onmouseenter="showPhotoPreview('${safeQrCode}', event)" onmousemove="movePhotoPreview(event)" onmouseleave="scheduleHidePhotoPreview()"` : "";
+
+                svgParts.push(`
+                    <g class="node-group ${isActive}" 
+                       onclick="handleNodeClick('${safeId}', '${node.col}', '${safeVal}')"${hoverAttrs}
+                       transform="translate(${pos.x}, ${pos.y})">
+                        <rect x="-${nodeHalfWidth}" y="0" width="${nodeWidth}" height="${node.height}" rx="8" fill="${color}" filter="url(#shadow)"></rect>
+                        <text x="0" y="${startTextY}" text-anchor="middle" fill="#fff" font-family="'Space Grotesk', sans-serif" font-size="13" font-weight="500" pointer-events="none">
+                            ${textSvg}
+                        </text>
+                    </g>
+                `);
+            });
+
+            svgParts.push(`</svg>`);
+            flowWrap.innerHTML = svgParts.join("");
+        }
+
+        // --- Utils ---
+        function escapeText(text) {
+            return String(text).replace(/[&<>"']/g, s => ({
+                "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;", "'": "&#39;"
+            }[s]));
+        }
+
+        function loadData(data) {
+            allRows = data.map(normalizeRow);
+            initFilters(allRows);
+            // Don't apply filters yet - wait for user
+        }
+
+        // --- Init ---
+        async function fetchBackendData() {
+            try {
+                const resp = await fetch("/api/map-new-assets");
+                if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+                const payload = await resp.json();
+                if (!Array.isArray(payload) || payload.length === 0) {
+                    loadData(sampleData);
+                    return;
+                }
+                loadData(payload);
+            } catch (err) {
+                console.warn("Backend fetch failed, using sample data:", err);
+                loadData(sampleData);
+            }
+        }
+
+        searchInput.addEventListener("input", () => applyTopFilters());
+        propertyFilter.addEventListener("change", handlePropertyChange);
+        groupFilter.addEventListener("change", () => applyTopFilters());
+        flowWrap.addEventListener("mouseleave", () => scheduleHidePhotoPreview());
+        photoPreview.addEventListener("mouseenter", () => clearPhotoPreviewHideTimer());
+        photoPreview.addEventListener("mouseleave", () => scheduleHidePhotoPreview());
+        photoPreview.addEventListener("wheel", handlePhotoPreviewWheel, { passive: false });
+        photoPreview.addEventListener("click", handlePhotoPreviewToolbarClick);
+        photoPreview.addEventListener("mousedown", handlePhotoPreviewMouseDown);
+        photoPreview.addEventListener("dblclick", (evt) => {
+            if (evt.target.closest(".photo-preview-viewport")) {
+                resetPhotoPreviewTransform();
+            }
+        });
+        window.addEventListener("mousemove", handlePhotoPreviewMouseMove);
+        window.addEventListener("mouseup", handlePhotoPreviewMouseUp);
+
+        let resizeTimeout;
+        window.addEventListener("resize", () => {
+            clearTimeout(resizeTimeout);
+            resizeTimeout = setTimeout(() => {
+                // FIXED: Use currentDataSet instead of re-calculating from filteredRows
+                if(currentDataSet.length) {
+                    render(currentDataSet);
+                }
+            }, 150); 
+        });
+
+        fetchBackendData();
+    </script>
+</body>
+</html>

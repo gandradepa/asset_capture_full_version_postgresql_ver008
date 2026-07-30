@@ -1,0 +1,336 @@
+import os
+import json
+import pandas as pd
+from datetime import datetime
+import sqlite3
+import re  # Required for pattern matching
+
+VALID_IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".bmp", ".webp"}
+DEFAULT_JPG_DIRECTORY = os.getenv("CAPTURE_PHOTOS_UPLOAD_DIR", r"/home/developer/Capture_photos_upload")
+
+# =============================================================================
+#  SECTION 1: FUNCTIONS FOR PROCESSING JPG PHOTOS AND UPDATING DATABASE
+#  (Updated: Now correctly handles filenames like "T00001 199 ME - 2.jpg")
+# =============================================================================
+
+def _has_me_seq3_image(payload, image_dir=DEFAULT_JPG_DIRECTORY):
+    if not isinstance(payload, dict):
+        return False
+
+    qr = str(payload.get("qr_code", "") or "").strip()
+    building = str(payload.get("building_number", "") or "").strip()
+    if not qr or not building or not os.path.isdir(image_dir):
+        return False
+
+    base = f"{qr} {building} ME - 3"
+    try:
+        for filename in os.listdir(image_dir):
+            stem, ext = os.path.splitext(filename)
+            if stem == base and ext.lower() in VALID_IMAGE_EXTS:
+                return True
+    except OSError:
+        return False
+    return False
+
+def _extract_avg_ai_conf(payload):
+    if not isinstance(payload, dict):
+        return None
+
+    direct = payload.get("Avg_ai_conf")
+    if direct not in (None, ""):
+        return direct
+
+    scores = payload.get("confidence_scores")
+    if not isinstance(scores, dict):
+        return None
+
+    asset_type = str(payload.get("asset_type", "") or "").upper()
+    exclude_fields = set()
+    if "ME" in asset_type and not _has_me_seq3_image(payload):
+        exclude_fields.add("Technical Safety BC")
+    values = []
+    for field, score in scores.items():
+        if field in exclude_fields:
+            continue
+        try:
+            values.append(float(score))
+        except (TypeError, ValueError):
+            continue
+    if not values:
+        return None
+    return sum(values) / len(values)
+
+def process_jpg_files(directory_path):
+    """
+    Reads all JPG files, extracts the ID (handling both standard 10-digit
+    and T-codes like T00001), and returns data for DB update.
+    """
+    print("--- Starting JPG file processing... ---")
+    file_ids = []
+    creation_dates = []
+    df = pd.DataFrame()
+
+    if os.path.exists(directory_path):
+        for filename in os.listdir(directory_path):
+            if filename.lower().endswith(('.jpg', '.jpeg')):
+                # --- UPDATED ID EXTRACTION LOGIC FOR PHOTOS ---
+                # This fixes the issue with "T00001 199 ME - 2.jpg"
+                if filename.startswith('T'):
+                    # Regex: Find 'T' followed strictly by digits (e.g., T00001)
+                    # It stops immediately when it hits a space or non-digit
+                    match = re.match(r"(T\d+)", filename)
+                    if match:
+                        qr_code_id = match.group(1) # Extracts "T00001"
+                    else:
+                        base_name = os.path.splitext(filename)[0]
+                        qr_code_id = base_name[:10]
+                else:
+                    # Standard logic for 10-digit numeric codes
+                    base_name = os.path.splitext(filename)[0]
+                    qr_code_id = base_name[:10]
+                
+                file_ids.append(qr_code_id)
+                
+                full_file_path = os.path.join(directory_path, filename)
+                creation_timestamp = os.path.getctime(full_file_path)
+                creation_datetime = datetime.fromtimestamp(creation_timestamp)
+                creation_dates.append(creation_datetime)
+
+        data = {'QR_code_ID': file_ids, 'date_set': creation_dates}
+        df = pd.DataFrame(data)
+        print("✅ DataFrame created successfully from photos.")
+        print(f"   Preview: {df.head(3)}") # Show preview to verify IDs
+    else:
+        print(f"❌ Error: The photo directory '{directory_path}' was not found.")
+    
+    return df
+
+def update_qr_codes_table(df, db_path):
+    """
+    Updates the 'date_set' column in the 'QR_codes' table of an SQLite
+    database using data from the provided DataFrame.
+    """
+    print("\n--- Starting database update for QR_codes table... ---")
+    df['date_set'] = df['date_set'].astype(str)
+
+    # Dedupe to one row per QR_code_ID using the earliest date_set so the value
+    # is deterministic across reruns. Without this, filesystem iteration order
+    # makes each cron run pick a different photo's mtime, churning date_set
+    # and flooding audit_trail with no-op UPDATEs.
+    df = (
+        df.sort_values('date_set')
+          .drop_duplicates(subset='QR_code_ID', keep='first')
+          .reset_index(drop=True)
+    )
+    print(f"📦 Deduped to {len(df)} unique QR_code_IDs.")
+
+    # Best-effort audit logger import (sibling `audit/` package). Not fatal.
+    _audit_log = None
+    try:
+        import os, sys
+        _proj = "/home/developer"
+        if _proj not in sys.path:
+            sys.path.insert(0, _proj)
+        from audit.logger import log_change as _audit_log
+    except Exception as _e:
+        print(f"[audit] api/updating_process_database import skipped: {_e}")
+
+    connection = None
+    try:
+        print(f"🔄 Connecting to database at '{db_path}'...")
+        connection = sqlite3.connect(db_path)
+        cursor = connection.cursor()
+
+        sql_update_query = "UPDATE QR_codes SET date_set = ? WHERE QR_code_ID = ?"
+
+        print("🚀 Starting database update process...")
+        changed = 0
+        unchanged = 0
+        orphan = 0
+        for index, row in df.iterrows():
+            qr = row['QR_code_ID']
+            new_val = row['date_set']
+            old_row = cursor.execute(
+                'SELECT date_set FROM QR_codes WHERE QR_code_ID = ?', (qr,),
+            ).fetchone()
+            if old_row is None:
+                # Orphan photo: no matching QR_codes row to update. Skip both the
+                # UPDATE (would be a no-op anyway) and the audit log so the table
+                # doesn't get garbage entries every cron cycle.
+                orphan += 1
+                continue
+            old_val = old_row[0]
+            if str(old_val or "") == str(new_val or ""):
+                # No-op: skip both the UPDATE and the audit row.
+                unchanged += 1
+                continue
+            cursor.execute(sql_update_query, (new_val, qr))
+            changed += 1
+            if _audit_log:
+                try:
+                    _audit_log(
+                        connection,
+                        qr_code=qr,
+                        app_name="api_pipeline",
+                        table_name="QR_codes",
+                        record_pk=qr,
+                        op_type="UPDATE",
+                        field_changes={"date_set": (old_val, new_val)},
+                        modified_by="ai-pipeline",
+                        source="ai:gpt-5.5",
+                        description="updating_process_database.update_qr_codes_table",
+                    )
+                except Exception as audit_exc:
+                    print(f"[audit] update_qr_codes_table audit failed: {audit_exc}")
+
+        connection.commit()
+        print(f"\n✅ Success! changed={changed}, unchanged={unchanged}, orphan={orphan} (out of {len(df)} unique QRs).")
+
+    except sqlite3.Error as e:
+        print(f"❌ Database error: {e}")
+        print("No changes were saved. The transaction has been rolled back.")
+
+    finally:
+        if connection:
+            connection.close()
+            print("🔌 Database connection closed.")
+
+# =============================================================================
+#  SECTION 2: FUNCTIONS FOR PROCESSING JSON FILES AND SAVING TO DATABASE
+#  (Updated: Handles T-codes and Fallbacks to file date if DB is empty)
+# =============================================================================
+
+def process_json_files(path, db_path):
+    """
+    Identifies JSON files, finds unique codes (handling T-codes), and fetches 
+    creation date from DB. Fallbacks to file modification date if DB is missing data.
+    """
+    if not os.path.exists(path):
+        print(f"--- ERROR ---")
+        print(f"The specified path does not exist: {path}")
+        return pd.DataFrame(columns=["code", "create_date", "Avg_ai_conf"])
+
+    # --- Step 1: Scan JSON files and deduplicate ---
+    data_list = []
+    print("--- Starting JSON file processing... ---")
+    
+    for filename in os.listdir(path):
+        if filename.endswith(".json"):
+            file_path = os.path.join(path, filename)
+            try:
+                # --- ID EXTRACTION LOGIC FOR JSONs ---
+                if filename.startswith('T'):
+                    match = re.match(r"(T\d+)", filename)
+                    if match:
+                        code = match.group(1) 
+                    else:
+                        code = os.path.splitext(filename)[0]
+                else:
+                    code = filename[:10]
+                
+                # Capture file timestamp (used as fallback)
+                timestamp = os.path.getmtime(file_path)
+                mod_date = str(datetime.fromtimestamp(timestamp)) 
+                
+                avg_ai_conf = None
+                try:
+                    with open(file_path, "r", encoding="utf-8") as fh:
+                        payload = json.load(fh)
+                    if isinstance(payload, dict):
+                        raw_avg_ai_conf = _extract_avg_ai_conf(payload)
+                        if raw_avg_ai_conf not in (None, ""):
+                            avg_ai_conf = float(raw_avg_ai_conf)
+                except Exception:
+                    avg_ai_conf = None
+
+                data_list.append({"code": code, "mod_date": mod_date, "Avg_ai_conf": avg_ai_conf})
+            except Exception as e:
+                print(f"An unexpected error occurred with file '{filename}': {e}")
+    
+    if not data_list:
+        print("--- No JSON files were found or processed. ---")
+        return pd.DataFrame(columns=["code", "create_date", "Avg_ai_conf"])
+
+    temp_df = pd.DataFrame(data_list)
+    # Sort to keep the most recent file if duplicates exist
+    temp_df = temp_df.sort_values(by='mod_date', ascending=False)
+    
+    unique_codes_df = temp_df.drop_duplicates(subset=['code'], keep='first')[['code', 'mod_date', 'Avg_ai_conf']].reset_index(drop=True)
+    print(f"Found {len(unique_codes_df)} unique codes to process from JSON files.")
+
+    # --- Step 2: Fetch creation dates from the database ---
+    print(f"\n--- Fetching creation dates from database: {db_path} ---")
+    final_df = pd.DataFrame()
+    try:
+        conn = sqlite3.connect(db_path)
+        qr_data_df = pd.read_sql_query("SELECT QR_code_ID, date_set FROM QR_codes", conn)
+        conn.close()
+        
+        # Merge JSON codes with Database dates
+        merged_df = pd.merge(
+            unique_codes_df,
+            qr_data_df,
+            left_on='code',
+            right_on='QR_code_ID',
+            how='left'
+        )
+        
+        # --- FALLBACK LOGIC ---
+        # If DB date is missing (NaN), use file date
+        merged_df['final_date'] = merged_df['date_set'].fillna(merged_df['mod_date'])
+        
+        final_df = merged_df[['code', 'final_date', 'Avg_ai_conf']].copy()
+        final_df.rename(columns={'final_date': 'create_date'}, inplace=True)
+        print("✅ Successfully merged. Filled missing DB dates with file dates.")
+
+    except sqlite3.Error as e:
+        print(f"❌ Database error while fetching creation dates: {e}")
+        # Fallback to file dates if DB fails
+        unique_codes_df.rename(columns={'mod_date': 'create_date'}, inplace=True)
+        return unique_codes_df
+
+    return final_df
+
+def save_json_to_sqlite(df, db_path, table_name):
+    """Saves a DataFrame to a new SQLite database table, replacing it if it exists."""
+    print(f"\n--- Connecting to database: {db_path} ---")
+    try:
+        conn = sqlite3.connect(db_path)
+        print("Connection successful.")
+        df.to_sql(table_name, conn, if_exists='replace', index=False)
+        print(f"Successfully saved {len(df)} rows to table '{table_name}'.")
+    except sqlite3.Error as e:
+        print(f"--- Database Error: {e} ---")
+    finally:
+        if 'conn' in locals() and conn:
+            conn.close()
+            print("Database connection closed.")
+
+# =============================================================================
+#  SECTION 3: MAIN EXECUTION BLOCK
+# =============================================================================
+
+if __name__ == "__main__":
+    # Define paths
+    jpg_directory_path = r"/home/developer/Capture_photos_upload"
+    json_directory_path = r"/home/developer/Output_jason_api"
+    database_path = r"/home/developer/asset_capture_app_dev/data/QR_codes.db"
+    
+    # --- Task 1: Process JPGs and Update the 'QR_codes' Table ---
+    jpg_df = process_jpg_files(jpg_directory_path)
+    if not jpg_df.empty:
+        update_qr_codes_table(jpg_df, database_path)
+
+    print("\n" + "="*50 + "\n")
+
+    # --- Task 2: Process JSONs and Create/Replace the 'json_files' Table ---
+    json_df = process_json_files(json_directory_path, database_path)
+    if not json_df.empty:
+        print("\n--- Resulting DataFrame ---")
+        print(json_df)
+        print("\n--- DataFrame Info ---")
+        json_df.info()
+    else:
+        print("\n--- Resulting DataFrame is empty (no JSON files found). ---")
+    # Always replace json_files table, even when empty, to avoid stale processed codes.
+    save_json_to_sqlite(json_df, database_path, "json_files")

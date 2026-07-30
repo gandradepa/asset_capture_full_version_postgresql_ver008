@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>All Logs - Asset Management</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <link rel="icon" href="/static/logos/ubc-facilities_logo.jpg" type="image/jpeg">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet" />
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <style>
+      :root {
+        --ubc-blue: #002145;
+        --ubc-blue-light: #0055b7;
+        --light-grey: #f4f7fb;
+        --dark-grey: #2d2d2d;
+        --border-color: #e5e7eb;
+        --card-bg: #ffffff;
+      }
+      body {
+        background-color: var(--light-grey);
+        font-family: 'Inter', sans-serif;
+        color: var(--dark-grey);
+      }
+      .ubc-navbar { background-color: rgba(255, 255, 255, 0.8); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); border-bottom: 1px solid var(--border-color); }
+      .ubc-brand { color: var(--ubc-blue) !important; font-weight: 600; }
+      .ubc-logo, .ubc-facilities-logo { height: 50px; }
+      .page-title { color: var(--ubc-blue); font-weight: 700; }
+      .ubc-btn-secondary { background-color: transparent; border: 1px solid var(--ubc-blue); color: var(--ubc-blue); }
+      .ubc-btn-secondary:hover { background-color: var(--ubc-blue); color: white; }
+      .asset-table-container { background-color: var(--card-bg); border-radius: 16px; padding: 1.5rem; box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1); }
+      .asset-table { width: 100%; border-collapse: collapse; }
+      .asset-table th, .asset-table td { padding: 0.75rem 1rem; text-align: left; border-bottom: 1px solid var(--border-color); }
+      .asset-table th { font-weight: 600; color: var(--ubc-blue); font-size: 0.9rem; text-transform: uppercase; letter-spacing: 0.5px; }
+      .asset-table tbody tr:last-child td { border-bottom: none; }
+      .asset-table tbody tr:hover { background-color: #f8f9fa; }
+      .ubc-footer { background-color: var(--ubc-blue); color: rgba(255, 255, 255, 0.8); }
+    </style>
+    {% include "_shell.html" %}
+  </head>
+  <body class="ubc-body">
+    <header>
+      <nav class="navbar navbar-expand-lg ubc-navbar sticky-top" aria-label="Primary">
+        <div class="container-fluid px-4 d-flex justify-content-between align-items-center">
+          <a class="navbar-brand d-flex align-items-center gap-md-3 gap-2" href="{{ url_for('main.index') }}">
+            <img src="{{ url_for('static', filename='logos/ubc_logo.jpg') }}" alt="UBC Logo" class="ubc-logo" />
+            <span class="ubc-brand d-none d-md-inline">Asset Management Dashboard</span>
+          </a>
+          <div class="d-flex align-items-center gap-md-3 gap-2">
+             <img src="{{ url_for('static', filename='logos/ubc-facilities_logo.jpg') }}" alt="UBC Facilities Logo" class="ubc-facilities-logo" />
+             <i data-lucide="circle-user-round" style="color: var(--ubc-blue);"></i>
+          </div>
+        </div>
+      </nav>
+    </header>
+
+    <main id="main" class="container py-5">
+        <div class="d-flex justify-content-between align-items-center mb-4">
+            <div>
+                <h1 class="display-5 page-title">All Logs</h1>
+                <p class="text-muted mb-0">The recorded data refers to the last 5 days.</p>
+            </div>
+            {% if from_view == 'monitoring' %}
+                <a href="{{ url_for('main.index') }}#qr-pending-view" class="btn ubc-btn-secondary">Back to Monitoring</a>
+            {% else %}
+                <a href="{{ url_for('main.index') }}" class="btn ubc-btn-secondary">Back to Dashboard</a>
+            {% endif %}
+        </div>
+
+        <div class="asset-table-container">
+            {% if rows %}
+            <table class="asset-table">
+                <thead>
+                <tr>
+                    <th>Title</th>
+                    <th>When</th>
+                    <th>Size</th>
+                    <th class="text-end">Actions</th>
+                </tr>
+                </thead>
+                <tbody>
+                {% for row in rows %}
+                    <tr>
+                        <td>{{ row.title }}</td>
+                        <td>{{ row.when }}</td>
+                        <td>{{ row.size_kb }}</td>
+                        <td class="text-end">
+                          <div class="btn-group" role="group">
+                            {% if row.name == 'ai_check.log' %}
+                            <a href="{{ url_for('main.read_log', name=row.name, mode='runs') }}" class="btn ubc-btn-secondary btn-sm">Runs</a>
+                            {% endif %}
+                            <a href="{{ url_for('main.read_log', name=row.name, mode='summary') }}" class="btn ubc-btn-secondary btn-sm">Summary</a>
+                            <a href="{{ url_for('main.read_log', name=row.name, mode='raw') }}" class="btn ubc-btn-secondary btn-sm">Raw</a>
+                            <a href="{{ url_for('main.download_log', name=row.name) }}" class="btn ubc-btn-secondary btn-sm">Download</a>
+                          </div>
+                        </td>
+                    </tr>
+                {% endfor %}
+                </tbody>
+            </table>
+            {% else %}
+            <div class="text-center p-4">
+                <p class="text-muted mb-0">No logs found.</p>
+            </div>
+            {% endif %}
+        </div>
+    </main>
+
+    <footer class="ubc-footer text-center py-4 mt-5">
+      <div class="container">
+        <small class="footer-text"> &copy; 2025 University of British Columbia - Maintenance Planning Department. All rights reserved. </small>
+      </div>
+    </footer>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+        lucide.createIcons();
+    </script>
+  </body>
+</html>

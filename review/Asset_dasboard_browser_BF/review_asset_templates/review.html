@@ -1,0 +1,1447 @@
+{% from 'macros/review_buttons.html' import render_review_buttons %}
+
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="utf-8">
+    <title>{{ title or 'Asset Review - Backflow' }}</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <link rel="icon" type="image/jpeg" href="{{ url_for('static', filename='ubc-facilities_logo.jpg') }}">
+
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css" rel="stylesheet">
+
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <link rel="stylesheet" href="https://unpkg.com/leaflet-routing-machine@latest/dist/leaflet-routing-machine.css" />
+
+    <style>
+        /* --- GLOBAL LAYOUT --- */
+        body {
+            background-color: #f8f9fa;
+            font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+            color: #212529;
+            height: 100vh;
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+        }
+
+        /* --- HEADER --- */
+        .top-nav {
+            background: #fff;
+            border-bottom: 1px solid #e9ecef;
+            padding: 0.5rem 1rem;
+            flex-shrink: 0;
+            z-index: 1030;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            height: 60px;
+        }
+
+        .meta-pill {
+            font-size: 0.75rem;
+            background: #f8f9fa;
+            color: #6c757d;
+            padding: 2px 8px;
+            border-radius: 4px;
+            font-weight: 600;
+            border: 1px solid #dee2e6;
+            display: inline-flex;
+            align-items: center;
+            gap: 5px;
+        }
+
+        /* --- MAIN WORKSPACE SPLIT --- */
+        .workspace-container {
+            display: flex;
+            flex-grow: 1;
+            overflow: hidden;
+            position: relative;
+        }
+
+        /* --- LEFT PANEL: VISUALS --- */
+        .visual-panel {
+            flex: 2;
+            background-color: #f5f5f5;
+            position: relative;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+            border-right: 1px solid #dee2e6;
+        }
+
+        .main-stage {
+            flex-grow: 1;
+            position: relative;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            overflow: hidden;
+            background-image: radial-gradient(#dee2e6 1px, transparent 1px);
+            background-size: 20px 20px;
+        }
+
+        .main-stage img {
+            max-width: 98%;
+            max-height: 98%;
+            object-fit: contain;
+            box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.2);
+            transition: transform 0.2s ease-out;
+        }
+
+        .viewer-controls {
+            position: absolute;
+            bottom: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(33, 37, 41, 0.85);
+            backdrop-filter: blur(4px);
+            padding: 6px 12px;
+            border-radius: 30px;
+            display: flex;
+            gap: 8px;
+            box-shadow: 0 4px 10px rgba(0, 0, 0, 0.1);
+            z-index: 20;
+        }
+
+        /* Thumbnails Strip */
+        .thumbs-strip {
+            height: 300px;
+            background: #e9ecef;
+            border-top: 1px solid #dee2e6;
+            display: flex;
+            align-items: center;
+            padding: 0 20px;
+            gap: 15px;
+            overflow-x: auto;
+            flex-shrink: 0;
+            justify-content: flex-start;
+        }
+
+        .thumb {
+            width: 200px;
+            height: 200px;
+            border-radius: 6px;
+            overflow: hidden;
+            opacity: 0.8;
+            cursor: pointer;
+            border: 2px solid #ced4da;
+            transition: all 0.2s;
+            position: relative;
+            flex-shrink: 0;
+            background: #fff;
+        }
+
+        .thumb:hover {
+            opacity: 1;
+            border-color: #adb5bd;
+        }
+
+        .thumb.active {
+            opacity: 1;
+            border-color: #0d6efd;
+            box-shadow: 0 0 0 3px rgba(13, 110, 253, 0.25);
+        }
+
+        .thumb img {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+        }
+
+        .thumb-label {
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            background: rgba(255, 255, 255, 0.85);
+            color: #000;
+            font-size: 13px;
+            text-align: center;
+            padding: 4px 0;
+            font-weight: 600;
+        }
+
+        /* --- PREVIEW RAIL ("Up Next") --- */
+        .preview-rail {
+            width: 160px;
+            background: #fff;
+            border-left: 1px solid #dee2e6;
+            display: flex;
+            flex-direction: column;
+            flex-shrink: 0;
+            z-index: 30;
+            transition: width 0.3s cubic-bezier(0.25, 0.8, 0.25, 1);
+        }
+
+        .preview-rail.collapsed {
+            width: 32px;
+            cursor: pointer;
+            background: #f8f9fa;
+        }
+
+        .rail-header {
+            padding: 12px;
+            border-bottom: 1px solid #f1f3f5;
+            background: #fff;
+        }
+
+        .rail-title {
+            font-size: 0.65rem;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            font-weight: 700;
+            color: #adb5bd;
+            margin-bottom: 4px;
+        }
+
+        .rail-meta {
+            font-family: monospace;
+            font-size: 0.8rem;
+            font-weight: 600;
+            color: #212529;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .rail-content {
+            flex-grow: 1;
+            overflow-y: auto;
+            overflow-x: hidden;
+            padding: 12px;
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+        }
+
+        /* Custom Scrollbar for Rail */
+        .rail-content::-webkit-scrollbar {
+            width: 4px;
+        }
+
+        .rail-content::-webkit-scrollbar-thumb {
+            background: #dee2e6;
+            border-radius: 4px;
+        }
+
+        .rail-thumb {
+            width: 100%;
+            aspect-ratio: 1;
+            background: #f1f3f5;
+            border-radius: 6px;
+            border: 1px solid #e9ecef;
+            overflow: hidden;
+            position: relative;
+            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+            transition: transform 0.2s;
+            cursor: pointer;
+        }
+
+        .rail-thumb:hover {
+            transform: translateY(-2px);
+            border-color: #ced4da;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+        }
+
+        .rail-thumb img {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+        }
+
+        .rail-toggle-btn {
+            display: none;
+            width: 100%;
+            height: 100%;
+            align-items: center;
+            justify-content: center;
+            color: #adb5bd;
+        }
+
+        .preview-rail.collapsed .rail-header,
+        .preview-rail.collapsed .rail-content {
+            display: none;
+        }
+
+        .preview-rail.collapsed .rail-toggle-btn {
+            display: flex;
+        }
+
+        /* --- MAP OVERLAY --- */
+        .map-overlay {
+            position: absolute;
+            bottom: 550px;
+            left: 20px;
+            width: 360px;
+            height: 280px;
+            background: #fff;
+            border-radius: 8px;
+            overflow: hidden;
+            box-shadow: 0 8px 24px rgba(0, 0, 0, 0.15);
+            transition: all 0.3s cubic-bezier(0.25, 0.8, 0.25, 1);
+            z-index: 50;
+            border: 1px solid rgba(0, 0, 0, 0.1);
+        }
+
+        /* Expand on Hover */
+        .map-overlay:hover {
+            width: 550px;
+            height: 450px;
+            bottom: 350px;
+            box-shadow: 0 20px 50px rgba(0, 0, 0, 0.3);
+        }
+
+        #map_widget {
+            width: 100%;
+            height: 100%;
+            background: #e9ecef;
+        }
+
+        .map-error-msg {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            height: 100%;
+            text-align: center;
+            padding: 5px;
+            color: #6c757d;
+            font-size: 0.7rem;
+            line-height: 1.2;
+        }
+
+        /* --- RIGHT PANEL: FORM --- */
+        .form-panel {
+            flex: 1;
+            background: #fff;
+            display: flex;
+            flex-direction: column;
+            min-width: 350px;
+            max-width: 500px;
+            position: relative;
+            z-index: 10;
+        }
+
+        .form-content {
+            flex-grow: 1;
+            overflow-y: auto;
+            padding: 24px;
+        }
+
+        .form-section-title {
+            font-size: 0.7rem;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            color: #adb5bd;
+            font-weight: 700;
+            margin: 20px 0 10px 0;
+            border-bottom: 1px solid #f1f3f5;
+            padding-bottom: 5px;
+        }
+
+        .form-section-title:first-child {
+            margin-top: 0;
+        }
+
+        .form-floating>.form-control,
+        .form-floating>.form-select {
+            border-radius: 6px;
+            border-color: #dee2e6;
+            background-color: #fff;
+        }
+
+        .form-floating>.form-control:focus,
+        .form-floating>.form-select:focus {
+            border-color: #86b7fe;
+            box-shadow: 0 0 0 0.25rem rgba(13, 110, 253, 0.15);
+        }
+
+        .auto-desc-input {
+            background-color: #fff !important;
+            font-weight: 500;
+            color: #212529;
+        }
+
+        .auto-desc-hint {
+            font-size: 0.75rem;
+            color: #6c757d;
+            margin-top: 4px;
+            display: flex;
+            align-items: center;
+            gap: 4px;
+        }
+
+        .form-footer {
+            padding: 16px 24px;
+            background: rgba(255, 255, 255, 0.85);
+            backdrop-filter: blur(10px);
+            border-top: 1px solid #e9ecef;
+            display: flex;
+            gap: 10px;
+            align-items: center;
+            flex-wrap: wrap;
+            justify-content: center;
+        }
+
+        .form-footer>.text-muted {
+            width: 100%;
+            text-align: center;
+            margin-bottom: 5px;
+        }
+
+        .leaflet-control-layers {
+            border: none !important;
+            box-shadow: 0 2px 5px rgba(0, 0, 0, 0.2) !important;
+        }
+
+        /* Hides Routing Text Instructions */
+        .leaflet-routing-container {
+            display: none !important;
+        }
+
+        /* --- APPROVE TOGGLE BUTTON --- */
+        .approve-toggle-btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 5px;
+            padding: 4px 12px;
+            border-radius: 20px;
+            font-size: 0.8rem;
+            font-weight: 600;
+            cursor: pointer;
+            border: 2px solid;
+            transition: all 0.25s ease;
+            user-select: none;
+            white-space: nowrap;
+        }
+        .approve-toggle-btn.pending {
+            background: #fff;
+            border-color: #adb5bd;
+            color: #6c757d;
+        }
+        .approve-toggle-btn.pending:hover {
+            background: #f1f3f5;
+            border-color: #198754;
+            color: #198754;
+        }
+        .approve-toggle-btn.approved {
+            background: #198754;
+            border-color: #198754;
+            color: #fff;
+        }
+        .approve-toggle-btn.approved:hover {
+            background: #157347;
+            border-color: #146c43;
+        }
+
+        .save-stay-btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 5px;
+            padding: 4px 12px;
+            border-radius: 20px;
+            font-size: 0.8rem;
+            font-weight: 600;
+            cursor: pointer;
+            border: 2px solid #0d6efd;
+            background: #fff;
+            color: #0d6efd;
+            transition: all 0.25s ease;
+            user-select: none;
+            white-space: nowrap;
+        }
+        .save-stay-btn:hover:not(:disabled) {
+            background: #0d6efd;
+            color: #fff;
+            box-shadow: 0 2px 6px rgba(13, 110, 253, 0.35);
+        }
+        .save-stay-btn:disabled {
+            opacity: 0.45;
+            cursor: not-allowed;
+        }
+
+        .form-panel.is-read-only .form-content [data-lock-editable="true"]:disabled {
+            cursor: not-allowed;
+        }
+
+        .installation-date-group { position: relative; }
+        .installation-date-picker-input {
+            position: absolute;
+            top: 0;
+            right: 0;
+            width: 3rem;
+            height: 100%;
+            opacity: 0;
+            border: 0;
+            padding: 0;
+            pointer-events: none;
+        }
+    </style>
+    {% include "_shell.html" %}
+</head>
+
+<body class="{% if g.embedded %}embedded-mode{% endif %}">
+    {% set btn_ctx = {
+        'doc_id': doc_id,
+        'approved': data.get('Approved','') == 'True',
+        'package_locked': package_locked,
+        'review_locked': review_locked,
+        'package_lock_message': package_lock_message,
+        'endpoints': review_endpoints,
+        'embedded': g.embedded
+    } %}
+
+    <header class="top-nav">
+        <div class="d-flex align-items-center gap-3">
+            {% if not g.embedded %}
+            <a href="{{ url_for('index') }}" class="text-decoration-none d-flex align-items-center gap-2">
+                <img src="{{ url_for('static', filename='ubc-facilities_logo.jpg') }}" alt="Logo" height="32"
+                    class="rounded">
+                <div class="lh-1 d-none d-sm-block">
+                    <div class="fw-bold text-dark">{{ title or 'Asset Review' }}</div>
+                    <div class="small text-muted" style="font-size: 0.75em;">Backflow Devices</div>
+                </div>
+            </a>
+            {% endif %}
+
+            <div class="d-flex gap-2">
+                <span class="meta-pill" title="QR Code"><i class="bi bi-qr-code"></i> {{ qr_code }}</span>
+                <span class="meta-pill" title="Building"><i class="bi bi-building"></i> {{ building }}</span>
+                <span class="meta-pill d-none d-lg-inline-flex" title="Location"><i class="bi bi-geo-alt"></i> {{
+                    location or 'N/A' }}</span>
+                <span class="meta-pill d-none d-xl-inline-flex" title="Average AI Confidence"><i
+                        class="bi bi-bar-chart-line"></i> AI {{ avg_ai_conf_display }}</span>
+            </div>
+        </div>
+
+        <div class="d-flex align-items-center gap-2">
+            {% if username and not g.embedded %}
+            <span class="text-muted small me-2 d-none d-md-inline">User: <strong>{{ username }}</strong></span>
+            {% endif %}
+            {{ render_review_buttons(review_buttons, 'top', btn_ctx) }}
+        </div>
+    </header>
+
+    <form method="POST" action="{{ url_for('save_review', doc_id=doc_id) }}" id="reviewForm"
+        class="workspace-container">
+
+        <input type="hidden" name="Approved" value="{{ data.get('Approved','') }}">
+        <input type="hidden" name="dashboard_query" id="dashboard_query" value="">
+        <input type="hidden" name="nav_prev" id="nav_prev" value="">
+        <input type="hidden" name="nav_next" id="nav_next" value="">
+
+        <div class="visual-panel">
+
+            {% set default_tag = none %}
+            {% set default_url = none %}
+            {% if images %}
+            {% if images.get('-0') and images['-0'].exists %}{% set default_tag = '-0' %}
+            {% elif images.get('-1') and images['-1'].exists %}{% set default_tag = '-1' %}
+            {% elif images.get('-2') and images['-2'].exists %}{% set default_tag = '-2' %}
+            {% endif %}
+            {% if default_tag %}{% set default_url = images[default_tag].url %}{% endif %}
+            {% endif %}
+
+            <div class="main-stage">
+                <img id="mainImage" src="{{ default_url if default_url else '' }}"
+                    class="{{ 'd-none' if not default_url else '' }}">
+
+                {% if not default_url %}
+                <div class="text-muted d-flex flex-column align-items-center opacity-50">
+                    <i class="bi bi-image display-4"></i>
+                    <span class="small mt-2">No Image Available</span>
+                </div>
+                {% endif %}
+
+                <div class="viewer-controls">
+                    <button type="button" class="btn btn-sm btn-dark rounded-circle p-1 px-2" id="zoomIn"><i
+                            class="bi bi-plus-lg"></i></button>
+                    <button type="button" class="btn btn-sm btn-dark rounded-circle p-1 px-2" id="zoomOut"><i
+                            class="bi bi-dash-lg"></i></button>
+                    <button type="button" class="btn btn-sm btn-dark rounded-circle p-1 px-2" id="rotate"><i
+                            class="bi bi-arrow-clockwise"></i></button>
+                </div>
+            </div>
+
+            <div class="map-overlay" id="mapOverlay" title="Hover to expand map">
+                <div id="map_widget"></div>
+            </div>
+
+            <div class="thumbs-strip">
+                {% if images %}
+                {% for tag,label in {'-0':'Asset Plate','-1':'Asset Plate (Opt)','-2':'Main Asset','-3':'Extra Photo'}.items() %}
+                {% set im = images.get(tag) %}
+                <div class="thumb {% if default_tag == tag %}active{% endif %}"
+                    data-url="{{ im.url if im and im.exists else '' }}">
+                    {% if im and im.exists %}
+                    <img src="{{ im.url }}" alt="{{ label }}">
+                    {% else %}
+                    <div
+                        class="d-flex align-items-center justify-content-center h-100 text-muted bg-light small flex-column">
+                        <i class="bi bi-slash-circle mb-1 opacity-50"></i> <span class="opacity-75"
+                            style="font-size: 0.7rem;">Missing</span>
+                    </div>
+                    {% endif %}
+                    <div class="thumb-label">{{ label }}</div>
+                </div>
+                {% endfor %}
+                {% endif %}
+            </div>
+        </div>
+
+        <div class="form-panel">
+
+            <div class="form-content">
+
+                {% with messages = get_flashed_messages(with_categories=true) %}
+                {% if messages %}
+                <div class="mb-3">
+                    {% for category, msg in messages %}
+                    <div class="alert alert-{{ 'danger' if category in ['error','danger'] else category }} mb-2"
+                        role="alert">
+                        {{ msg }}
+                    </div>
+                    {% endfor %}
+                </div>
+                {% endif %}
+                {% endwith %}
+
+                <div id="reviewReadonlyNotice" class="alert alert-warning py-2 px-3 mb-3 {% if not review_locked %}d-none{% endif %}" role="alert">
+                    {% if package_locked %}
+                    {{ package_lock_message }}
+                    {% else %}
+                    Approved asset. Toggle Approved to Pending to edit.
+                    {% endif %}
+                </div>
+
+                <div class="form-section-title">QR Code</div>
+                <div class="mb-4">
+                    {% if qr_code and qr_code.startswith('T') %}
+                    <div class="alert alert-warning mb-2" role="alert">
+                        Temporary QR detected ({{ qr_code }}). Please assign the permanent QR code.
+                    </div>
+                    <label class="form-label fw-semibold">Assign New QR Code</label>
+                    <div class="input-group mb-1">
+                        <span class="input-group-text"><i class="bi bi-qr-code"></i></span>
+                        <input type="text" class="form-control" id="new_qr_code" name="new_qr_code" data-lock-editable="true"
+                            placeholder="Enter final QR code" pattern="[A-Za-z0-9]+" autocomplete="off">
+                    </div>
+                    <div class="form-text text-muted" id="qr-validation-message">
+                        Letters and numbers only. Do not start with "T".
+                    </div>
+                    {% else %}
+                    <div class="form-floating">
+                        <input type="text" class="form-control" value="{{ qr_code }}" readonly>
+                        <label>QR Code</label>
+                    </div>
+                    {% endif %}
+                </div>
+
+                <div class="form-section-title">Identity</div>
+                <div class="row g-2 mb-3">
+                    <div class="col-12">
+                        <div class="form-floating">
+                            <input type="text" class="form-control" name="Manufacturer" data-lock-editable="true"
+                                value="{{ data.get('Manufacturer','') }}" placeholder="Mfr">
+                            <label>Manufacturer</label>
+                        </div>
+                    </div>
+                    <div class="col-12">
+                        <div class="form-floating">
+                            <input type="text" class="form-control" name="Model" value="{{ data.get('Model','') }}" data-lock-editable="true"
+                                placeholder="Model">
+                            <label>Model</label>
+                        </div>
+                    </div>
+                    <div class="col-12">
+                        <div class="form-floating">
+                            <input type="text" class="form-control" name="Serial Number" data-lock-editable="true"
+                                value="{{ data.get('Serial Number','') }}" placeholder="SN">
+                            <label>Serial #</label>
+                        </div>
+                    </div>
+                    <div class="col-6">
+                        <div class="form-floating">
+                            <input type="text" class="form-control" name="Diameter" data-lock-editable="true"
+                                value="{{ data.get('Diameter','') }}" placeholder="Dia">
+                            <label>Diameter</label>
+                        </div>
+                    </div>
+                    <div class="col-6">
+                        <div class="form-floating">
+                            <input type="text" class="form-control" name="Year" value="{{ data.get('Year','') }}" data-lock-editable="true"
+                                placeholder="Year">
+                            <label>Year</label>
+                        </div>
+                    </div>
+                    <div class="col-12">
+                        <div class="input-group installation-date-group">
+                            <div class="form-floating">
+                                <input type="text" class="form-control" id="installation_date" name="installation_date"
+                                    value="{{ installation_date|default('') }}" placeholder="DD/MM/YYYY" inputmode="numeric"
+                                    maxlength="10" pattern="\d{2}/\d{2}/\d{4}" data-lock-editable="true">
+                                <label>Installation Date</label>
+                            </div>
+                            <button type="button" class="btn btn-outline-secondary" id="installation_date_calendar"
+                                data-lock-editable="true" aria-label="Pick Installation Date from calendar">
+                                <i class="bi bi-calendar3" aria-hidden="true"></i>
+                            </button>
+                            <input type="date" id="installation_date_picker" class="installation-date-picker-input"
+                                tabindex="-1" aria-hidden="true" data-lock-editable="true">
+                        </div>
+                    </div>
+                </div>
+
+                <div class="form-section-title">Classification</div>
+                <div class="form-floating mb-2">
+                    <input type="text" class="form-control text-primary fw-bold" name="UBC Tag" id="ubc_tag" data-lock-editable="true"
+                        value="{{ data.get('UBC Tag','') }}" placeholder="Tag">
+                    <label>UBC Asset Tag</label>
+                </div>
+
+                <div class="form-floating mb-2">
+                    <select class="form-select" name="Application" id="app_select" data-lock-editable="true">
+                        <option value=""></option>
+                        {% for opt in application_options|default([]) %}
+                        <option value="{{ opt }}" {% if data.get('Application','')==opt %}selected{% endif %}>{{ opt }}
+                        </option>
+                        {% endfor %}
+                    </select>
+                    <label>Application</label>
+                </div>
+
+                <div class="form-floating mb-3">
+                    <select class="form-select" name="Asset Group" id="asset_group" data-lock-editable="true">
+                        <option value=""></option>
+                        {% for opt in asset_group_options|default([]) %}
+                        <option value="{{ opt }}" {% if data.get('Asset Group','')==opt %}selected{% endif %}>{{ opt }}
+                        </option>
+                        {% endfor %}
+                    </select>
+                    <label>Asset Group</label>
+                </div>
+
+                <div class="form-floating mb-3">
+                    <select class="form-select" name="Attribute" data-lock-editable="true">
+                        <option value=""></option>
+                        {% for opt in attribute_options|default([]) %}
+                        <option value="{{ opt }}" {% if data.get('Attribute','BackflowDevice')==opt %}selected{% endif
+                            %}>{{ opt }}</option>
+                        {% endfor %}
+                    </select>
+                    <label>Attribute</label>
+                </div>
+
+                <div class="form-section-title">Description</div>
+                <div class="input-group mb-1">
+                    <span class="input-group-text"><i class="bi bi-magic"></i></span>
+                    <input id="description_field" type="text" class="form-control auto-desc-input" name="Description" data-lock-editable="true"
+                        value="{{ data.get('Description','') }}">
+                </div>
+                <div class="auto-desc-hint">
+                    <i class="bi bi-info-circle"></i> Auto-generated: BFP + App + Group
+                </div>
+
+                <div class="form-section-title">User Activity Log</div>
+                <div class="row g-2 mb-3">
+                    <div class="col-12 col-md-4">
+                        <label class="form-label small text-muted mb-1">Captured by</label>
+                        <input type="text" class="form-control bg-light" value="{{ (capture_info.user if capture_info else '') or '' }}" readonly>
+                    </div>
+                    <div class="col-12 col-md-4">
+                        <label class="form-label small text-muted mb-1">Date</label>
+                        <input type="text" class="form-control bg-light" value="{{ (capture_info.date if capture_info else '') or '' }}" readonly>
+                    </div>
+                    <div class="col-12 col-md-4">
+                        <label class="form-label small text-muted mb-1">Hour</label>
+                        <input type="text" class="form-control bg-light" value="{{ (capture_info.hour if capture_info else '') or '' }}" readonly>
+                    </div>
+                    <div class="col-12">
+                        <label class="form-label small text-muted mb-1">GPS Coordinates (lat,long)</label>
+                        <input type="text" class="form-control bg-light" value="{{ (capture_info.gps_coordinates if capture_info else '') or '' }}" readonly>
+                    </div>
+                </div>
+
+            </div>
+
+            <div class="form-footer">
+                <div class="text-muted small fw-bold me-2 text-nowrap" id="navCounter">
+                    Showing {{ current_index }} of {{ total_count }} entries
+                </div>
+                {{ render_review_buttons(review_buttons, 'footer', btn_ctx) }}
+            </div>
+        </div>
+
+        <!-- PREVIEW RAIL (Next Asset) -->
+        <div class="preview-rail" id="previewRail" title="Click header to collapse">
+            <div class="rail-header" id="railHeader">
+                <div class="rail-title"><i class="bi bi-arrow-right-circle me-1"></i> Up Next</div>
+                <div class="d-flex flex-column gap-2 mt-2" id="nextAssetMeta">
+                    <div class="placeholder-glow"><span class="placeholder col-8 bg-secondary"></span></div>
+                    <div class="placeholder-glow"><span class="placeholder col-6 bg-secondary"></span></div>
+                </div>
+            </div>
+
+            <div class="rail-content" id="nextAssetThumbs">
+                <!-- Skeleton Loader State -->
+                <div class="rail-thumb" style="background: #e9ecef; animation: pulse 1.5s infinite;"></div>
+                <div class="rail-thumb"
+                    style="background: #e9ecef; animation: pulse 1.5s infinite; animation-delay: 0.2s;"></div>
+                <div class="rail-thumb"
+                    style="background: #e9ecef; animation: pulse 1.5s infinite; animation-delay: 0.4s;"></div>
+            </div>
+
+            <div class="rail-toggle-btn" role="button" aria-label="Expand Preview">
+                <i class="bi bi-chevron-left"></i>
+            </div>
+        </div>
+
+    </form>
+
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script src="https://unpkg.com/leaflet-routing-machine@latest/dist/leaflet-routing-machine.js"></script>
+
+    <script>
+        (function () {
+            // --- PREVIEW RAIL LOGIC (Up Next) ---
+            const rail = document.getElementById('previewRail');
+            const header = document.getElementById('railHeader');
+            const toggleBtn = document.querySelector('.rail-toggle-btn');
+
+            // Toggle Logic
+            if (rail && header) {
+                header.addEventListener('click', () => {
+                    rail.classList.add('collapsed');
+                });
+            }
+            if (rail && toggleBtn) {
+                toggleBtn.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    rail.classList.remove('collapsed');
+                });
+            }
+
+            // Population of Next Asset (Real Data from Backend)
+            const nextMetaEl = document.getElementById('nextAssetMeta');
+            const nextThumbsEl = document.getElementById('nextAssetThumbs');
+
+            // Real Next Asset Data from Backend (Safe Injection)
+            // Use default(none) to avoid Jinja errors if next_asset is missing
+            const nextAsset = {{ next_asset | default (none) | tojson | safe
+        }};
+        const hasNext = !!nextAsset;
+
+        if (hasNext && nextMetaEl && nextThumbsEl) {
+
+            // Populate Vertical Metadata 
+            nextMetaEl.innerHTML = `
+                    <div class="meta-pill text-truncate" title="QR Code" style="max-width: 100%;"><i class="bi bi-qr-code"></i> ${nextAsset.qr_code || 'N/A'}</div>
+                    <div class="meta-pill text-truncate" title="UBC Tag" style="max-width: 100%;"><i class="bi bi-front"></i> ${nextAsset.ubc_tag || 'N/A'}</div>
+                    <div class="meta-pill text-truncate" title="Location" style="max-width: 100%;"><i class="bi bi-geo-alt"></i> ${nextAsset.location || 'N/A'}</div>
+                `;
+
+            nextThumbsEl.innerHTML = '';
+
+            if (nextAsset.images && nextAsset.images.length > 0) {
+                nextAsset.images.forEach(imgObj => {
+                    let container = document.createElement('div');
+                    container.className = 'text-center mb-3';
+
+                    let thumbDiv = document.createElement('div');
+                    thumbDiv.className = 'rail-thumb mx-auto';
+                    thumbDiv.title = imgObj.label;
+                    thumbDiv.innerHTML = `<img src="${imgObj.url}">`;
+
+                    let labelDiv = document.createElement('div');
+                    labelDiv.className = 'small text-muted mt-1';
+                    labelDiv.style.fontSize = '0.7rem';
+                    labelDiv.innerText = imgObj.label;
+
+                    container.appendChild(thumbDiv);
+                    container.appendChild(labelDiv);
+                    nextThumbsEl.appendChild(container);
+                });
+            } else {
+                nextThumbsEl.innerHTML = '<div class="text-muted small text-center mt-4" style="font-size:0.75rem;">No preview photos</div>';
+            }
+        } else if (nextMetaEl) {
+            nextMetaEl.innerHTML = '<div class="text-muted small p-2">End of List</div>';
+            if (nextThumbsEl) nextThumbsEl.innerHTML = '';
+        }
+
+        // --- Sequence sync: follow the dashboard's filtered + sorted order ---
+        // The dashboard stashes the visible (filter + sort applied) doc_id order per
+        // tab in localStorage('reviewOrder'). Use it so Save & Prev / Save & Next and
+        // the Next Asset preview follow exactly what the reviewer saw, including any
+        // column sort. Falls back to the server order when absent.
+        (function () {
+            var CURRENT_DOC_ID = {{ doc_id | tojson | safe }};
+            var PREVIEW_BASE = "{{ url_for('asset_preview', doc_id='__ID__') }}";
+            var sp = new URLSearchParams(window.location.search || '');
+            var tab = sp.get('tab');
+            if (!tab) {
+                var proc = sp.get('process');
+                tab = proc === '1' ? 'update' : (proc === '2' ? 'manual' : 'new');
+            }
+            var ids = [];
+            try {
+                var store = JSON.parse(localStorage.getItem('reviewOrder') || '{}') || {};
+                if (Array.isArray(store[tab])) ids = store[tab];
+            } catch (e) { ids = []; }
+
+            var idx = ids.indexOf(CURRENT_DOC_ID);
+            if (idx === -1) return; // no usable order — keep server-provided nav/preview
+
+            var prevId = idx > 0 ? ids[idx - 1] : '';
+            var nextId = idx < ids.length - 1 ? ids[idx + 1] : '';
+
+            var navPrevEl = document.getElementById('nav_prev');
+            var navNextEl = document.getElementById('nav_next');
+            if (navPrevEl) navPrevEl.value = prevId;
+            if (navNextEl) navNextEl.value = nextId;
+
+            var counter = document.getElementById('navCounter');
+            if (counter) counter.textContent = 'Showing ' + (idx + 1) + ' of ' + ids.length + ' entries';
+
+            var metaEl = document.getElementById('nextAssetMeta');
+            var thumbsEl = document.getElementById('nextAssetThumbs');
+            if (!metaEl || !thumbsEl) return;
+            if (!nextId) {
+                metaEl.innerHTML = '<div class="text-muted small p-2">End of List</div>';
+                thumbsEl.innerHTML = '';
+                return;
+            }
+            fetch(PREVIEW_BASE.replace('__ID__', encodeURIComponent(nextId)), { credentials: 'same-origin' })
+                .then(function (r) { return r.ok ? r.json() : null; })
+                .then(function (a) {
+                    if (!a || a.error) return;
+                    metaEl.innerHTML =
+                        '<div class="meta-pill text-truncate" title="QR Code" style="max-width:100%;"><i class="bi bi-qr-code"></i> ' + (a.qr_code || 'N/A') + '</div>' +
+                        '<div class="meta-pill text-truncate" title="UBC Tag" style="max-width:100%;"><i class="bi bi-front"></i> ' + (a.ubc_tag || 'N/A') + '</div>' +
+                        '<div class="meta-pill text-truncate" title="Location" style="max-width:100%;"><i class="bi bi-geo-alt"></i> ' + (a.location || 'N/A') + '</div>';
+                    thumbsEl.innerHTML = '';
+                    if (a.images && a.images.length) {
+                        a.images.forEach(function (imgObj) {
+                            var c = document.createElement('div'); c.className = 'text-center mb-3';
+                            var t = document.createElement('div'); t.className = 'rail-thumb mx-auto'; t.title = imgObj.label;
+                            t.innerHTML = '<img src="' + imgObj.url + '">';
+                            var l = document.createElement('div'); l.className = 'small text-muted mt-1'; l.style.fontSize = '0.7rem'; l.innerText = imgObj.label;
+                            c.appendChild(t); c.appendChild(l); thumbsEl.appendChild(c);
+                        });
+                    } else {
+                        thumbsEl.innerHTML = '<div class="text-muted small text-center mt-4" style="font-size:0.75rem;">No preview photos</div>';
+                    }
+                })
+                .catch(function () { /* keep the server-rendered preview on failure */ });
+        })();
+
+        // --- 1. Map Interaction Logic (WALKING PATH) ---
+        const bCode = "{{ building }}";
+        const mapContainer = document.getElementById('map_widget');
+        const assetDictionary = {{ asset_dictionary | default ({}) | tojson | safe
+        }} || {};
+        const assetTypeContext = "BF";
+
+        // Fixed Start Point (UBC)
+        const START_LAT = 49.261303;
+        const START_LNG = -123.253748;
+
+        function initMap(destLat, destLng, name) {
+            // Initialize Leaflet
+            const map = L.map('map_widget', {
+                zoomControl: false
+            });
+
+            // Layers
+            const streetLayer = L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '&copy; OpenStreetMap' });
+            const satelliteLayer = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', { maxZoom: 19, attribution: 'Tiles &copy; Esri' });
+
+            streetLayer.addTo(map);
+
+            L.control.zoom({ position: 'topleft' }).addTo(map);
+            L.control.layers({ "Street": streetLayer, "Satellite": satelliteLayer }, null, { position: 'topright' }).addTo(map);
+
+            // 1. Destination Marker (Asset)
+            const destMarker = L.marker([destLat, destLng]).addTo(map)
+                .bindPopup(`<b>${name}</b><br>Code: ${bCode}`);
+
+            // 2. Start Marker (Blue Dot)
+            const startMarker = L.circleMarker([START_LAT, START_LNG], {
+                color: '#3388ff',
+                fillColor: '#3388ff',
+                fillOpacity: 1,
+                radius: 6
+            }).addTo(map).bindPopup("<b>Start Point</b>");
+
+            // 3. Routing Control (Walking Path)
+            L.Routing.control({
+                waypoints: [
+                    L.latLng(START_LAT, START_LNG),
+                    L.latLng(destLat, destLng)
+                ],
+                router: L.Routing.osrmv1({
+                    serviceUrl: 'https://routing.openstreetmap.de/routed-foot/route/v1',
+                    profile: 'foot' // Use a foot-enabled OSRM backend.
+                }),
+                lineOptions: {
+                    styles: [{ color: '#0d6efd', opacity: 0.8, weight: 6 }] // Solid Blue Line
+                },
+                createMarker: function () { return null; }, // We used our own markers
+                addWaypoints: false,
+                draggableWaypoints: false,
+                fitSelectedRoutes: true,
+                show: false // Hide text instructions
+            }).addTo(map);
+
+            // Handle Resize Events (Overlay transition)
+            const mapOverlay = document.getElementById('mapOverlay');
+            if (mapOverlay) {
+                mapOverlay.addEventListener('transitionend', () => {
+                    map.invalidateSize();
+                });
+                mapOverlay.addEventListener('mouseenter', () => {
+                    setTimeout(() => map.invalidateSize(), 300);
+                });
+            }
+        }
+
+        function showMapError(msg) {
+            mapContainer.innerHTML = `<div class="map-error-msg"><i class="bi bi-geo-alt-fill fs-3 d-block mb-1 text-danger opacity-50"></i>${msg}</div>`;
+        }
+
+        // Fetch Data
+        fetch(`/api/building_location/${bCode}`)
+            .then(res => res.json())
+            .then(data => {
+                if (data.success && data.data) {
+                    initMap(data.data.lat, data.data.lng, data.data.name);
+                } else {
+                    const cleanCode = bCode.split('-')[0];
+                    if (cleanCode && cleanCode !== bCode) {
+                        return fetch(`/api/building_location/${cleanCode}`).then(r => r.json());
+                    } else {
+                        throw new Error("No data");
+                    }
+                }
+            })
+            .then(data => {
+                if (data && data.success && data.data) {
+                    initMap(data.data.lat, data.data.lng, data.data.name);
+                } else if (data) {
+                    showMapError("Location unavailable");
+                }
+            })
+            .catch(err => {
+                console.log("Map Error:", err);
+                showMapError("Map data not found");
+            });
+
+
+        // --- 2. Image Viewer Logic ---
+        var img = document.getElementById('mainImage');
+        var scale = 1, rot = 0;
+        var apply = () => { if (img) img.style.transform = `scale(${scale}) rotate(${rot}deg)`; };
+
+        document.getElementById('zoomIn')?.addEventListener('click', () => { scale = Math.min(scale + 0.2, 4.0); apply(); });
+        document.getElementById('zoomOut')?.addEventListener('click', () => { scale = Math.max(scale - 0.2, 0.2); apply(); });
+        document.getElementById('rotate')?.addEventListener('click', () => { rot = (rot + 90) % 360; apply(); });
+
+        document.querySelectorAll('.thumb').forEach(t => {
+            t.addEventListener('click', function () {
+                let url = this.getAttribute('data-url');
+                if (!url) return;
+                document.querySelectorAll('.thumb').forEach(x => x.classList.remove('active'));
+                this.classList.add('active');
+                if (img) {
+                    img.style.opacity = '0';
+                    setTimeout(() => {
+                        img.src = url;
+                        scale = 1; rot = 0; apply();
+                        img.style.display = 'block';
+                        img.style.opacity = '1';
+                    }, 150);
+                }
+            });
+        });
+
+        let reviewLocked = {{ 'true' if review_locked else 'false' }};
+
+        // --- 3. Backflow Description Generator ---
+        function computeBFDescription(appVal, assetGroupVal) {
+            var prefix = "BFP-";
+            var suffix = "BFP";
+            var app = (appVal || "").trim();
+            var appPart = app ? (app + " ") : "";
+            var firstWord = "";
+            if (assetGroupVal && assetGroupVal.trim()) {
+                firstWord = assetGroupVal.trim().split(/\s+/)[0] + " ";
+            }
+            return (prefix + appPart + firstWord + suffix).trim();
+        }
+
+        var descField = document.getElementById('description_field');
+        var appSel = document.getElementById('app_select');
+        var groupSel = document.getElementById('asset_group');
+        var ubcInp = document.getElementById('ubc_tag');
+        var attrSel = document.querySelector('select[name=\"Attribute\"]');
+        var descAutoEnabled = true;
+        var dictionaryApplied = false;
+
+        function getDictMatch(tag) {
+            if (!assetDictionary) return null;
+            var ut = (tag || '').trim().toUpperCase();
+            if (!ut) return null;
+
+            const currentType = assetTypeContext || 'BF';
+            console.log(`[BF-JS-DICT-LOOKUP] UBC: '${ut}', Type: '${currentType}'`);
+
+            // STEP 1: Try exact composite key match
+            const compositeKey = `${ut}|${currentType}`;
+            if (assetDictionary[compositeKey]) {
+                console.log(`[BF-JS-DICT-MATCH] Exact composite key: ${compositeKey}`);
+                return { prefix: compositeKey, data: assetDictionary[compositeKey] };
+            }
+
+            // STEP 2: Try composite prefix matching
+            var keys = Object.keys(assetDictionary).sort(function (a, b) { return b.length - a.length; });
+            for (var i = 0; i < keys.length; i++) {
+                var k = keys[i];
+                if (k.indexOf('|') === -1) continue; // Skip simple keys
+
+                var parts = k.split('|');
+                if (parts.length !== 2) continue;
+                var tagPrefix = parts[0];
+                var keyType = parts[1];
+
+                if (ut.startsWith(tagPrefix.toUpperCase()) && keyType.toUpperCase() === currentType) {
+                    console.log(`[BF-JS-DICT-MATCH] Composite prefix: ${k} (matched ${ut})`);
+                    return { prefix: k, data: assetDictionary[k] };
+                }
+            }
+
+            // STEP 3: Fall back to simple key matching (legacy support)
+            for (var i = 0; i < keys.length; i++) {
+                var k = keys[i];
+                if (k.indexOf('|') !== -1) continue; // Skip composite keys
+
+                if (!ut.startsWith(k.toUpperCase())) continue;
+
+                var entry = assetDictionary[k] || {};
+                var entryType = ((entry.asset_type || '').replace(/[^A-Za-z0-9]/g, '') || '').toUpperCase();
+
+                // Type compatibility check
+                if (entryType && currentType && entryType !== currentType) continue;
+
+                console.log(`[BF-JS-DICT-MATCH] Legacy simple key: ${k} (matched ${ut})`);
+                return { prefix: k, data: entry };
+            }
+
+            console.log(`[BF-JS-DICT-NO-MATCH] No dictionary match found for UBC: ${ut}, Type: ${currentType}`);
+            return null;
+        }
+
+        function applyDictionary(tag) {
+            if (reviewLocked) return false;
+            var match = getDictMatch(tag);
+            dictionaryApplied = !!match;
+            if (!match) return false;
+            var entry = match.data || {};
+            var grp = entry.asset_group || '';
+            if (grp && groupSel) {
+                var exists = false;
+                for (var i = 0; i < groupSel.options.length; i++) {
+                    if (groupSel.options[i].value === grp) { exists = true; break; }
+                }
+                if (!exists) groupSel.add(new Option(grp, grp), 0);
+                groupSel.value = grp;
+            }
+            if (attrSel && entry.attribute_set) {
+                attrSel.value = entry.attribute_set;
+            }
+            if (descField && descAutoEnabled) {
+                var base = entry.description || grp || '';
+                var desc = base ? base : computeBFDescription(appSel?.value, grp || groupSel?.value);
+                descField.value = desc;
+            }
+            return true;
+        }
+
+        function updateDesc() {
+            if (reviewLocked) return;
+            if (dictionaryApplied) return;
+            if (!descAutoEnabled || !descField) return;
+            var val = computeBFDescription(
+                appSel ? appSel.value : '',
+                groupSel ? groupSel.value : ''
+            );
+            descField.value = val;
+        }
+
+        function updateDictionaryAndDesc() {
+            if (reviewLocked) return;
+            var tagVal = (ubcInp && ubcInp.value ? ubcInp.value : '');
+            var matched = applyDictionary(tagVal);
+            if (!matched) {
+                dictionaryApplied = false;
+                updateDesc();
+            }
+        }
+
+        if (appSel) appSel.addEventListener('change', updateDesc);
+        if (groupSel) groupSel.addEventListener('change', updateDesc);
+        if (ubcInp) ubcInp.addEventListener('input', updateDictionaryAndDesc);
+
+        if (descField) {
+            descField.addEventListener('input', function () { descAutoEnabled = false; });
+            var auto = computeBFDescription(appSel?.value, groupSel?.value);
+            if (descField.value && descField.value !== auto) {
+                descAutoEnabled = false;
+            }
+        }
+        updateDictionaryAndDesc();
+
+        // --- 4. Dashboard Query Persistence (align with EL/ME) ---
+        function buildDashboardQuery() {
+            var stored = '';
+            try { stored = localStorage.getItem('dashboardQuery') || ''; } catch (e) { }
+            var fromUrl = window.location.search || '';
+
+            var params = new URLSearchParams((stored || '').replace(/^\?/, ''));
+            var urlParams = new URLSearchParams(fromUrl.replace(/^\?/, ''));
+
+            // Merge URL params into stored params (URL takes precedence)
+            urlParams.forEach(function (v, k) { params.set(k, v); });
+
+            // Ensure tab and process are set
+            if (!params.get('tab')) params.set('tab', 'new');
+            if (!params.get('process')) {
+                params.set('process', params.get('tab') === 'update' ? '1' : (params.get('tab') === 'manual' ? '2' : '0'));
+            }
+            // 'archive' is deliberately preserved (not deleted): the Show Archive
+            // toggle the user set on the dashboard must survive returning from here.
+
+            // Preserve filter parameters explicitly (from URL) for hidden field/back link
+            ['filter_qr', 'filter_tag', 'filter_group', 'filter_building', 'filter_approved', 'archive'].forEach(function (key) {
+                var val = urlParams.get(key);
+                if (val) {
+                    params.set(key, val);
+                }
+            });
+
+            var finalQ = params.toString();
+            finalQ = finalQ ? ('?' + finalQ) : '?tab=new&process=0';
+
+            try {
+                localStorage.setItem('dashboardQuery', finalQ);
+            } catch (e) { }
+
+            return finalQ;
+        }
+
+        try {
+            var q = buildDashboardQuery();
+
+            var back = document.getElementById('backTop');
+            if (back && q && q !== '?') back.href = back.href + q;
+
+            // Hidden form field: include ALL params (including filters) for Save & Next navigation
+            var hidden = document.getElementById('dashboard_query');
+            if (hidden) hidden.value = q || '';
+        } catch (e) { }
+
+        // --- 5. Temp QR Validation ---
+        const qrInput = document.getElementById('new_qr_code');
+        const qrMsg = document.getElementById('qr-validation-message');
+        const reviewForm = document.getElementById('reviewForm');
+        if (qrInput && reviewForm) {
+            qrInput.addEventListener('input', () => {
+                qrInput.value = qrInput.value.toUpperCase();
+                qrInput.classList.remove('is-invalid');
+                if (qrMsg) {
+                    qrMsg.textContent = 'Letters and numbers only. Do not start with "T".';
+                    qrMsg.classList.remove('text-danger');
+                }
+            });
+
+            reviewForm.addEventListener('submit', (evt) => {
+                const val = (qrInput.value || '').trim().toUpperCase();
+                if (!val) return;
+                let errorText = '';
+                if (!/^[A-Z0-9]+$/.test(val)) {
+                    errorText = 'Use only letters and numbers.';
+                } else if (val.startsWith('T')) {
+                    errorText = 'The final QR cannot start with "T".';
+                }
+                if (errorText) {
+                    evt.preventDefault();
+                    qrInput.classList.add('is-invalid');
+                    if (qrMsg) {
+                        qrMsg.textContent = errorText;
+                        qrMsg.classList.add('text-danger');
+                    }
+                } else {
+                    qrInput.value = val;
+                }
+            });
+        }
+
+            // --- APPROVE TOGGLE LOGIC ---
+            const docId = "{{ doc_id }}";
+            const approveButtons = document.querySelectorAll('#approveToggleNav, #approveToggleFooter');
+            const hiddenApproved = document.querySelector('input[name="Approved"]');
+            const formPanel = document.querySelector('.form-panel');
+            const readonlyNotice = document.getElementById('reviewReadonlyNotice');
+            const lockableFields = formPanel ? formPanel.querySelectorAll('[data-lock-editable="true"]') : [];
+            const saveButtons = formPanel ? formPanel.querySelectorAll('[data-lock-save="true"]') : [];
+            const saveNextLabel = document.getElementById('saveNextLabel');
+            const saveStayButtons = document.querySelectorAll('#saveStayNav, #saveStayFooter');
+            const packageLocked = {{ 'true' if package_locked else 'false' }};
+
+            function setReviewLockState(isApproved) {
+                reviewLocked = !!isApproved;
+                if (formPanel) formPanel.classList.toggle('is-read-only', reviewLocked);
+                if (readonlyNotice) readonlyNotice.classList.toggle('d-none', !reviewLocked);
+                lockableFields.forEach(function(field) {
+                    field.disabled = reviewLocked;
+                });
+                saveButtons.forEach(function(btn) {
+                    btn.disabled = reviewLocked;
+                });
+                saveStayButtons.forEach(function(btn) {
+                    btn.disabled = reviewLocked || packageLocked;
+                });
+                if (saveNextLabel) {
+                    const unlockedLabel = saveNextLabel.dataset.unlockedLabel || 'Save & Next';
+                    const lockedLabel = saveNextLabel.dataset.lockedLabel || unlockedLabel;
+                    saveNextLabel.textContent = reviewLocked ? lockedLabel : unlockedLabel;
+                }
+            }
+
+            function updateApproveButtons(isApproved) {
+                approveButtons.forEach(function(btn) {
+                    var icon = btn.querySelector('.approve-icon');
+                    var text = btn.querySelector('.approve-text');
+                    if (isApproved) {
+                        btn.classList.remove('pending');
+                        btn.classList.add('approved');
+                        if (icon) icon.textContent = '✅';
+                        if (text) text.textContent = 'Approved';
+                    } else {
+                        btn.classList.remove('approved');
+                        btn.classList.add('pending');
+                        if (icon) icon.textContent = '☐';
+                        if (text) text.textContent = 'Pending';
+                    }
+                });
+                if (hiddenApproved) hiddenApproved.value = isApproved ? 'True' : '';
+                setReviewLockState(isApproved);
+            }
+
+            approveButtons.forEach(function(btn) {
+                btn.addEventListener('click', function(e) {
+                    e.preventDefault();
+                    var form = document.getElementById('reviewForm');
+                    if (!form || !hiddenApproved) return;
+                    // Flip the hidden Approved value before the form leaves so the
+                    // server persists the new state along with any pending edits.
+                    hiddenApproved.value = (hiddenApproved.value === 'True') ? '' : 'True';
+                    // Inject a one-shot hidden 'action' input so save_review knows
+                    // to merge the form, save, and return to this same review page
+                    // (no navigation to the next asset).
+                    var prev = form.querySelector('input[type="hidden"][name="action"]');
+                    if (prev && prev.parentNode) prev.parentNode.removeChild(prev);
+                    var inp = document.createElement('input');
+                    inp.type = 'hidden';
+                    inp.name = 'action';
+                    inp.value = 'save_toggle';
+                    form.appendChild(inp);
+                    form.submit();
+                });
+            });
+
+            saveStayButtons.forEach(function(btn) {
+                btn.addEventListener('click', function(e) {
+                    e.preventDefault();
+                    var form = document.getElementById('reviewForm');
+                    if (!form || btn.disabled) return;
+                    // Inject a one-shot hidden 'action' input so save_review merges
+                    // the form, saves, and returns to this same review page instead
+                    // of navigating back to the dashboard.
+                    var prev = form.querySelector('input[type="hidden"][name="action"]');
+                    if (prev && prev.parentNode) prev.parentNode.removeChild(prev);
+                    var inp = document.createElement('input');
+                    inp.type = 'hidden';
+                    inp.name = 'action';
+                    inp.value = 'save_stay';
+                    form.appendChild(inp);
+                    form.submit();
+                });
+            });
+
+            setReviewLockState(reviewLocked);
+
+        }) ();
+    </script>
+
+    <script>
+    (function () {
+        const params = new URLSearchParams(window.location.search);
+        if (params.get('embedded') !== 'true') return;
+
+        // Preserve ?embedded=true on all internal link clicks
+        document.addEventListener('click', function (e) {
+            const a = e.target.closest('a[href]');
+            if (!a) return;
+            const href = a.getAttribute('href');
+            if (!href || href.startsWith('#') || href.startsWith('http') || href.startsWith('mailto')) return;
+            if (href.includes('embedded=true')) return;
+            a.setAttribute('href', href + (href.includes('?') ? '&' : '?') + 'embedded=true');
+        });
+    })();
+    </script>
+    <script>
+    (function () {
+        var field = document.getElementById('installation_date');
+        var btn = document.getElementById('installation_date_calendar');
+        var picker = document.getElementById('installation_date_picker');
+        if (!field || !btn || !picker) return;
+
+        field.addEventListener('input', function () {
+            var digits = this.value.replace(/\D/g, '').slice(0, 8);
+            var masked = digits;
+            if (digits.length >= 5) masked = digits.slice(0, 2) + '/' + digits.slice(2, 4) + '/' + digits.slice(4);
+            else if (digits.length >= 3) masked = digits.slice(0, 2) + '/' + digits.slice(2);
+            this.value = masked;
+        });
+
+        function isoFromDisplay(v) {
+            var m = /^(\d{2})\/(\d{2})\/(\d{4})$/.exec((v || '').trim());
+            return m ? m[3] + '-' + m[2] + '-' + m[1] : '';
+        }
+        function displayFromIso(v) {
+            var m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(v || '');
+            return m ? m[3] + '/' + m[2] + '/' + m[1] : '';
+        }
+        function todayIso() {
+            var d = new Date();
+            return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+        }
+
+        btn.addEventListener('click', function () {
+            if (field.disabled || picker.disabled) return;
+            picker.max = todayIso();
+            picker.value = isoFromDisplay(field.value);
+            try { picker.showPicker(); } catch (e) { picker.click(); }
+        });
+
+        picker.addEventListener('change', function () {
+            var display = displayFromIso(this.value);
+            if (display) field.value = display;
+        });
+    })();
+    </script>
+</body>
+
+</html>

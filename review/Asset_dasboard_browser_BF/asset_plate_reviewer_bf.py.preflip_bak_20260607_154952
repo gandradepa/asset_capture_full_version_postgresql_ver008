@@ -1,0 +1,2945 @@
+import os
+import json
+import re
+import sqlite3
+import sys
+import importlib.util
+from functools import lru_cache
+from pathlib import Path
+from threading import Lock
+from datetime import datetime
+from io import BytesIO
+from flask import Flask, render_template, request, redirect, url_for, send_from_directory, send_file, jsonify, Blueprint, flash, g
+
+import excel_export
+
+# Make the shared `audit/` package importable (sibling of the app folders)
+_PROJECT_ROOT_GUESS = "/home/developer"
+if _PROJECT_ROOT_GUESS not in sys.path:
+    sys.path.insert(0, _PROJECT_ROOT_GUESS)
+try:
+    from audit.logger import log_change as _audit_log_change
+    from audit.diff import diff_dicts as _audit_diff_dicts
+except Exception as _audit_exc:
+    print(f"[audit] import failed in reviewer_bf: {_audit_exc}")
+    _audit_log_change = None
+    _audit_diff_dicts = None
+
+# --- START: ADDED FOR SSO AUTHENTICATION ---
+from flask_login import login_required, current_user, login_user, logout_user
+from dotenv import load_dotenv
+
+# Add the shared auth_service directory to Python's path
+sys.path.append('/home/developer/auth_service')
+from auth_model import db, bcrypt, User, UserAccess, has_permission, is_admin, ensure_user_access_table, admin_required, require_permission, access_denied_response
+from app_registry import get_registry, is_valid_item
+from auth_controller import login_manager
+# --- END: ADDED FOR SSO AUTHENTICATION ---
+
+# --- NEW: IMPORT GPS SERVICE ---
+# This assumes gps_service.py is in the same directory
+from gps_service import gps_bp
+
+# --- Resolve paths relative to this repository for templates/static ---
+BASE_DIR = Path(__file__).resolve().parent
+TEMPLATE_DIR = BASE_DIR / "review_asset_templates"
+EL_HELPER_DIR = (BASE_DIR.parent / "Asset_dashboard_browser_EL").resolve()
+if str(EL_HELPER_DIR) not in sys.path:
+    sys.path.append(str(EL_HELPER_DIR))
+
+from json_persistence import has_meaningful_structured_data, mark_json_processed, normalize_dashboard_query
+
+# Prefer "review_asset_templates/static"; fall back to repo-level "static"; else disable Flask static
+CANDIDATE_STATIC = [
+    TEMPLATE_DIR / "static",
+    BASE_DIR / "static",
+]
+STATIC_DIR = next((p for p in CANDIDATE_STATIC if p.exists()), None)
+
+app = Flask(
+    __name__,
+    template_folder=str(TEMPLATE_DIR),
+    static_folder=str(STATIC_DIR) if STATIC_DIR else None,  # None if served by Nginx
+)
+
+# --- START: ADDED FOR SSO APP CONFIGURATION ---
+# Load environment variables from the central auth_service.env file
+load_dotenv('/home/developer/auth_service.env', override=True)
+
+# Configure the app using variables from the .env file for security and SSO
+app.config['SECRET_KEY'] = os.getenv('SECRET_KEY')
+app.config['SQLALCHEMY_DATABASE_URI'] = os.getenv('DATABASE_URI')
+app.config['SESSION_COOKIE_DOMAIN']    = os.getenv('SESSION_COOKIE_DOMAIN')
+app.config['SESSION_COOKIE_SAMESITE']  = 'None'
+app.config['SESSION_COOKIE_SECURE']    = True
+app.config['SESSION_COOKIE_HTTPONLY']  = True
+app.config['REMEMBER_COOKIE_SAMESITE'] = 'None'
+app.config['REMEMBER_COOKIE_SECURE']   = True
+app.config['REMEMBER_COOKIE_HTTPONLY'] = True
+
+# Connect the extensions (db, bcrypt, login_manager) to this specific app
+db.init_app(app)
+bcrypt.init_app(app)
+login_manager.init_app(app)
+
+print(f"DEBUG CONFIG BF: KEY='{app.config['SECRET_KEY']}' DOMAIN='{app.config['SESSION_COOKIE_DOMAIN']}'")
+# --- END: ADDED FOR SSO APP CONFIGURATION ---
+
+# --- SQLite DB ---
+# Prefer an environment override, otherwise pick the first existing candidate.
+def _first_existing(paths):
+    for p in paths:
+        if p and os.path.exists(p):
+            return p
+    # Fallback to the last non-empty candidate so callers still get a usable path
+    for p in reversed(paths):
+        if p:
+            return p
+    return None
+
+DB_PATH = _first_existing([
+    os.getenv("QR_CODES_DB_PATH"),
+    r"/home/developer/asset_capture_app_dev/data/QR_codes.db",
+    str((BASE_DIR / "asset_capture_app_dev" / "data" / "QR_codes.db").resolve()),
+    str((BASE_DIR.parent / "asset_capture_app_dev" / "data" / "QR_codes.db").resolve()),
+    str(Path.home() / "asset_capture_app_dev" / "data" / "QR_codes.db"),
+    r"/home/developer/asset_full_dummy_version/developer/asset_capture_app_dev/data/QR_codes.db",
+    str(Path.home() / "asset_full_dummy_version" / "developer" / "asset_capture_app_dev" / "data" / "QR_codes.db"),
+    str(Path.home() / "Documents" / "asset_full_dummy_version" / "developer" / "asset_capture_app_dev" / "data" / "QR_codes.db"),
+])
+print(f"[PATHS] Using DB_PATH: {DB_PATH}")
+
+# *** NEW: Configure DB Path for GPS Service ***
+# The GPS service reads this config key to know where to query coordinates
+app.config['DATABASE_FILE_PATH'] = DB_PATH
+
+# *** NEW: Register the GPS Blueprint ***
+app.register_blueprint(gps_bp)
+
+# --- START: AUTHENTICATION BLUEPRINT ---
+auth_bp = Blueprint('auth', __name__, template_folder='review_asset_templates')
+
+@auth_bp.route('/login', methods=['GET', 'POST'])
+def login():
+    if current_user.is_authenticated:
+        return redirect(url_for('index'))
+    
+    if request.method == 'POST':
+        user = User.query.filter_by(username=request.form.get('username')).first()
+        if user and user.check_password(request.form.get('password')):
+            login_user(user, remember=request.form.get('remember'))
+            next_page = request.args.get('next')
+            return redirect(next_page or url_for('index'))
+        else:
+            flash('Invalid username or password.', 'danger')
+            return render_template('login.html')
+            
+    return render_template('login.html')
+
+@auth_bp.route('/logout')
+@login_required
+def logout():
+    logout_user()
+    return redirect(url_for('auth.login'))
+
+app.register_blueprint(auth_bp)
+# --- END: AUTHENTICATION BLUEPRINT ---
+
+
+# --- START: ADMIN BLUEPRINT (RBAC) ---
+
+admin_bp = Blueprint("admin", __name__)
+
+
+@admin_bp.route("/api/admin/registry", methods=["GET"])
+@login_required
+@admin_required
+def api_admin_registry():
+    return jsonify({"success": True, "registry": get_registry()})
+
+
+@admin_bp.route("/api/admin/users", methods=["GET"])
+@login_required
+@admin_required
+def api_admin_users():
+    users = User.query.order_by(User.username.asc()).all()
+    result = []
+    for u in users:
+        grants = [
+            {
+                "section_key":  g.section_key,
+                "item_key":     g.item_key,
+                "access_level": g.access_level,
+            }
+            for g in u.access_grants.all()
+        ]
+        result.append({
+            "id":       u.id,
+            "username": u.username,
+            "name":     u.name or "",
+            "email":    u.email,
+            "grants":   grants,
+        })
+    return jsonify({"success": True, "users": result})
+
+
+@admin_bp.route("/api/admin/users/<username>/permissions", methods=["GET"])
+@login_required
+@admin_required
+def api_get_user_permissions(username):
+    user = User.query.filter(
+        db.func.lower(User.username) == username.strip().lower()
+    ).first_or_404()
+    grants = [
+        {
+            "section_key":  g.section_key,
+            "item_key":     g.item_key,
+            "access_level": g.access_level,
+        }
+        for g in user.access_grants.all()
+    ]
+    return jsonify({"success": True, "username": user.username, "grants": grants})
+
+
+@admin_bp.route("/api/admin/users/<username>/permissions", methods=["PUT"])
+@login_required
+@admin_required
+def api_set_user_permissions(username):
+    user = User.query.filter(
+        db.func.lower(User.username) == username.strip().lower()
+    ).first_or_404()
+
+    payload = request.get_json(silent=True) or {}
+    grants_input = payload.get("grants", [])
+
+    VALID_LEVELS = {"admin", "editor", "viewer"}
+    cleaned = []
+    for g in grants_input:
+        sk  = str(g.get("section_key") or "").strip()
+        ik  = str(g.get("item_key")    or "").strip()
+        lvl = str(g.get("access_level") or "").strip().lower()
+        if not sk or lvl not in VALID_LEVELS:
+            return jsonify({"success": False, "message": f"Invalid grant: {g}"}), 400
+        if not is_valid_item(sk, ik):
+            return jsonify({"success": False,
+                            "message": f"Unknown section/item: {sk}/{ik}"}), 400
+        cleaned.append({"section_key": sk, "item_key": ik, "access_level": lvl})
+
+    UserAccess.query.filter_by(user_id=user.id).delete()
+    for g in cleaned:
+        db.session.add(UserAccess(
+            user_id=user.id,
+            section_key=g["section_key"],
+            item_key=g["item_key"],
+            access_level=g["access_level"],
+        ))
+    db.session.commit()
+    return jsonify({"success": True,
+                    "message": f"Permissions saved for {user.username}.",
+                    "grants": cleaned})
+
+
+@admin_bp.route("/api/admin/users/<username>/permissions", methods=["DELETE"])
+@login_required
+@admin_required
+def api_delete_user_permissions(username):
+    user = User.query.filter(
+        db.func.lower(User.username) == username.strip().lower()
+    ).first_or_404()
+    UserAccess.query.filter_by(user_id=user.id).delete()
+    db.session.commit()
+    return jsonify({"success": True,
+                    "message": f"All permissions cleared for {user.username}."})
+
+
+app.register_blueprint(admin_bp)
+# --- END: ADMIN BLUEPRINT (RBAC) ---
+
+
+# --- Paths ---
+JSON_DIR = _first_existing([
+    os.getenv("OUTPUT_JSON_DIR"),
+    r"/home/developer/Output_jason_api",
+    str((BASE_DIR.parent / "Output_jason_api").resolve()),
+    str((BASE_DIR.parent / "Dev_QA_Test" / "Output_jason_api").resolve()), # Added Dev_QA_Test candidate
+    str(Path.home() / "Output_jason_api"),
+    str(Path.home() / "asset_full_dummy_version" / "developer" / "Output_jason_api"),
+    str(Path.home() / "Documents" / "asset_full_dummy_version" / "developer" / "Output_jason_api"),
+])
+IMG_DIR  = _first_existing([
+    os.getenv("CAPTURE_PHOTOS_DIR"),
+    r"/home/developer/Capture_photos_upload",
+    str((BASE_DIR.parent / "Capture_photos_upload").resolve()),
+    str((BASE_DIR.parent / "Dev_QA_Test" / "Capture_photos_upload").resolve()), # Added Dev_QA_Test candidate
+    str(Path.home() / "Capture_photos_upload"),
+    str(Path.home() / "asset_full_dummy_version" / "developer" / "Capture_photos_upload"),
+    str(Path.home() / "Documents" / "asset_full_dummy_version" / "developer" / "Capture_photos_upload"),
+])
+print(f"[PATHS] JSON_DIR: {JSON_DIR}")
+print(f"[PATHS] IMG_DIR : {IMG_DIR}")
+
+# Tables/columns
+ASSET_GROUP_TABLE = "Asset_Group"
+ASSET_GROUP_COL   = "name"
+QR_CODES_TABLE = "QR_codes"
+QR_CODE_ID_COL = "QR_code_ID"
+QR_LOCATION_COL = "Location"
+
+# SDI package tables
+SDI_PRINT_OUT_TABLE = "sdi_print_out"
+SDI_ARCHIVE_TABLE = "sdi_print_out_arch"
+
+# Process/filter table
+QR_CODE_ASSETS_TABLE = "QR_code_assets"
+QR_CODE_ASSETS_PROCESS_COL = "Col_process"
+QR_CODE_ASSETS_QR_COL_CANDIDATES = [
+    "code_assets",
+    "code_asset",
+    "QR_code",
+    "QR Code",
+    "QR_code_ID",
+    "QR Code ID",
+]
+
+# --- Application table autodetection ---
+APPLICATION_TABLE_CANDIDATES = [
+    "bf_applicaton_type",   
+    "bf_application_type",  
+    "BF_Application_Type"   
+]
+TEXT_TYPE_HINTS = {"TEXT", "VARCHAR", "NVARCHAR", "CHAR", "CLOB"}
+
+VALID_IMAGE_EXTS = ['.jpg', '.JPG', '.jpeg', '.JPEG', '.png', '.PNG']
+
+# Required-photo sequences
+SEQ_CHECK = ['-0', '-1', '-2']
+SEQ_SHOW  = ['-0', '-1', '-2', '-3']
+
+# JSON filename pattern: "<QR>_<TYPE>_<Building>.json"
+JSON_NAME_RE = re.compile(r"^([A-Za-z0-9]+)_([A-Za-z]+)_(\d+(?:-\d+)?)\.json$")
+
+# --- Dictionary (shared mechanical) ---
+DICTIONARY_CANDIDATES = [
+    "/home/developer/dictionary/mechanical_dictionary.py",
+    os.path.normpath(os.path.join(BASE_DIR, "..", "..", "dictionary", "mechanical_dictionary.py")),
+]
+_CACHED_DICTIONARY = {}
+
+def get_asset_dictionary():
+    """Load mechanical dictionary once; used for BF lookups gated by asset_type."""
+    global _CACHED_DICTIONARY
+    if _CACHED_DICTIONARY:
+        return _CACHED_DICTIONARY
+    for path in DICTIONARY_CANDIDATES:
+        try:
+            if not path or not os.path.exists(path):
+                continue
+            spec = importlib.util.spec_from_file_location("mechanical_dictionary", path)
+            module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(module)
+            _CACHED_DICTIONARY = getattr(module, "ASSET_DICTIONARY", {}) or {}
+            if _CACHED_DICTIONARY:
+                break
+        except Exception as e:
+            print(f"[WARN] BF dictionary load failed from {path}: {e}")
+    return _CACHED_DICTIONARY
+
+def _normalize_asset_type_values(value):
+    """Normalize '- BF' to 'BF' etc."""
+    if value is None:
+        return set()
+    values = value if isinstance(value, (list, tuple, set)) else [value]
+    out = set()
+    for v in values:
+        cleaned = re.sub(r'[^A-Za-z0-9]+', '', str(v or "")).upper()
+        if cleaned:
+            out.add(cleaned)
+    return out
+
+def _get_entry_asset_types(entry: dict):
+    if not isinstance(entry, dict):
+        return set()
+    normalized = set()
+    for key, val in entry.items():
+        key_clean = re.sub(r'[^a-z0-9]+', '', str(key).lower())
+        if key_clean in ("assettype", "assettypes", "type"):
+            normalized |= _normalize_asset_type_values(val)
+    return normalized
+
+def apply_dictionary_rules(data: dict, asset_type: str = "BF"):
+    """Apply dictionary lookup with composite key support (Tag|Type) for BF assets."""
+    ubc = str(data.get("UBC Tag") or "").strip().upper()
+    if not ubc:
+        return data
+    
+    cd = get_asset_dictionary()
+    if not cd:
+        print(f"[BF-DICT-WARN] Dictionary is empty or not loaded")
+        return data
+    
+    # Normalize discipline from JSON or context (default to BF)
+    json_types = _normalize_asset_type_values(asset_type or data.get("asset_type"))
+    current_type = next(iter(json_types)) if json_types else "BF"
+    
+    # STEP 1: Try exact composite key match (highest priority)
+    composite_key = f"{ubc}|{current_type}"
+    if composite_key in cd:
+        entry = cd[composite_key]
+        if entry.get("asset_group"):
+            data["Asset Group"] = entry.get("asset_group")
+        if entry.get("attribute_set"):
+            data["Attribute"] = entry.get("attribute_set")
+        if not data.get("asset_type"):
+            data["asset_type"] = current_type
+        if entry.get("description") and not str(data.get("Description", "")).strip():
+            data["Description"] = entry.get("description")
+        return data
+    
+    # STEP 2: Try composite prefix matching (e.g., "PRV-001" matches "PRV|BF")
+    for key in sorted(cd.keys(), key=len, reverse=True):
+        if '|' not in key:
+            continue  # Skip simple keys in this pass
+        
+        try:
+            tag_prefix, key_type = key.split('|', 1)
+            # Check if UBC tag starts with prefix AND types match
+            if ubc.startswith(tag_prefix.upper()) and key_type.upper() == current_type:
+                entry = cd[key]
+                if entry.get("asset_group"):
+                    data["Asset Group"] = entry.get("asset_group")
+                if entry.get("attribute_set"):
+                    data["Attribute"] = entry.get("attribute_set")
+                if not data.get("asset_type"):
+                    data["asset_type"] = current_type
+                if entry.get("description") and not str(data.get("Description", "")).strip():
+                    data["Description"] = entry.get("description")
+                return data
+        except ValueError:
+            continue  # Skip malformed keys
+    
+    # STEP 3: Fall back to simple key matching (legacy support)
+    for prefix in sorted(cd.keys(), key=len, reverse=True):
+        if '|' in prefix:
+            continue  # Skip composite keys in legacy matching
+        
+        if not ubc.startswith(prefix.upper()):
+            continue
+        
+        entry = cd[prefix]
+        dict_types = _get_entry_asset_types(entry)
+        
+        # Type compatibility check (for simple keys with asset_type field)
+        if json_types and dict_types and dict_types.isdisjoint(json_types):
+            continue
+        
+        if entry.get("asset_group"):
+            data["Asset Group"] = entry.get("asset_group")
+        if entry.get("attribute_set"):
+            data["Attribute"] = entry.get("attribute_set")
+        if not data.get("asset_type") and dict_types:
+            data["asset_type"] = next(iter(dict_types))
+        if entry.get("description") and not str(data.get("Description", "")).strip():
+            data["Description"] = entry.get("description")
+        return data
+    
+    return data
+
+
+# --- START: Directory Sync Logic ---
+
+# --- Image Sync ---
+DATA_DIR = Path(DB_PATH).parent
+PROCESSED_LOG_BF = DATA_DIR / "processed_images_bf.log"
+IMG_NAME_RE_BF = re.compile(r"^([A-Za-z0-9]+)\s+(.+?)\s+BF\s+-\s+[0-3]\.(?:jpe?g|png)$", re.IGNORECASE)
+image_sync_lock = Lock()
+
+# --- JSON Sync ---
+PROCESSED_JSON_LOG_BF = DATA_DIR / "processed_json_bf.log"
+json_sync_lock = Lock()
+
+
+def _is_bf_filename(filename: str) -> bool:
+    """True if the JSON is for a BF asset type."""
+    if not filename.endswith(".json"): return False
+    m = JSON_NAME_RE.match(filename)
+    if not m:
+        return False
+    _qr, asset_type_mid, _building = m.groups()
+    return asset_type_mid.upper() == "BF"
+
+
+def _sdi_row_has_data_bf(qr: str, building: str) -> bool:
+    """True when a sdi_dataset row for this QR+Building already holds any
+    non-empty AI-captured content that must not be wiped by a placeholder
+    re-sync. BF-specific signals (Diameter, Year, Technical Safety BC) are
+    included alongside the common ones so backflow rows with partial but
+    real capture data survive the next image-sync pass."""
+    if not _connectable():
+        return False
+    try:
+        with sqlite3.connect(DB_PATH) as conn:
+            cur = conn.execute(
+                'SELECT 1 FROM "sdi_dataset" '
+                'WHERE "QR Code"=? AND "Building"=? AND ('
+                'TRIM(COALESCE("UBC Tag",\'\')) <> \'\' '
+                'OR TRIM(COALESCE("Manufacturer",\'\')) <> \'\' '
+                'OR TRIM(COALESCE("Model",\'\')) <> \'\' '
+                'OR TRIM(COALESCE("Serial",\'\')) <> \'\' '
+                'OR TRIM(COALESCE("Asset Group",\'\')) <> \'\' '
+                'OR TRIM(COALESCE("Description",\'\')) <> \'\' '
+                'OR TRIM(COALESCE("Diameter",\'\')) <> \'\' '
+                'OR TRIM(COALESCE("Year",\'\')) <> \'\' '
+                'OR TRIM(COALESCE("Technical Safety BC",\'\')) <> \'\' '
+                'OR COALESCE("Avg_ai_conf", 0) > 0'
+                ') LIMIT 1',
+                (qr, building),
+            )
+            return cur.fetchone() is not None
+    except sqlite3.Error:
+        return False
+
+
+def sync_image_directory_to_db_bf():
+    if not image_sync_lock.acquire(blocking=False):
+        return
+
+    try:
+        if not os.path.isdir(IMG_DIR):
+            return
+
+        processed_files = set()
+        if PROCESSED_LOG_BF.exists():
+            with open(PROCESSED_LOG_BF, 'r', encoding='utf-8') as f:
+                processed_files = {line.strip() for line in f if line.strip()}
+
+        current_files = {f for f in os.listdir(IMG_DIR) if f.lower().endswith(tuple(VALID_IMAGE_EXTS))}
+        new_files = sorted(list(current_files - processed_files))
+
+        if not new_files:
+            return
+
+        print(f"SYNC-IMG (BF): Found {len(new_files)} new image(s).")
+        successfully_processed = []
+        for filename in new_files:
+            match = IMG_NAME_RE_BF.match(filename)
+            if not match:
+                if " BF " in filename:
+                    successfully_processed.append(filename)
+                continue
+
+            qr, building = match.groups()
+            qr_s, building_s = qr.strip(), building.strip()
+            try:
+                # Blank-payload upsert overwrites every editable column with "".
+                # Skip it when the row already holds real AI-captured content.
+                if _sdi_row_has_data_bf(qr_s, building_s):
+                    successfully_processed.append(filename)
+                    continue
+                doc_id = f"{qr_s}_BF_{building_s}"
+                upsert_sdi_dataset(
+                    doc_id=doc_id, structured={},
+                    audit_source="system",
+                    audit_description="image-sync placeholder (BF)",
+                    audit_modified_by="system:image-sync",
+                )
+                _auto_register_qr_code(qr_s, process_value="0")
+                successfully_processed.append(filename)
+            except Exception as e:
+                print(f"SYNC-IMG-ERROR (BF): DB upsert failed for {filename}: {e}")
+
+        if successfully_processed:
+            with open(PROCESSED_LOG_BF, 'a', encoding='utf-8') as f:
+                for filename in successfully_processed:
+                    f.write(f"{filename}\n")
+    finally:
+        image_sync_lock.release()
+
+
+def sync_json_directory_to_db_bf():
+    if not json_sync_lock.acquire(blocking=False):
+        return
+
+    try:
+        if not os.path.isdir(JSON_DIR):
+            return
+
+        processed_files = {}
+        if PROCESSED_JSON_LOG_BF.exists():
+            with open(PROCESSED_JSON_LOG_BF, 'r', encoding='utf-8') as f:
+                try:
+                    processed_files = json.load(f)
+                except json.JSONDecodeError:
+                    print("SYNC-JSON-WARN (BF): Could not read log, starting fresh.")
+
+        force_resync = not _table_has_column("sdi_dataset", "Avg_ai_conf")
+        files_to_process = {}
+        for filename in os.listdir(JSON_DIR):
+            if not _is_bf_filename(filename):
+                continue
+
+            filepath = os.path.join(JSON_DIR, filename)
+            current_mtime = os.path.getmtime(filepath)
+
+            if force_resync or filename not in processed_files or current_mtime > processed_files[filename]:
+                files_to_process[filename] = current_mtime
+
+        if not files_to_process:
+            return
+
+        processed_updates = {}
+        print(f"SYNC-JSON (BF): Found {len(files_to_process)} new/updated JSON file(s).")
+        for filename, mtime in files_to_process.items():
+            doc_id = filename[:-5]
+            qr = doc_id.split('_')[0]
+            filepath = os.path.join(JSON_DIR, filename)
+            try:
+                with open(filepath, 'r', encoding='utf-8') as f:
+                    content = json.load(f)
+
+                structured_data = content.get("structured_data", {})
+                if has_meaningful_structured_data(structured_data):
+                    if _coerce_packaged_approval(qr, structured_data):
+                        content["structured_data"] = structured_data
+                        with open(filepath, 'w', encoding='utf-8') as f:
+                            json.dump(content, f, ensure_ascii=False, indent=4)
+                        mtime = os.path.getmtime(filepath)
+                    print(f"   -> Syncing data from {filename}")
+                    upsert_sdi_dataset(
+                        doc_id=doc_id, structured=structured_data,
+                        avg_ai_conf=_extract_avg_ai_conf(content),
+                        audit_source="ai:gpt-5.5",
+                        audit_description=f"JSON sync ({filename})",
+                        audit_modified_by="ai-pipeline",
+                    )
+                    _auto_register_qr_code(qr, process_value="0")
+                    processed_files[filename] = mtime
+                    processed_updates[filename] = mtime
+                else:
+                    print(f"SYNC-JSON-WARN (BF): Skipping sparse structured_data in {filename}; marked processed to prevent replay.")
+                    processed_files[filename] = mtime
+                    processed_updates[filename] = mtime
+
+            except Exception as e:
+                print(f"SYNC-JSON-ERROR (BF): Failed to process {filename}: {e}")
+
+        if processed_updates:
+            mark_json_processed(str(PROCESSED_JSON_LOG_BF), filename_mtimes=processed_updates)
+
+    finally:
+        json_sync_lock.release()
+
+
+@app.before_request
+def before_request_handler():
+    g.embedded = request.args.get('embedded', '').lower() == 'true'
+    if request.endpoint in ('static', 'serve_image', 'check_sdi', 'auth.login', 'auth.logout'):
+        return
+    sync_image_directory_to_db_bf()
+    sync_json_directory_to_db_bf()
+    # MODIFICATION: Removed sync_sdi_states_to_process() to prevent forcing manual items to tab 2.
+    # sync_sdi_states_to_process()
+
+# --- END: Directory Sync Logic ---
+
+
+def _auto_register_qr_code(qr: str, process_value: str = "0"):
+    """
+    Automatically register QR code in QR_code_assets filter table if not present.
+    """
+    if not _connectable():
+        return
+    
+    try:
+        with sqlite3.connect(DB_PATH) as conn:
+            cur = conn.cursor()
+            
+            # Check for BOTH exact match AND prefix match (full format entries)
+            cur.execute(
+                "SELECT code_assets FROM QR_code_assets WHERE code_assets = ? OR code_assets LIKE ?",
+                (qr, qr + " %")
+            )
+            exists = cur.fetchone()
+            
+            if not exists:
+                # Insert new record
+                cur.execute(
+                    "INSERT INTO QR_code_assets (code_assets, Col_process) VALUES (?, ?)",
+                    (qr, process_value)
+                )
+                conn.commit()
+                print(f"   ✓ Auto-registered QR code '{qr}' in filter table (Col_process={process_value})")
+    except Exception as e:
+        print(f"   ⚠️ Failed to auto-register QR code '{qr}': {e}")
+
+
+def sync_sdi_states_to_process():
+    """
+    MODIFIED: This function is now effectively disabled or passive 
+    to avoid overwriting tab status (Col_process) when sdi=1.
+    """
+    pass
+
+
+def find_image(qr: str, building: str, asset_type_mid: str, seq_tag: str):
+    seq = seq_tag.replace('-', '').strip()
+    base = f"{qr} {building} {asset_type_mid} - {seq}"
+    for ext in VALID_IMAGE_EXTS:
+        candidate = os.path.join(IMG_DIR, base + ext)
+        if os.path.exists(candidate):
+            return os.path.basename(candidate)
+    return None
+
+
+def _normalize_avg_ai_conf(value):
+    try:
+        conf = float(value)
+    except (TypeError, ValueError):
+        return None, "N/A"
+
+    conf = max(0.0, min(100.0, conf))
+    conf_text = f"{conf:.2f}".replace(".", ",")
+    return conf, f"{conf_text}%"
+
+
+def _normalize_conf_bound(value, default):
+    if value in (None, ""):
+        return default
+    try:
+        v = int(float(value))
+    except (TypeError, ValueError):
+        return default
+    return max(0, min(100, v))
+
+
+def _matches_conf_range(item, conf_min, conf_max):
+    try:
+        score = float(item.get("Avg_ai_conf"))
+    except (TypeError, ValueError):
+        return False
+    return conf_min <= score <= conf_max
+
+def _extract_avg_ai_conf(payload: dict):
+    if not isinstance(payload, dict):
+        return None
+
+    direct = payload.get("Avg_ai_conf")
+    if direct not in (None, ""):
+        return direct
+
+    scores = payload.get("confidence_scores")
+    if not isinstance(scores, dict):
+        return None
+
+    values = []
+    for score in scores.values():
+        try:
+            values.append(float(score))
+        except (TypeError, ValueError):
+            continue
+    if not values:
+        return None
+    return sum(values) / len(values)
+
+def _sanitize_qr_value(raw: str) -> str:
+    return re.sub(r"[^A-Za-z0-9]", "", (raw or "").strip()).upper()
+
+def _qr_conflicts(new_qr: str, building: str) -> bool:
+    filename = f"{new_qr}_BF_{building}.json"
+    if os.path.exists(os.path.join(JSON_DIR, filename)):
+        return True
+    if not _connectable():
+        return False
+    try:
+        with sqlite3.connect(DB_PATH) as conn:
+            cur = conn.cursor()
+            cur.execute(f'SELECT 1 FROM "{QR_CODES_TABLE}" WHERE "{QR_CODE_ID_COL}" = ? LIMIT 1', (new_qr,))
+            if cur.fetchone(): return True
+            cur.execute(f'PRAGMA table_info("{QR_CODE_ASSETS_TABLE}")')
+            cols = [r[1] for r in cur.fetchall()]
+            qr_col = next((c for c in QR_CODE_ASSETS_QR_COL_CANDIDATES if c in cols), None)
+            if qr_col:
+                cur.execute(f'SELECT 1 FROM "{QR_CODE_ASSETS_TABLE}" WHERE "{qr_col}" LIKE ? LIMIT 1', (f"{new_qr}%",))
+                if cur.fetchone(): return True
+    except Exception:
+        return False
+    return False
+
+def _rename_asset_images(old_qr: str, new_qr: str, building: str):
+    if not os.path.isdir(IMG_DIR): return
+    for tag in SEQ_SHOW:
+        seq = tag.replace('-', '').strip()
+        for ext in VALID_IMAGE_EXTS:
+            old_name = f"{old_qr} {building} BF - {seq}{ext}"
+            new_name = f"{new_qr} {building} BF - {seq}{ext}"
+            old_path = os.path.join(IMG_DIR, old_name)
+            new_path = os.path.join(IMG_DIR, new_name)
+            if not os.path.exists(old_path): continue
+            if os.path.exists(new_path): continue
+            try:
+                os.rename(old_path, new_path)
+            except Exception as e:
+                print(f"?? Image rename failed ({old_name} -> {new_name}): {e}")
+
+def _update_processed_json_log_filename(old_name: str, new_name: str):
+    if not PROCESSED_JSON_LOG_BF.exists(): return
+    try:
+        with open(PROCESSED_JSON_LOG_BF, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        if not isinstance(data, dict): return
+        if old_name in data:
+            data[new_name] = data.pop(old_name)
+            with open(PROCESSED_JSON_LOG_BF, 'w', encoding='utf-8') as f:
+                json.dump(data, f, indent=2)
+    except Exception:
+        pass
+
+def _replace_qr_in_db(old_qr: str, new_qr: str):
+    if not _connectable(): return
+    updates = [
+        (QR_CODES_TABLE, QR_CODE_ID_COL, False),
+        (QR_CODE_ASSETS_TABLE, None, True),
+        ("sdi_dataset", "QR Code", False),
+        ("sdi_dataset_EL", "QR Code", False),
+        ("sdi_print_out", "QR Code", False),
+        ("sdi_print_out_arch", "QR Code", False),
+        ("process_type", "QR Code", False),
+        ("json_files", "code", False),
+    ]
+    try:
+        with sqlite3.connect(DB_PATH) as conn:
+            cur = conn.cursor()
+            for table, col, prefix in updates:
+                cur.execute(f'PRAGMA table_info("{table}")')
+                cols = [r[1] for r in cur.fetchall()]
+                if table == QR_CODE_ASSETS_TABLE:
+                    col = next((c for c in QR_CODE_ASSETS_QR_COL_CANDIDATES if c in cols), None)
+                if not col or col not in cols:
+                    continue
+                if prefix:
+                    cur.execute(
+                        f'UPDATE "{table}" SET "{col}" = ? || substr("{col}", length(?) + 1) WHERE "{col}" LIKE ?',
+                        (new_qr, old_qr, f"{old_qr}%")
+                    )
+                else:
+                    cur.execute(
+                        f'UPDATE "{table}" SET "{col}" = ? WHERE "{col}" = ?',
+                        (new_qr, old_qr)
+                    )
+            conn.commit()
+    except Exception as e:
+        print(f"?? DB QR replace failed ({old_qr}->{new_qr}): {e}")
+
+
+@lru_cache(maxsize=1)
+def _connectable():
+    return os.path.exists(DB_PATH)
+
+
+def _fetch_column_values(table: str, col: str):
+    if not _connectable():
+        return []
+    try:
+        with sqlite3.connect(DB_PATH) as conn:
+            conn.row_factory = sqlite3.Row
+            cur = conn.cursor()
+            query = f'SELECT "{col}" AS val FROM "{table}" WHERE "{col}" IS NOT NULL'
+            cur.execute(query)
+            vals = [str(r["val"]).strip() for r in cur.fetchall() if str(r["val"]).strip()]
+            uniq = sorted(set(vals), key=lambda s: (s.lower(), s))
+            return uniq
+    except Exception as e:
+        print(f"⚠️ DB fetch failed for {table}.{col}: {e}")
+        return []
+
+
+def _fetch_capture_info(qr_code_id: str, building: str = "", discipline: str = "BF") -> dict:
+    """Look up the latest capture user / date / hour from QR_code_assets for
+    the given QR (optionally constrained by building + discipline). Returns
+    {"user": str, "date": "YYYY-MM-DD", "hour": "HH:MM"} -- empty strings when
+    nothing is on file. Used to surface User Activity Log fields beneath the
+    Description on the review page."""
+    blank = {"user": "", "date": "", "hour": ""}
+    if not _connectable():
+        return blank
+    qr = (qr_code_id or "").strip()
+    if not qr:
+        return blank
+    try:
+        with sqlite3.connect(DB_PATH) as conn:
+            conn.row_factory = sqlite3.Row
+            cur = conn.cursor()
+            bld = (building or "").strip()
+            disc = (discipline or "").strip()
+            if bld and disc:
+                pattern = f"{qr} {bld} {disc}%"
+            elif bld:
+                pattern = f"{qr} {bld}%"
+            else:
+                pattern = f"{qr} %"
+            cur.execute(
+                """SELECT user, date_hour FROM QR_code_assets
+                   WHERE code_assets LIKE ?
+                     AND user IS NOT NULL AND user <> ''
+                   ORDER BY date_hour DESC, ID DESC
+                   LIMIT 1""",
+                (pattern,),
+            )
+            row = cur.fetchone()
+            if not row:
+                return blank
+            user = (row["user"] or "").strip()
+            stamp = (row["date_hour"] or "").strip()
+            date_part, hour_part = "", ""
+            if "T" in stamp:
+                head, _, tail = stamp.partition("T")
+                date_part = head
+                hour_part = tail[:5]
+            return {"user": user, "date": date_part, "hour": hour_part}
+    except Exception as e:
+        print(f"[WARN] capture info fetch failed for {qr}: {e}")
+        return blank
+
+
+def _get_buildings_name_map():
+    """Return {Code: Name} for the Buildings table. Used by the dashboard
+    Building filter to render dropdown options as "<Code> - <Name>" while
+    keeping <option value> as the bare code so existing column filters work."""
+    if not _connectable():
+        return {}
+    try:
+        with sqlite3.connect(DB_PATH) as conn:
+            cur = conn.cursor()
+            cur.execute('SELECT Code, Name FROM Buildings WHERE Code IS NOT NULL')
+            return {
+                str(code).strip(): str(name or "").strip()
+                for code, name in cur.fetchall()
+                if str(code or "").strip()
+            }
+    except Exception:
+        return {}
+
+
+def get_asset_group_options():
+    all_opts = _fetch_column_values(ASSET_GROUP_TABLE, ASSET_GROUP_COL)
+    allowed = {"Primary Backflow Devices", "Secondary Backflow Devices"}
+    return [opt for opt in all_opts if opt in allowed]
+
+
+def get_attribute_options():
+    return ["BackflowDevice"]
+
+
+def _table_exists(conn, table_name: str) -> bool:
+    cur = conn.cursor()
+    cur.execute("SELECT name FROM sqlite_master WHERE type='table' AND name=?;", (table_name,))
+    return cur.fetchone() is not None
+
+
+def _text_columns(conn, table_name: str):
+    cur = conn.cursor()
+    cur.execute(f'PRAGMA table_info("{table_name}")')
+    cols = cur.fetchall()
+    if not cols:
+        return []
+    text_cols, all_cols = [], []
+    for cid, name, coltype, notnull, dflt, pk in cols:
+        all_cols.append(name)
+        t = (coltype or "").upper()
+        if any(hint in t for hint in TEXT_TYPE_HINTS) or t == "":
+            text_cols.append(name)
+        return text_cols or all_cols
+
+
+def _fetch_distinct_nonempty(conn, table: str, col: str):
+    cur = conn.cursor()
+    try:
+        cur.execute(f'SELECT DISTINCT "{col}" FROM "{table}"')
+        vals = []
+        for (v,) in cur.fetchall():
+            if v is None:
+                continue
+            s = str(v).strip()
+            if s:
+                vals.append(s)
+        vals = sorted(set(vals), key=lambda s: (s.lower(), s))
+        return vals
+    except Exception as e:
+        print(f"⚠️ Failed fetching distinct from {table}.{col}: {e}")
+        return []
+
+
+def get_application_options():
+    if not _connectable():
+        print("⚠️ DB not found:", DB_PATH)
+        return []
+    try:
+        with sqlite3.connect(DB_PATH) as conn:
+            conn.row_factory = sqlite3.Row
+            for tbl in APPLICATION_TABLE_CANDIDATES:
+                if not _table_exists(conn, tbl):
+                    continue
+                candidate_cols = ["name", "Name", "code", "Code", "application", "Application", "type", "Type"]
+                cols = _text_columns(conn, tbl)
+                ordered_cols = [c for c in candidate_cols if c in cols] + [c for c in cols if c not in candidate_cols]
+                for col in ordered_cols:
+                    vals = _fetch_distinct_nonempty(conn, tbl, col)
+                    if vals:
+                        print(f"✔️ Application options from {tbl}.{col}: {len(vals)} values")
+                        return vals
+                print(f"ℹ️ Table '{tbl}' found, but no non-empty text-like columns produced values: {cols}")
+            print("⚠️ No Application table/values found. Tried:", APPLICATION_TABLE_CANDIDATES)
+            return []
+    except Exception as e:
+        print("❌ Error while loading Application options:", e)
+        return []
+
+
+def get_qr_locations():
+    """Fetches a dictionary mapping all QR codes to their Locations."""
+    locations = {}
+    if not _connectable():
+        return locations
+    try:
+        with sqlite3.connect(DB_PATH) as conn:
+            conn.row_factory = sqlite3.Row
+            cur = conn.cursor()
+            if not _table_exists(conn, QR_CODES_TABLE):
+                return locations
+            cur.execute(f"PRAGMA table_info({QR_CODES_TABLE})")
+            columns = [row['name'] for row in cur.fetchall()]
+            if QR_LOCATION_COL not in columns:
+                return locations
+            
+            query = f'SELECT "{QR_CODE_ID_COL}", "{QR_LOCATION_COL}" FROM "{QR_CODES_TABLE}"'
+            for row in cur.execute(query):
+                qr_id = str(row[QR_CODE_ID_COL] or "").strip()
+                location = str(row[QR_LOCATION_COL] or "").strip()
+                if qr_id:
+                    locations[qr_id] = location
+    except Exception as e:
+        print(f"⚠️ DB fetch failed for QR code locations: {e}")
+    return locations
+
+def get_location_for_qr(qr_code: str) -> str:
+    """Fetches the Location for a single QR code."""
+    if not _connectable():
+        return ""
+    try:
+        with sqlite3.connect(DB_PATH) as conn:
+            conn.row_factory = sqlite3.Row
+            cur = conn.cursor()
+            if not _table_exists(conn, QR_CODES_TABLE): return ""
+            cur.execute(f"PRAGMA table_info({QR_CODES_TABLE})")
+            if QR_LOCATION_COL not in [row['name'] for row in cur.fetchall()]: return ""
+            
+            query = f'SELECT "{QR_LOCATION_COL}" FROM "{QR_CODES_TABLE}" WHERE "{QR_CODE_ID_COL}" = ?'
+            cur.execute(query, (qr_code,))
+            result = cur.fetchone()
+            return str(result[QR_LOCATION_COL] or "").strip() if result else ""
+    except Exception:
+        return ""
+
+# --- NEW: Get SDI States ---
+def get_qr_sdi_states():
+    """Fetch sdi column for all QR codes (0 or 1)."""
+    states = {}
+    if not _connectable():
+        return states
+    try:
+        with sqlite3.connect(DB_PATH) as conn:
+            conn.row_factory = sqlite3.Row
+            cur = conn.cursor()
+            if not _table_exists(conn, QR_CODES_TABLE):
+                return states
+
+            # Ensure column exists before querying
+            cur.execute(f"PRAGMA table_info({QR_CODES_TABLE})")
+            columns = [row['name'] for row in cur.fetchall()]
+            if "sdi" not in columns:
+                return states
+
+            cur.execute(f'SELECT "{QR_CODE_ID_COL}", "sdi" FROM "{QR_CODES_TABLE}"')
+            for row in cur.fetchall():
+                qr_id = str(row[QR_CODE_ID_COL]).strip()
+                val_raw = row["sdi"]
+                val = 1 if (val_raw == 1 or val_raw == "1") else 0
+                if qr_id:
+                    states[qr_id] = val
+    except Exception as e:
+        print(f"⚠️ Access to DB failed for SDI states: {e}")
+    return states
+
+
+def _compute_ubc_tag(building: str) -> str:
+    """
+    Generate UBC Tag from building code.
+    """
+    if not building:
+        return ""
+    # Replace dashes with zeros
+    formatted = building.replace("-", "0")
+    # Pad with trailing zeros to reach 5 characters
+    while len(formatted) < 5:
+        formatted += "0"
+    # Append BFP suffix
+    return formatted + "BFP"
+
+
+def _compute_description(asset_group: str, ubc_tag: str, application: str = "") -> str:
+    prefix = "BFP-"
+    suffix = "BFP"
+    app_part = (application or "").strip()
+    if app_part:
+        app_part += " "
+    first_word_group = ""
+    if asset_group:
+        first_word_group = asset_group.strip().split()[0] + " "
+    # REMOVED: tag_part = f" {ubc_tag.strip()}" if ubc_tag and str(ubc_tag).strip() else ""
+    return f"{prefix}{app_part}{first_word_group}{suffix}".strip()
+
+
+def _resolve_description(asset_group: str, ubc_tag: str, application: str, existing_desc) -> str:
+    existing_text = str(existing_desc or "")
+    if existing_text.strip():
+        return existing_text
+    cd = get_asset_dictionary()
+    tag = (ubc_tag or "").strip().upper()
+    if tag:
+        for k in sorted(cd.keys(), key=len, reverse=True):
+            if tag.startswith(k.upper()) and cd[k].get("description"):
+                base = cd[k].get("description")
+                return f"{base} - {ubc_tag}" if ubc_tag else base
+    return _compute_description(asset_group, ubc_tag, application)
+
+
+def parse_doc_id(doc_id: str):
+    m = JSON_NAME_RE.match(f"{doc_id}.json")
+    if not m:
+        return None
+    return m.groups()
+
+
+# ====== DB helpers ======
+def upsert_approved_in_db(qr_code: str, is_approved: bool):
+    if not _connectable():
+        return
+    try:
+        with sqlite3.connect(DB_PATH) as conn:
+            cur = conn.cursor()
+            cur.execute('CREATE TABLE IF NOT EXISTS "QR_codes" ("QR_code_ID" TEXT PRIMARY KEY, "Approved" TEXT)')
+            new_val = '1' if is_approved else ''
+            old_row = cur.execute(
+                'SELECT "Approved" FROM "QR_codes" WHERE "QR_code_ID" = ?',
+                (qr_code,),
+            ).fetchone()
+            old_val = old_row[0] if old_row else None
+            cur.execute(
+                'INSERT INTO "QR_codes" ("QR_code_ID","Approved") VALUES (?,?) '
+                'ON CONFLICT("QR_code_ID") DO UPDATE SET "Approved"=excluded."Approved"',
+                (qr_code, new_val)
+            )
+            if _audit_log_change and str(old_val or "") != new_val:
+                try:
+                    _audit_log_change(
+                        conn,
+                        qr_code=qr_code,
+                        app_name="reviewer_bf",
+                        table_name="QR_codes",
+                        record_pk=qr_code,
+                        op_type="UPDATE",
+                        field_changes={"Approved": (old_val, new_val)},
+                        source="human",
+                        description="POST /toggle_approved (BF)",
+                    )
+                except Exception as audit_exc:
+                    print(f"[audit] BF toggle_approved audit failed: {audit_exc}")
+            conn.commit()
+    except Exception as e:
+        print(f"⚠️ Failed to update QR_codes.Approved for {qr_code}: {e}")
+
+# --- NEW: DB Toggle SDI (DECOUPLED) ---
+def _db_toggle_qr_sdi(qr_code_id: str):
+    """
+    MODIFIED: Toggles the 'sdi' status in QR_codes WITHOUT affecting QR_code_assets.Col_process.
+    This ensures the asset stays in its current dashboard tab.
+    """
+    if not _connectable():
+        raise Exception("Database not accessible")
+
+    with sqlite3.connect(DB_PATH) as conn:
+        cur = conn.cursor()
+
+        # 1. Check current value
+        cur.execute(f'SELECT "sdi" FROM "{QR_CODES_TABLE}" WHERE "{QR_CODE_ID_COL}" = ?', (qr_code_id,))
+        row = cur.fetchone()
+
+        current_val = 0
+        if row:
+            current_val = 1 if (row[0] == 1 or row[0] == "1") else 0
+
+        # 2. Toggle
+        new_val = 0 if current_val == 1 else 1
+
+        # 3. Upsert
+        cur.execute(f"""
+            INSERT INTO "{QR_CODES_TABLE}" ("{QR_CODE_ID_COL}", "sdi")
+            VALUES (?, ?)
+            ON CONFLICT("{QR_CODE_ID_COL}") DO UPDATE SET
+                "sdi" = excluded."sdi";
+        """, (qr_code_id, new_val))
+
+        if _audit_log_change:
+            try:
+                _audit_log_change(
+                    conn,
+                    qr_code=qr_code_id,
+                    app_name="reviewer_bf",
+                    table_name=QR_CODES_TABLE,
+                    record_pk=qr_code_id,
+                    op_type="UPDATE",
+                    field_changes={"sdi": (current_val, new_val)},
+                    source="human",
+                    description="POST /toggle_sdi (BF)",
+                )
+            except Exception as audit_exc:
+                print(f"[audit] BF toggle_sdi audit failed: {audit_exc}")
+
+        conn.commit()
+
+    return new_val
+
+
+def _table_columns(conn, table_name: str):
+    cur = conn.cursor()
+    cur.execute(f'PRAGMA table_info("{table_name}")')
+    return {row[1] for row in cur.fetchall()}
+
+def _ensure_table_columns(conn, table_name: str, column_defs: dict[str, str]):
+    existing_cols = _table_columns(conn, table_name)
+    if not existing_cols:
+        return
+
+    cur = conn.cursor()
+    for col_name, col_type in column_defs.items():
+        if col_name not in existing_cols:
+            cur.execute(f'ALTER TABLE "{table_name}" ADD COLUMN "{col_name}" {col_type}')
+
+def _table_has_column(table_name: str, column_name: str) -> bool:
+    if not _connectable():
+        return False
+    try:
+        with sqlite3.connect(DB_PATH) as conn:
+            return column_name in _table_columns(conn, table_name)
+    except Exception:
+        return False
+
+
+def _safe_str(v):
+    return "" if v is None else str(v)
+
+
+def _build_sdi_row(doc_id: str, structured: dict, avg_ai_conf=None) -> dict:
+    parsed = parse_doc_id(doc_id)
+    if not parsed:
+        return {}
+    qr, _asset_type_mid, building = parsed
+
+    manuf = _safe_str(structured.get("Manufacturer", ""))
+    model = _safe_str(structured.get("Model", ""))
+    serial = _safe_str(structured.get("Serial Number", ""))
+    ubc = _safe_str(structured.get("UBC Tag", ""))
+    ag = _safe_str(structured.get("Asset Group", ""))
+    attr = _safe_str(structured.get("Attribute", ""))
+    diam = _safe_str(structured.get("Diameter", ""))
+    year = _safe_str(structured.get("Year", ""))
+    tsbc = _safe_str(structured.get("Technical Safety BC", ""))
+    desc = _resolve_description(
+        ag,
+        ubc,
+        _safe_str(structured.get("Application", "")),
+        structured.get("Description", "")
+    )
+    approved_flag = '1' if _safe_str(structured.get("Approved", "")) == "True" else '0'
+    flagged_val = '1' if _safe_str(structured.get("Flagged", "")) == "true" else '0'
+    avg_ai_conf_val, _ = _normalize_avg_ai_conf(avg_ai_conf)
+
+    return {
+        "QR Code": _safe_str(qr),
+        "Building": _safe_str(building),
+        "Manufacturer": manuf,
+        "Model": model,
+        "Serial": serial,
+        "UBC Tag": ubc,
+        "Asset Group": ag,
+        "Attribute": attr,
+        "Description": desc,
+        "Diameter": diam,
+        "Year": year,
+        "Technical Safety BC": tsbc,
+        "Approved": approved_flag,
+        "Flagged": flagged_val,
+        "Avg_ai_conf": avg_ai_conf_val,
+        # BF reviews always belong to the "Domestic Water Distribution Equipment"
+        # main-asset class. Hardcoded server-side; the BF review form has no
+        # Main Asset input. (See plan: backend-only constant.)
+        "Main Asset": "Domestic Water Distribution Equipment",
+    }
+
+
+def _coerce_packaged_approval(qr_code: object, structured: dict) -> bool:
+    """Keep SDI-packaged assets approved even when stale JSON says otherwise."""
+    if not isinstance(structured, dict):
+        return False
+    qr_text = str(qr_code or "").strip()
+    if not qr_text:
+        return False
+    try:
+        packaged = bool(_get_qr_package_lock(qr_text).get("locked"))
+    except Exception as exc:
+        print(f"[WARN] Could not verify package approval guard for {qr_text}: {exc}")
+        packaged = False
+    if not packaged or _safe_str(structured.get("Approved", "")) == "True":
+        return False
+    structured["Approved"] = "True"
+    return True
+
+
+def upsert_sdi_dataset(
+    doc_id: str,
+    structured: dict,
+    avg_ai_conf=None,
+    *,
+    audit_source: str = "human",
+    audit_app: str = "reviewer_bf",
+    audit_description: str = "",
+    audit_source_map: dict | None = None,
+    audit_modified_by: str | None = None,
+):
+    if not _connectable():
+        return
+    parsed = parse_doc_id(doc_id)
+    if parsed:
+        _coerce_packaged_approval(parsed[0], structured)
+    try:
+        with sqlite3.connect(DB_PATH) as conn:
+            conn.row_factory = sqlite3.Row
+            cur = conn.cursor()
+            cur.execute('SELECT name FROM sqlite_master WHERE type="table" AND name=?', ("sdi_dataset",))
+            if not cur.fetchone():
+                print('⚠️ Table "sdi_dataset" not found; skipping sync.')
+                return
+
+            _ensure_table_columns(conn, "sdi_dataset", {"Avg_ai_conf": "REAL", "Main Asset": "TEXT"})
+            cols = _table_columns(conn, "sdi_dataset")
+            payload = _build_sdi_row(doc_id, structured, avg_ai_conf=avg_ai_conf)
+            if not payload:
+                print(f"⚠️ Could not build sdi_dataset row for {doc_id}")
+                return
+
+            if "QR Code" not in cols:
+                print('⚠️ "sdi_dataset" lacks "QR Code" column; cannot upsert key. Skipping.')
+                return
+
+            filtered = {k: v for k, v in payload.items() if k in cols}
+            set_cols = [c for c in filtered.keys() if c != "QR Code"]
+            if not set_cols:
+                pass
+
+            key_cols = ["QR Code"]
+            if "Building" in cols:
+                key_cols.append("Building")
+
+            qr_key = filtered.get("QR Code")
+            bld_key = filtered.get("Building") if "Building" in cols else None
+
+            # Snapshot before for audit
+            before_row: dict = {}
+            if _audit_log_change and _audit_diff_dicts and qr_key is not None:
+                try:
+                    if bld_key is not None:
+                        snap_cur = conn.execute(
+                            'SELECT * FROM "sdi_dataset" WHERE "QR Code"=? AND "Building"=?',
+                            (qr_key, bld_key),
+                        )
+                    else:
+                        snap_cur = conn.execute(
+                            'SELECT * FROM "sdi_dataset" WHERE "QR Code"=?',
+                            (qr_key,),
+                        )
+                    r = snap_cur.fetchone()
+                    if r:
+                        before_row = dict(r)
+                except Exception as snap_exc:
+                    print(f"[audit] BF snapshot-before failed: {snap_exc}")
+
+            where_clause = " AND ".join(f'"{k}"=?' for k in key_cols)
+            update_sql = f'UPDATE "sdi_dataset" SET {", ".join([f""""{c}"=? """ for c in set_cols])} WHERE {where_clause}'
+            update_vals = [filtered[c] for c in set_cols] + [filtered[k] for k in key_cols]
+
+            if set_cols:
+                cur.execute(update_sql, update_vals)
+
+            if cur.rowcount == 0:
+                insert_cols = list(filtered.keys())
+                placeholders = ",".join(["?"] * len(insert_cols))
+                insert_sql = f'INSERT INTO "sdi_dataset" ({",".join(f"""\"{c}\"""" for c in insert_cols)}) VALUES ({placeholders})'
+                cur.execute(insert_sql, [filtered[c] for c in insert_cols])
+
+            # Audit: per-field diff against the freshly written state
+            if _audit_log_change and _audit_diff_dicts and qr_key is not None:
+                try:
+                    if bld_key is not None:
+                        snap_cur = conn.execute(
+                            'SELECT * FROM "sdi_dataset" WHERE "QR Code"=? AND "Building"=?',
+                            (qr_key, bld_key),
+                        )
+                    else:
+                        snap_cur = conn.execute(
+                            'SELECT * FROM "sdi_dataset" WHERE "QR Code"=?',
+                            (qr_key,),
+                        )
+                    r = snap_cur.fetchone()
+                    after_row = dict(r) if r else {}
+
+                    changes = _audit_diff_dicts(before_row, after_row)
+                    if changes:
+                        op = "INSERT" if not before_row else "UPDATE"
+                        source_map = audit_source_map or {}
+                        per_source: dict[str, dict] = {}
+                        for fld, pair in changes.items():
+                            src = source_map.get(fld, audit_source)
+                            per_source.setdefault(src, {})[fld] = pair
+                        pk = f"{qr_key}|{bld_key}" if bld_key is not None else str(qr_key)
+                        for src, fld_changes in per_source.items():
+                            _audit_log_change(
+                                conn,
+                                qr_code=qr_key,
+                                app_name=audit_app,
+                                table_name="sdi_dataset",
+                                record_pk=pk,
+                                op_type=op,
+                                field_changes=fld_changes,
+                                source=src,
+                                modified_by=audit_modified_by,
+                                description=audit_description or "upsert_sdi_dataset",
+                            )
+                except Exception as audit_exc:
+                    print(f"[audit] BF upsert audit failed: {audit_exc}")
+
+            conn.commit()
+    except Exception as e:
+        print(f"⚠️ Failed to upsert sdi_dataset for {doc_id}: {e}")
+
+
+def get_qr_dates():
+    dates = {}
+    if not _connectable(): return dates
+    try:
+        with sqlite3.connect(DB_PATH) as conn:
+            cur = conn.cursor()
+            cur.execute(f"PRAGMA table_info({QR_CODES_TABLE})")
+            cols = [r[1] for r in cur.fetchall()]
+            if "date_set" in cols:
+                cur.execute(f'SELECT "{QR_CODE_ID_COL}", "date_set" FROM "{QR_CODES_TABLE}"')
+                for r in cur.fetchall():
+                    # r[0] is QR_code_ID
+                    if r[0]: dates[str(r[0]).strip()] = str(r[1] or "").strip()
+    except Exception as e:
+        print(f"Error fetching QR dates: {e}")
+    return dates
+
+def get_qr_captured_by():
+    qr_to_name = {}
+    if not _connectable(): return qr_to_name
+    try:
+        qr_to_user = {}
+        with sqlite3.connect(DB_PATH) as conn:
+            cur = conn.cursor()
+            cur.execute(
+                'SELECT substr("code_assets", 1, instr("code_assets", " ") - 1) AS qr, "user" '
+                'FROM "QR_code_assets" '
+                'WHERE "user" IS NOT NULL AND "user" != "" '
+                'AND instr("code_assets", " ") > 0'
+            )
+            for qr, username in cur.fetchall():
+                if qr and username:
+                    qr_to_user.setdefault(qr, username)
+        if not qr_to_user:
+            return qr_to_name
+        try:
+            usernames = set(qr_to_user.values())
+            name_map = {
+                u.username: (u.name or u.username)
+                for u in User.query.filter(User.username.in_(usernames)).all()
+            }
+        except Exception:
+            name_map = {}
+        for qr, uname in qr_to_user.items():
+            qr_to_name[qr] = name_map.get(uname, uname)
+    except Exception as e:
+        print(f"Error fetching captured-by map: {e}")
+    return qr_to_name
+
+def load_json_items(process_target: str = "0"):
+    items = []
+    qr_dates = get_qr_dates()
+    locations_map = get_qr_locations()
+    process_map = get_qr_process_map()
+    sdi_states = get_qr_sdi_states()  # manual-entry flag from QR_codes.sdi
+    ai_status_map = get_qr_ai_status_map()
+    captured_by_map = get_qr_captured_by()
+    if process_map is None:
+        process_map = {}
+
+    for filename in os.listdir(JSON_DIR):
+        if not filename.endswith(".json") or filename.endswith("_raw_ocr.json"):
+            continue
+
+        if not _is_bf_filename(filename):
+            continue
+        
+        m = JSON_NAME_RE.match(filename)
+        if not m:
+            continue
+
+        qr, asset_type_mid, building = m.groups()
+        doc_id = filename[:-5]
+
+        try:
+            # Load JSON first so we can honor per-file manual flags
+            with open(os.path.join(JSON_DIR, filename), 'r', encoding='utf-8') as f:
+                raw = json.load(f)
+
+            data = raw.get("structured_data") or {}
+
+            # Extract and format Capture Date
+            capture_timestamp = qr_dates.get(str(raw.get("qr_code") or data.get("qr_code")).strip(), "")
+            if capture_timestamp:
+                # Format to YYYY-MM-DD HH:MM
+                data["Capture Date"] = capture_timestamp[:16]
+            else:
+                data["Capture Date"] = ""
+
+            if not isinstance(data, dict):
+                print(f"⚠️ Skipped {filename}: 'structured_data' is not a dict")
+                continue
+
+            exclude_sdi_flag = 1 if str(data.get("ExcludeSDI") or "0") in ("1", "True", "true") else 0
+
+            current_status = process_map.get(qr)
+
+            # MODIFICATION: Force Manual Entry tab (Process 2) if SDI is enabled.
+            # This ensures items set to 'Manual' appear in the Manual Entry tab.
+            sdi_state_val = sdi_states.get(qr)
+            if sdi_state_val == 1:
+                current_status = "2"
+            elif exclude_sdi_flag == 1:
+                current_status = "2"
+
+            if current_status in (None, ""):
+                _auto_register_qr_code(qr, "0")
+                current_status = "0"
+                process_map[qr] = current_status
+
+            if str(current_status) != str(process_target):
+                continue
+
+            data.setdefault("Manufacturer", "")
+            data.setdefault("Model", "")
+            data.setdefault("Serial Number", "")
+            data.setdefault("UBC Tag", "")
+            if not data.get("UBC Tag"):
+                data["UBC Tag"] = _compute_ubc_tag(building)
+            data.setdefault("Asset Group", "")
+            data.setdefault("Attribute", "BackflowDevice")
+            data.setdefault("Application", "")
+            data.setdefault("Flagged", "false")
+            data.setdefault("Approved", "")
+            data.setdefault("Diameter", "")
+            data.setdefault("Year", "")
+            data.setdefault("Technical Safety BC", "")
+
+            data = apply_dictionary_rules(data, asset_type="BF")
+
+            data["Description"] = _resolve_description(
+                data.get("Asset Group"),
+                data.get("UBC Tag"),
+                data.get("Application", ""),
+                data.get("Description")
+            )
+
+            present = 0
+            exists_map = {}
+            for tag in SEQ_CHECK:
+                exists_map[tag] = bool(find_image(qr, building, "BF", tag))
+                if exists_map[tag]:
+                    present += 1
+            missing_tags = [tag for tag in SEQ_CHECK if not exists_map[tag]]
+            friendly_map = {'-0': 'Asset Plate/Label', '-1': 'Asset Plate/Label (Optional)', '-2': 'Main Asset'}
+            missing_friendly = ", ".join(friendly_map.get(tag, tag) for tag in missing_tags)
+
+            missed_photo = present < 2
+            photos_summary = f"{present}/3"
+            has_extra_photo = bool(find_image(qr, building, "BF", '-3'))
+
+            location = locations_map.get(qr, "")
+
+            # ExcludeSDI reflects Manual Entry status: JSON flag, DB sdi flag, OR Col_process == 2
+            # This ensures the icon displays correctly for all items in the Manual Entry tab
+            # Must return integer 1 or 0 (not boolean) since template checks == 1
+            sdi_val = 1 if (exclude_sdi_flag or sdi_states.get(qr, 0) or str(current_status) == "2") else 0
+            avg_ai_conf, avg_ai_conf_display = _normalize_avg_ai_conf(_extract_avg_ai_conf(raw))
+            comp_score, comp_score_display = _normalize_avg_ai_conf(raw.get("completeness_score"))
+
+            items.append({
+                **data,
+                "doc_id": doc_id,
+                "qr_code": qr,
+                "captured_by": captured_by_map.get(qr, ""),
+                "building": building,
+                "Location": location,
+                "asset_type": "BF",
+                "Flagged": data.get("Flagged", "false"),
+                "Approved": data.get("Approved", ""),
+                "ExcludeSDI": sdi_val,
+                "ai_status": ai_status_map.get(qr, "0"),
+                "Modified": raw.get("modified", False),
+                "Missed Photo": "YES" if missed_photo else "NO",
+                "Missing List": missing_friendly,
+                "Photos Summary": photos_summary,
+                "Extra Photo": has_extra_photo,
+                "Avg_ai_conf": avg_ai_conf,
+                "Avg_ai_conf_display": avg_ai_conf_display,
+                "Comp_score": comp_score,
+                "Comp_score_display": comp_score_display
+            })
+        except Exception as e:
+            print(f"❌ Error loading {filename}: {e}")
+    _attach_package_locks_to_items(items)
+    return items
+
+
+# NEW: Function to get archived QRs
+def get_archived_qrs():
+    """Fetch a set of QR Codes that exist in the archive table."""
+    archived = set()
+    if not _connectable():
+        return archived
+    
+    try:
+        with sqlite3.connect(DB_PATH) as conn:
+            cur = conn.cursor()
+            cur.execute(f"SELECT name FROM sqlite_master WHERE type='table' AND name='{SDI_ARCHIVE_TABLE}'")
+            if not cur.fetchone():
+                return archived
+
+            cur.execute(f'SELECT "QR Code" FROM "{SDI_ARCHIVE_TABLE}"')
+            for row in cur.fetchall():
+                if row[0]:
+                    archived.add(str(row[0]).strip())
+    except Exception as e:
+        print(f"?? Failed to fetch archived QRs: {e}")
+    
+    return archived
+
+
+def get_qr_process_map():
+    """
+    Return a mapping of QR code to its highest Col_process value.
+    Returns None if the table or columns are unavailable so filtering is skipped.
+    """
+    if not _connectable():
+        return None
+
+    try:
+        with sqlite3.connect(DB_PATH) as conn:
+            cur = conn.cursor()
+            cur.execute(f"PRAGMA table_info({_quote(QR_CODE_ASSETS_TABLE)})")
+            table_info = cur.fetchall()
+            if not table_info:
+                print(f"?? Table '{QR_CODE_ASSETS_TABLE}' not found for process map.")
+                return None
+
+            cols = {row[1] for row in table_info}
+            cols_lc = {c.lower(): c for c in cols}
+
+            qr_col = next(
+                (cols_lc.get(c.lower()) for c in QR_CODE_ASSETS_QR_COL_CANDIDATES if c.lower() in cols_lc),
+                None,
+            )
+            if not qr_col:
+                qr_col = next((c for c in cols if "qr" in c.lower() and "code" in c.lower()), None)
+            if not qr_col:
+                print(f"?? QR column not found in '{QR_CODE_ASSETS_TABLE}'.")
+                return None
+
+            process_col = cols_lc.get(QR_CODE_ASSETS_PROCESS_COL.lower())
+            if not process_col:
+                print(f"?? Column '{QR_CODE_ASSETS_PROCESS_COL}' not found in '{QR_CODE_ASSETS_TABLE}'.")
+                return None
+
+            query = f'SELECT "{qr_col}", "{process_col}" FROM "{QR_CODE_ASSETS_TABLE}"'
+            cur.execute(query)
+
+            mapping = {}
+            for row in cur.fetchall():
+                q_raw = str(row[0]).strip() if row[0] is not None else ""
+                if not q_raw:
+                    continue
+                q_clean = q_raw.split(None, 1)[0]
+                try:
+                    p_val = int(str(row[1]).strip())
+                except Exception:
+                    continue
+
+                prev = mapping.get(q_clean)
+                if prev is None or p_val > prev:
+                    mapping[q_clean] = p_val
+            
+            return {k: str(v) for k, v in mapping.items()}
+    except Exception as e:
+        print(f"?? Failed to fetch process map: {e}")
+        return None
+
+
+def get_qr_ai_status_map():
+    """
+    Return a mapping of QR code to its 'ai_status' value from QR_codes table.
+    Returns empty dict if failed.
+    """
+    if not _connectable():
+        return {}
+
+    try:
+        with sqlite3.connect(DB_PATH) as conn:
+            cur = conn.cursor()
+            
+            # Ensure column exists
+            cur.execute(f"PRAGMA table_info({_quote(QR_CODES_TABLE)})")
+            columns = [row[1] for row in cur.fetchall()]
+            if 'ai_status' not in columns:
+                return {}
+
+            cur.execute(f'SELECT "{QR_CODE_ID_COL}", "ai_status" FROM "{QR_CODES_TABLE}"')
+            
+            mapping = {}
+            for row in cur.fetchall():
+                q_raw = str(row[0]).strip() if row[0] is not None else ""
+                if not q_raw:
+                    continue
+                # ai_status is text 0 or 1
+                mapping[q_raw] = str(row[1])
+            return mapping
+    except Exception as e:
+        print(f"?? Failed to fetch ai_status map: {e}")
+        return {}
+
+
+def get_qrs_with_process_value(target_value: str = "0"):
+    """
+    Return a set of QR codes whose Col_process matches target_value.
+    Returns None if the table or columns are unavailable so filtering is skipped.
+    """
+    process_map = get_qr_process_map()
+    if process_map is None:
+        return None
+
+    target_text = str(target_value)
+    return {qr for qr, proc in process_map.items() if proc == target_text}
+
+
+# --- MODIFIED FILTER FUNCTION ---
+def get_filtered_data_and_counts(query_args, process_target: str = "0", apply_client_filters: bool = True):
+    """
+    Loads and filters data, defaulting to HIDING archived items.
+    """
+    flagged_filter = query_args.get("flagged")
+    modified_filter = query_args.get("modified")
+    missed_filter = query_args.get("missed")
+    building_filter = query_args.get("building") or query_args.get("filter_building")
+    conf_min = _normalize_conf_bound(query_args.get("conf_min"), 0)
+    conf_max = _normalize_conf_bound(query_args.get("conf_max"), 100)
+    
+    # MODIFIED: Intelligent default for Approved filter
+    # Check for explicit arg first (including empty string for "All")
+    approved_arg = query_args.get("approved")
+    if approved_arg is None:
+        approved_arg = query_args.get("filter_approved")
+
+    if approved_arg is not None:
+        approved_filter = approved_arg
+    else:
+        # No explicit argument provided. Default to All Statuses across tabs.
+        approved_filter = ""
+
+    # Client-side equivalent filters (to align with dashboard UI)
+    filter_qr = (query_args.get("filter_qr") or "").strip().upper()
+    filter_tag = (query_args.get("filter_tag") or "").strip().upper()
+    filter_group = (query_args.get("filter_group") or "").strip()
+    filter_date = (query_args.get("filter_date") or "").strip()
+    
+    # NEW: Default archive to 'true' if not present
+    archive_val = query_args.get("archive")
+    hide_archived = (archive_val != 'false')
+
+    # 1. Load all data (scoped to process target)
+    all_data = load_json_items(process_target)
+
+    # 2. Apply Archive Filter FIRST (BASE for counts)
+    if hide_archived:
+        archived_qrs = get_archived_qrs()
+        base_data = [item for item in all_data if item.get("qr_code") not in archived_qrs]
+    else:
+        base_data = all_data
+
+    if conf_min != 0 or conf_max != 100:
+        base_data = [item for item in base_data if _matches_conf_range(item, conf_min, conf_max)]
+
+    # 3. Calculate counts on the base_data
+    # Note: Counts here are mostly for the badge display (total flagged, etc)
+    # We might need counts specific to the split lists later.
+
+    # 4. Apply other filters on base_data
+    data_to_filter = base_data
+
+    if flagged_filter == "true" and modified_filter == "true":
+        data_to_filter = [item for item in data_to_filter if item.get("Flagged") == "true" and item.get("Modified")]
+    elif flagged_filter == "true":
+        data_to_filter = [item for item in data_to_filter if item.get("Flagged") == "true"]
+    elif modified_filter == "true":
+        data_to_filter = [item for item in data_to_filter if item.get("Modified")]
+
+    if missed_filter == "true":
+        data_to_filter = [item for item in data_to_filter if item.get("Missed Photo") == "YES"]
+
+    if building_filter:
+        data_to_filter = [item for item in data_to_filter if item.get("building") == building_filter]
+    
+    if approved_filter and approved_filter.lower() != "all":
+        # Robust filtering (handle booleans/strings/casing)
+        target_bool = (approved_filter.lower() == "true")
+        
+        # We need to filter based on whether the ITEM is approved.
+        # item.get("Approved") might be "True", "true", True.
+        # Normalize item val:
+        
+        data_to_filter_new = []
+        for item in data_to_filter:
+            val = item.get("Approved")
+            sval = str(val or "").strip()
+            is_approved = (sval == "True") # "True" string is our standard
+            
+            if target_bool: # User wants Approved
+                if is_approved: data_to_filter_new.append(item)
+            else: # User wants Pending (Not Approved)
+                if not is_approved: data_to_filter_new.append(item)
+        data_to_filter = data_to_filter_new
+
+    if apply_client_filters:
+        # Keep review pagination aligned with the dashboard's client-side filters.
+        if filter_qr:
+            data_to_filter = [item for item in data_to_filter if filter_qr in (item.get("qr_code") or "").upper()]
+        if filter_tag:
+            data_to_filter = [item for item in data_to_filter if filter_tag in (item.get("UBC Asset Tag") or item.get("UBC Tag") or "").upper()]
+
+        if filter_group:
+            data_to_filter = [item for item in data_to_filter if (item.get("Asset Group") or "") == filter_group]
+
+        if filter_date:
+            # Filter by date part (YYYY-MM-DD)
+            # Capture Date format is YYYY-MM-DD HH:MM
+            data_to_filter = [item for item in data_to_filter if item.get("Capture Date", "").startswith(filter_date)]
+    
+    data_to_filter.sort(key=lambda x: x['doc_id']) 
+    
+    # We return data_to_filter AND base_data to calculate split counts in index
+    return data_to_filter, base_data
+
+def _get_card_scope_data(process_target: str, building_filter: str = ""):
+    data = load_json_items(process_target)
+    if building_filter:
+        data = [item for item in data if item.get("building") == building_filter]
+    return data
+
+
+@app.route("/")
+@login_required
+def index():
+    if not has_permission(current_user, "application", "reviewer_backflow", "viewer"):
+        return access_denied_response("Asset Reviewer - Backflow")
+    flagged_filter = request.args.get("flagged")
+    modified_filter = request.args.get("modified")
+    missed_filter = request.args.get("missed")
+    tab_param = request.args.get("tab")
+    process_param = request.args.get("process", "0")
+    
+    # Logic to determine active tab
+    if tab_param:
+        active_tab = tab_param
+    else:
+        if process_param == "1":
+            active_tab = "update"
+        elif process_param == "2":
+            active_tab = "manual"
+        else:
+            active_tab = "new"
+
+    approved_filter_raw = request.args.get("approved")
+    approved_filter = approved_filter_raw
+    if approved_filter in (None, ""):
+        approved_filter = ""
+    
+    # NEW: Determine archive state
+    archive_val = request.args.get("archive")
+    archive_filter_active = (archive_val != 'false')
+
+    # 1. Get Data for "New" (Process 0)
+    data_new_filtered, data_new_base = get_filtered_data_and_counts(request.args, "0", apply_client_filters=False)
+    table_new = data_new_filtered
+
+    # 2. Get Data for "Update" (Process 1)
+    data_update_filtered, data_update_base = get_filtered_data_and_counts(request.args, "1", apply_client_filters=False)
+    table_update = data_update_filtered
+
+    # 3. Get Data for "Manual" (Process 2)
+    data_manual_filtered, data_manual_base = get_filtered_data_and_counts(request.args, "2", apply_client_filters=False)
+    table_manual = data_manual_filtered
+
+    card_building_filter = request.args.get("building") or request.args.get("filter_building") or ""
+    card_new = _get_card_scope_data("0", card_building_filter)
+    card_update = _get_card_scope_data("1", card_building_filter)
+    card_manual = _get_card_scope_data("2", card_building_filter)
+    card_items = card_new + card_update + card_manual
+    card_total_assets = len(card_items)
+    card_pending_review = sum(1 for item in card_items if item.get("Approved") != "True")
+    card_missed = sum(1 for item in card_items if item.get("Missed Photo") == "YES")
+    card_approved = card_total_assets - card_pending_review
+
+    # 4. Calculate Counts
+    def get_counts(ds):
+        return {
+            "flagged": sum(1 for item in ds if item.get("Flagged") == "true"),
+            "modified": sum(1 for item in ds if item.get("Modified")),
+            "missed": sum(1 for item in ds if item.get("Missed Photo") == "YES"),
+        }
+
+    counts_new = get_counts(data_new_base)
+    counts_manual = get_counts(data_manual_base)
+    counts_update = get_counts(data_update_base)
+
+    # 5. Calculate Unapproved Counts (Approved != 'True') - UPDATED
+    count_unapproved_new = sum(1 for item in data_new_base if item.get("Approved") != "True")
+    count_unapproved_manual = sum(1 for item in data_manual_base if item.get("Approved") != "True")
+    count_unapproved_update = sum(1 for item in data_update_base if item.get("Approved") != "True")
+
+    return render_template(
+        "dashboard.html",
+        title="Asset Review Dashboard - Backflow Devices",
+        # Tables
+        data_new=table_new,
+        data_update=table_update,
+        data_manual=table_manual,
+        
+        warn_missing=True,
+        flagged_filter=flagged_filter,
+        modified_filter=modified_filter,
+        missed_filter=missed_filter,
+        conf_min=_normalize_conf_bound(request.args.get("conf_min"), 0),
+        conf_max=_normalize_conf_bound(request.args.get("conf_max"), 100),
+        approved_filter=approved_filter,
+        approved_filter_raw=approved_filter_raw,
+        archive_filter_active=archive_filter_active,
+        
+        # Counts (Filter Buttons)
+        count_flagged_new=counts_new['flagged'], 
+        count_modified_new=counts_new['modified'],
+        count_missed_new=counts_new['missed'],
+        
+        count_flagged_update=counts_update['flagged'], 
+        count_modified_update=counts_update['modified'],
+        count_missed_update=counts_update['missed'],
+
+        count_flagged_manual=counts_manual['flagged'],
+        count_modified_manual=counts_manual['modified'],
+        count_missed_manual=counts_manual['missed'],
+
+        # Counts (Unapproved Badges) - NEW VARIABLES
+        count_unapproved_new=count_unapproved_new,
+        count_unapproved_manual=count_unapproved_manual,
+        count_unapproved_update=count_unapproved_update,
+        card_total_assets=card_total_assets,
+        card_approved=card_approved,
+        card_pending_review=card_pending_review,
+        card_missed=card_missed,
+
+        active_tab=active_tab,
+        username=current_user.username,
+        building_name_map=_get_buildings_name_map(),
+        is_admin=is_admin(current_user),
+        can_edit=has_permission(current_user, "application", "reviewer_backflow", "editor"),
+    )
+
+
+@app.route("/review/<doc_id>")
+@login_required
+def review(doc_id):
+    json_path = os.path.join(JSON_DIR, f"{doc_id}.json")
+    if not os.path.exists(json_path):
+        return "Not found", 404
+
+    m = JSON_NAME_RE.match(f"{doc_id}.json")
+    if not m:
+        return "Bad ID", 400
+
+    qr, asset_type_mid, building = m.groups()
+    if asset_type_mid.upper() != "BF":
+        return "Not BF asset", 404
+    package_lock = _get_qr_package_lock(qr)
+    package_locked = bool(package_lock.get("locked"))
+    
+    location = get_location_for_qr(qr)
+
+    with open(json_path, 'r', encoding='utf-8') as f:
+        loaded = json.load(f)
+
+    data = loaded.get("structured_data", {}) or {}
+    data.setdefault("Asset Group", "")
+    data.setdefault("Attribute", "BackflowDevice")
+    data.setdefault("Application", "")
+    data.setdefault("UBC Tag", "")
+    # Auto-generate UBC Tag from Building if empty
+    if not data.get("UBC Tag"):
+        data["UBC Tag"] = _compute_ubc_tag(building)
+    data.setdefault("Approved", "")
+    data.setdefault("Diameter", "")
+    data.setdefault("Year", "")
+    data.setdefault("Technical Safety BC", "")
+
+    data = apply_dictionary_rules(data, asset_type="BF")
+
+    data["Description"] = _resolve_description(
+        data.get("Asset Group"),
+        data.get("UBC Tag"),
+        data.get("Application", ""),
+        data.get("Description")
+    )
+    avg_ai_conf, avg_ai_conf_display = _normalize_avg_ai_conf(_extract_avg_ai_conf(loaded))
+
+    images = {}
+    for tag in SEQ_SHOW:
+        filename = find_image(qr, building, "BF", tag)
+        images[tag] = {"exists": bool(filename), "url": url_for('serve_image', filename=filename) if filename else None}
+
+    asset_group_options = get_asset_group_options()
+    attribute_options   = get_attribute_options()
+    application_options = get_application_options()
+
+    # --- NEW: Calculate Pagination Index & Next Asset ---
+    process_param = request.args.get("process", "0")
+    filtered_data, _ = get_filtered_data_and_counts(request.args, process_param)
+    
+    total_count = len(filtered_data)
+    current_index = 0
+    ids = [i['doc_id'] for i in filtered_data]
+    
+    next_asset = None
+    
+    if doc_id in ids:
+        idx = ids.index(doc_id)
+        current_index = idx + 1
+        
+        if idx + 1 < len(filtered_data):
+            next_item = filtered_data[idx + 1]
+            
+            # Find ALL valid thumbnails for the next asset
+            next_images = []
+            next_qr = next_item.get('qr_code')
+            next_bld = next_item.get('building')
+            
+            # Map suffix tags to human readable labels
+            label_map = {
+                '-0': 'Asset Plate/Label',
+                '-1': 'Asset Plate/Label (Optional)',
+                '-2': 'Main Asset',
+                '-3': 'Extra Photo',
+            }
+            
+            # BF uses different tags: -0, -1, -2
+            # We use SEQ_CHECK for BF (or SEQ_SHOW if available)
+            # In data loaders above, it uses SEQ_CHECK = ['-0', '-1', '-2']
+            # And SEQ_SHOW = ['-0', '-1', '-2', '-3']
+            # Let's use SEQ_SHOW to be consistent with finding images
+            
+            for tag in SEQ_SHOW:
+                fn = find_image(next_qr, next_bld, "BF", tag)
+                if fn:
+                    next_images.append({
+                        "url": url_for('serve_image', filename=fn),
+                        "label": label_map.get(tag, tag)
+                    })
+            
+            next_asset = {
+                "qr_code": next_item.get('qr_code'),
+                "ubc_tag": next_item.get('UBC Asset Tag') or next_item.get('UBC Tag'),
+                "location": next_item.get('Location'),
+                "images": next_images
+            }
+    # ---------------------------------------
+
+    return render_template(
+        "review.html",
+        doc_id=doc_id,
+        qr_code=qr,
+        building=building,
+        location=location,
+        asset_type="BF",
+        data=data,
+        avg_ai_conf=avg_ai_conf,
+        avg_ai_conf_display=avg_ai_conf_display,
+        capture_info=_fetch_capture_info(qr, building, "BF"),
+        images=images,
+        asset_group_options=asset_group_options,
+        attribute_options=attribute_options,
+        application_options=application_options,
+        username=current_user.username,
+        asset_dictionary=get_asset_dictionary(),
+        current_index=current_index,
+        total_count=total_count,
+        next_asset=next_asset,
+        review_locked=(str(data.get("Approved", "") or "").strip() == "True" or package_locked),
+        package_locked=package_locked,
+        package_lock=package_lock,
+        package_lock_message=_package_lock_message(package_lock) if package_locked else "",
+    )
+
+
+@app.route("/review/<doc_id>", methods=["POST"])
+@login_required
+@require_permission("application", "reviewer_backflow", "editor")
+def save_review(doc_id):
+    json_path = os.path.join(JSON_DIR, f"{doc_id}.json")
+    if not os.path.exists(json_path):
+        return "Not found", 404
+
+    # --- Capture dashboard context & filtered order BEFORE mutating current record ---
+    dq = request.form.get("dashboard_query", "")
+    dashboard_query_string, saved_params = normalize_dashboard_query(dq)
+    next_url = url_for("index")
+    if dashboard_query_string:
+        next_url += f"?{dashboard_query_string}"
+
+    process_param = saved_params.get("process") or request.args.get("process", "0")
+    filter_args = {
+        "flagged": saved_params.get("flagged") or request.args.get("flagged"),
+        "modified": saved_params.get("modified") or request.args.get("modified"),
+        "missed": saved_params.get("missed") or request.args.get("missed"),
+        "conf_max": saved_params.get("conf_max") or request.args.get("conf_max"),
+        "building": saved_params.get("building") or request.args.get("building"),
+        "filter_building": saved_params.get("filter_building") or request.args.get("filter_building"),
+        "approved": saved_params.get("approved") or saved_params.get("filter_approved") or request.args.get("approved", ""),
+        "filter_approved": saved_params.get("filter_approved") or request.args.get("filter_approved"),
+        "filter_qr": saved_params.get("filter_qr") or request.args.get("filter_qr"),
+        "filter_tag": saved_params.get("filter_tag") or request.args.get("filter_tag"),
+        "filter_group": saved_params.get("filter_group") or request.args.get("filter_group"),
+    }
+
+    class FilterArgs:
+        def __init__(self, d):
+            self._d = d
+        def get(self, key, default=None):
+            return self._d.get(key, default)
+
+    filtered_before, _ = get_filtered_data_and_counts(FilterArgs(filter_args), process_param)
+    filtered_doc_ids = [item['doc_id'] for item in filtered_before]
+    current_index = filtered_doc_ids.index(doc_id) if doc_id in filtered_doc_ids else None
+
+    def _resolve_neighbor_doc(action_name):
+        """Return the next or previous doc_id within the active filter, even when
+        the current doc has just been filtered out (e.g., toggling Approved on a
+        Pending-only view via /toggle_approved). Recomputes against a broader
+        scope without the approved filter so the doc's position is known, then
+        picks the closest neighbor that still matches the live filter. An empty
+        string ('') disables the approved filter inside get_filtered_data_and_counts;
+        passing None would let it fall back to the Pending-only default."""
+        if action_name not in ("save_next", "save_prev"):
+            return None
+        if current_index is not None:
+            if action_name == "save_next" and current_index + 1 < len(filtered_doc_ids):
+                return filtered_doc_ids[current_index + 1]
+            if action_name == "save_prev" and current_index > 0:
+                return filtered_doc_ids[current_index - 1]
+            return None
+        broader_args = dict(filter_args)
+        broader_args["approved"] = ""
+        broader_args["filter_approved"] = ""
+        broader_data, _ = get_filtered_data_and_counts(FilterArgs(broader_args), process_param)
+        broader_ids = [item['doc_id'] for item in broader_data]
+        if doc_id not in broader_ids:
+            return None
+        bi = broader_ids.index(doc_id)
+        nav_set = set(filtered_doc_ids)
+        if action_name == "save_next":
+            for j in range(bi + 1, len(broader_ids)):
+                if broader_ids[j] in nav_set:
+                    return broader_ids[j]
+        else:
+            for j in range(bi - 1, -1, -1):
+                if broader_ids[j] in nav_set:
+                    return broader_ids[j]
+        return None
+    # ------------------------------------------------------------------------------
+
+    with open(json_path, "r", encoding="utf-8") as f:
+        json_data = json.load(f)
+
+    structured = json_data.get("structured_data", {})
+    if not isinstance(structured, dict):
+        structured = {}
+        json_data["structured_data"] = structured
+
+    action = request.form.get("action")
+    nav_action = request.form.get("_nav") or action
+    m = JSON_NAME_RE.match(f"{doc_id}.json")
+    if not m:
+        return "Bad ID", 400
+    qr, asset_type_mid, building = m.groups()
+    try:
+        package_lock = _get_qr_package_lock(qr, raise_on_error=True)
+    except Exception as exc:
+        flash(f"Could not verify SDI package status: {exc}", "danger")
+        return redirect(url_for("review", doc_id=doc_id, **saved_params))
+    if package_lock.get("locked"):
+        if nav_action in ("save_next", "save_prev"):
+            neighbor = _resolve_neighbor_doc(nav_action)
+            if neighbor:
+                return redirect(url_for("review", doc_id=neighbor, **saved_params))
+            return redirect(next_url)
+        flash(_package_lock_message(package_lock), "warning")
+        return redirect(url_for("review", doc_id=doc_id, **saved_params))
+
+    # The "save_toggle" action comes from the Pending/Approved pill: it submits
+    # the full form alongside the flipped Approved value so the user's pending
+    # edits land in the JSON. Bypass the approved-record early return so the
+    # merge below actually runs.
+    if str(structured.get("Approved", "") or "").strip() == "True" and action != "save_toggle":
+        neighbor = _resolve_neighbor_doc(action)
+        if neighbor:
+            return redirect(url_for("review", doc_id=neighbor, **saved_params))
+        return redirect(next_url)
+
+    structured.setdefault("Asset Group", "")
+    structured.setdefault("Attribute", "BackflowDevice")
+    structured.setdefault("Application", "")
+    structured.setdefault("UBC Tag", "")
+    structured.setdefault("Approved", "")
+    structured.setdefault("Flagged", "false")
+    structured.setdefault("Diameter", "")
+    structured.setdefault("Year", "")
+    structured.setdefault("Technical Safety BC", "")
+    structured.setdefault("Description", "")
+
+    # Auto-generate UBC Tag from Building if empty
+    if not structured.get("UBC Tag"):
+        structured["UBC Tag"] = _compute_ubc_tag(building)
+
+    structured = apply_dictionary_rules(structured, asset_type="BF")
+
+    # Track which fields were submitted by the human vs. filled by dictionary rules
+    human_submitted_keys: set[str] = set()
+    if "Flagged" in request.form:
+        human_submitted_keys.add("Flagged")
+        new_flagged = "true" if request.form.get("Flagged") == "on" else "false"
+        if structured.get("Flagged", "false") != new_flagged:
+            json_data["modified"] = True
+        structured["Flagged"] = new_flagged
+    else:
+        structured.setdefault("Flagged", "false")
+
+    for field in list(structured.keys()):
+        if field in ("Flagged", "Approved"):
+            continue
+        form_value = request.form.get(field, "")
+        if structured.get(field, "") != form_value:
+            json_data["modified"] = True
+        structured[field] = form_value
+        if field in request.form:
+            human_submitted_keys.add(field)
+
+    for field, form_value in request.form.items():
+        if field in ("Flagged", "dashboard_query", "_nav", "action", "new_qr_code"):
+            continue
+        if field not in structured:
+            structured[field] = form_value
+            json_data["modified"] = True
+        human_submitted_keys.add(field)
+
+    desc_form_value = str(request.form.get("Description", "") or "")
+    if structured.get("Description", "") != desc_form_value:
+        json_data["modified"] = True
+    structured["Description"] = desc_form_value
+
+    
+    resolved_desc = _resolve_description(
+        structured.get("Asset Group"),
+        structured.get("UBC Tag"),
+        structured.get("Application", ""),
+        structured.get("Description")
+    )
+    if structured.get("Description", "") != resolved_desc:
+        structured["Description"] = resolved_desc
+        json_data["modified"] = True
+
+    new_qr_raw = request.form.get("new_qr_code", "")
+    new_qr_clean = None
+    new_qr_error = None
+    if new_qr_raw:
+        candidate = _sanitize_qr_value(new_qr_raw)
+        if not qr.upper().startswith("T"):
+            new_qr_error = "QR replacement is only available for temporary codes."
+        elif not candidate:
+            new_qr_error = "Please enter a valid QR code using letters and numbers."
+        elif not re.match(r"^[A-Za-z0-9]+$", new_qr_raw.strip()):
+            new_qr_error = "Use only letters and numbers for the new QR code."
+        elif candidate.startswith("T"):
+            new_qr_error = "The final QR code cannot start with T."
+        elif candidate != qr and _qr_conflicts(candidate, building):
+            new_qr_error = f"QR code {candidate} already exists."
+        elif candidate != qr:
+            new_qr_clean = candidate
+            json_data["modified"] = True
+
+    target_qr = new_qr_clean or qr
+    json_data["qr_code"] = target_qr
+
+    with open(json_path, "w", encoding='utf-8') as f:
+        json.dump(json_data, f, ensure_ascii=False, indent=4)
+
+    # Per-field source map: SDI columns the human typed are 'human'; the rest
+    # (dictionary auto-fill, computed Description, etc.) are 'ai:dictionary'.
+    _BF_SDI_TO_FORM = {
+        "Manufacturer": "Manufacturer", "Model": "Model", "Serial": "Serial Number",
+        "UBC Tag": "UBC Asset Tag", "Asset Group": "Asset Group",
+        "Attribute": "Attribute", "Description": "Description",
+        "Diameter": "Diameter", "Year": "Year",
+        "Technical Safety BC": "Technical Safety BC",
+        "Approved": "Approved", "Flagged": "Flagged",
+        "Application": "Application",
+    }
+    audit_source_map_bf = {
+        col: ("human" if form_key in human_submitted_keys else "ai:dictionary")
+        for col, form_key in _BF_SDI_TO_FORM.items()
+    }
+    audit_source_map_bf["Avg_ai_conf"] = "ai:gpt-5.5"
+
+    if new_qr_error:
+        try:
+            upsert_sdi_dataset(
+                doc_id, structured,
+                avg_ai_conf=_extract_avg_ai_conf(json_data),
+                audit_source_map=audit_source_map_bf,
+                audit_description="POST /review (qr-replace error)",
+            )
+        except Exception as e:
+            print(f"[WARN] sdi_dataset sync failed on save for {doc_id}: {e}")
+        flash(new_qr_error, "danger")
+        return redirect(url_for("review", doc_id=doc_id))
+
+    if new_qr_clean:
+        new_doc_id = f"{new_qr_clean}_BF_{building}"
+        new_filename = f"{new_doc_id}.json"
+        new_path = os.path.join(JSON_DIR, new_filename)
+        if os.path.exists(new_path):
+            flash(f"QR code {new_qr_clean} is already linked to another record.", "danger")
+            try:
+                upsert_sdi_dataset(
+                    doc_id, structured,
+                    avg_ai_conf=_extract_avg_ai_conf(json_data),
+                    audit_source_map=audit_source_map_bf,
+                    audit_description="POST /review (qr-replace conflict)",
+                )
+            except Exception as e:
+                print(f"[WARN] sdi_dataset sync failed on save for {doc_id}: {e}")
+            return redirect(url_for("review", doc_id=doc_id))
+        try:
+            os.rename(json_path, new_path)
+            _update_processed_json_log_filename(f"{doc_id}.json", new_filename)
+            _rename_asset_images(qr, new_qr_clean, building)
+            _replace_qr_in_db(qr, new_qr_clean)
+            json_path = new_path
+            doc_id = new_doc_id
+            qr = new_qr_clean
+        except Exception as e:
+            flash(f"Could not move asset to the new QR code: {e}", "danger")
+            try:
+                upsert_sdi_dataset(
+                    doc_id, structured,
+                    avg_ai_conf=_extract_avg_ai_conf(json_data),
+                    audit_source_map=audit_source_map_bf,
+                    audit_description="POST /review (qr-replace failed)",
+                )
+            except Exception as ex:
+                print(f"[WARN] sdi_dataset sync failed on save for {doc_id}: {ex}")
+            return redirect(url_for("review", doc_id=doc_id))
+
+    try:
+        upsert_sdi_dataset(
+            doc_id, structured,
+            avg_ai_conf=_extract_avg_ai_conf(json_data),
+            audit_source_map=audit_source_map_bf,
+            audit_description="POST /review",
+        )
+    except Exception as e:
+        print(f"[WARN] sdi_dataset sync failed on save for {doc_id}: {e}")
+
+    nav = request.form.get("_nav") or action or "save"
+
+    # When the Pending pill submitted the form, return to the same review page
+    # so the lock/unlock state of the now-saved Approved value takes effect.
+    if action == "save_toggle":
+        return redirect(url_for("review", doc_id=doc_id, **saved_params))
+
+    neighbor = _resolve_neighbor_doc(nav)
+    if neighbor:
+        return redirect(url_for("review", doc_id=neighbor, **saved_params))
+
+    return redirect(next_url)
+
+
+@app.route("/toggle_approved/<doc_id>", methods=["POST"])
+@login_required
+@require_permission("application", "reviewer_backflow", "editor")
+def toggle_approved(doc_id):
+    json_path = os.path.join(JSON_DIR, f"{doc_id}.json")
+    if not os.path.exists(json_path):
+        return jsonify({"success": False, "error": "Not found"}), 404
+    parsed = parse_doc_id(doc_id)
+    if not parsed:
+        return jsonify({"success": False, "error": "Invalid ID"}), 400
+    qr, asset_type_mid, _building = parsed
+    try:
+        package_lock = _get_qr_package_lock(qr, raise_on_error=True)
+    except Exception as exc:
+        return _package_lock_check_failed_response(exc)
+    if package_lock.get("locked"):
+        return _package_lock_response(package_lock)
+
+    try:
+        with open(json_path, "r", encoding="utf-8") as f:
+            json_data = json.load(f)
+
+        structured = json_data.get("structured_data", {})
+        if not isinstance(structured, dict):
+            structured = {}
+            json_data["structured_data"] = structured
+
+        current = structured.get("Approved", "")
+        structured["Approved"] = "True" if current == "" else ""
+        json_data["structured_data"] = structured
+
+        with open(json_path, "w", encoding="utf-8") as f:
+            json.dump(json_data, f, ensure_ascii=False, indent=4)
+
+        if asset_type_mid.upper() == "BF":
+            upsert_approved_in_db(qr, structured["Approved"] == "True")
+
+        try:
+            upsert_sdi_dataset(
+                doc_id, structured,
+                avg_ai_conf=_extract_avg_ai_conf(json_data),
+                audit_source="human",
+                audit_description="POST /toggle_approved (BF)",
+            )
+        except Exception as e:
+            print(f"⚠️ sdi_dataset sync failed on toggle for {doc_id}: {e}")
+
+        return jsonify({"success": True, "new_value": structured["Approved"]})
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
+@app.route("/toggle_sdi/<doc_id>", methods=["POST"])
+@login_required
+@require_permission("application", "reviewer_backflow", "editor")
+def toggle_sdi(doc_id):
+    """
+    Toggles the 'Exclude SDI' status for the associated QR code.
+    Updates the 'sdi' column in the QR_codes database table.
+    """
+    m = JSON_NAME_RE.match(f"{doc_id}.json")
+    if not m:
+        return jsonify({"success": False, "error": "Invalid ID"}), 400
+    qr, _, _ = m.groups()
+    try:
+        package_lock = _get_qr_package_lock(qr, raise_on_error=True)
+    except Exception as exc:
+        return _package_lock_check_failed_response(exc)
+    if package_lock.get("locked"):
+        return _package_lock_response(package_lock)
+
+    try:
+        new_val = _db_toggle_qr_sdi(qr)
+
+        # Persist the Manual Entry flag into the JSON so it survives DB path mismatches
+        json_path = os.path.join(JSON_DIR, f"{doc_id}.json")
+        if os.path.exists(json_path):
+            with open(json_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            structured = data.get("structured_data")
+            if not isinstance(structured, dict):
+                structured = {}
+                data["structured_data"] = structured
+            structured["ExcludeSDI"] = 1 if new_val == 1 else 0
+            with open(json_path, "w", encoding="utf-8") as f:
+                json.dump(data, f, ensure_ascii=False, indent=4)
+
+        return jsonify({"success": True, "new_value": new_val})
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
+@app.route("/toggle_ai_status/<doc_id>", methods=["POST"])
+@login_required
+@require_permission("application", "reviewer_backflow", "editor")
+def toggle_ai_status(doc_id):
+    """
+    Toggles the 'ai_status' column in the QR_codes table.
+    Values: '0' -> '1', '1' -> '0'. Default '0'.
+    """
+    m = JSON_NAME_RE.match(f"{doc_id}.json")
+    if not m:
+        return jsonify({"success": False, "error": "Invalid ID"}), 400
+    qr, _, _ = m.groups()
+    try:
+        package_lock = _get_qr_package_lock(qr, raise_on_error=True)
+    except Exception as exc:
+        return _package_lock_check_failed_response(exc)
+    if package_lock.get("locked"):
+        return _package_lock_response(package_lock)
+
+    if not _connectable():
+        return jsonify({"success": False, "error": "Database not accessible"}), 500
+
+    try:
+        new_val = '0'
+        with sqlite3.connect(DB_PATH) as conn:
+            cur = conn.cursor()
+            
+            # 1. Ensure column exists
+            try:
+                cur.execute(f'ALTER TABLE "{QR_CODES_TABLE}" ADD COLUMN "ai_status" TEXT DEFAULT "0"')
+                conn.commit()
+            except sqlite3.OperationalError:
+                pass # Column likely exists
+
+            # 2. Get current value
+            cur.execute(f'SELECT "ai_status" FROM "{QR_CODES_TABLE}" WHERE "{QR_CODE_ID_COL}" = ?', (qr,))
+            row = cur.fetchone()
+            current = '0'
+            if row is not None:
+                current_raw = str(row[0] if row[0] is not None else "").strip()
+                if current_raw in ("1", "true", "True"):
+                    current = '1'
+            
+            # 3. Toggle
+            new_val = '1' if current == '0' else '0'
+
+            # 4. Upsert
+            cur.execute(f"""
+                INSERT INTO "{QR_CODES_TABLE}" ("{QR_CODE_ID_COL}", "ai_status")
+                VALUES (?, ?)
+                ON CONFLICT("{QR_CODE_ID_COL}") DO UPDATE SET
+                    "ai_status" = excluded."ai_status";
+            """, (qr, new_val))
+
+            if _audit_log_change and current != new_val:
+                try:
+                    _audit_log_change(
+                        conn,
+                        qr_code=qr,
+                        app_name="reviewer_bf",
+                        table_name=QR_CODES_TABLE,
+                        record_pk=qr,
+                        op_type="UPDATE",
+                        field_changes={"ai_status": (current, new_val)},
+                        source="system",
+                        description="POST /toggle_ai_status (BF)",
+                    )
+                except Exception as audit_exc:
+                    print(f"[audit] BF toggle_ai_status audit failed: {audit_exc}")
+
+            conn.commit()
+
+        return jsonify({"success": True, "new_value": new_val})
+
+    except Exception as e:
+        print(f"Error toggling AI Status: {e}")
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
+def _quote(name: str) -> str:
+    return f'"{name}"'.replace('""', '"')
+
+
+def _empty_qr_package_lock(qr: object = "") -> dict:
+    return {
+        "qr_code": str(qr or "").strip(),
+        "locked": False,
+        "source": "",
+        "source_label": "",
+        "package_id": "",
+        "package_date": "",
+        "package_time": "",
+    }
+
+
+def _package_lock_message(lock: dict | None = None) -> str:
+    lock = lock or {}
+    source_label = str(lock.get("source_label") or "SDI package").strip()
+    package_id = str(lock.get("package_id") or "").strip()
+    if package_id:
+        return f"This asset is already in {source_label} {package_id} and cannot be changed."
+    return "This asset is already in an SDI package and cannot be changed."
+
+
+def _get_qr_package_lock_map(qr_codes: list[str], *, raise_on_error: bool = False) -> dict[str, dict]:
+    cleaned_qrs = []
+    seen = set()
+    for qr in qr_codes or []:
+        qr_text = str(qr or "").strip()
+        if not qr_text or qr_text in seen:
+            continue
+        seen.add(qr_text)
+        cleaned_qrs.append(qr_text)
+
+    locks = {qr: _empty_qr_package_lock(qr) for qr in cleaned_qrs}
+    if not cleaned_qrs or not _connectable():
+        return locks
+
+    package_tables = (
+        (SDI_PRINT_OUT_TABLE, "active", "active SDI package"),
+        (SDI_ARCHIVE_TABLE, "archive", "archived SDI package"),
+    )
+    chunk_size = 500
+
+    try:
+        with sqlite3.connect(DB_PATH) as conn:
+            conn.row_factory = sqlite3.Row
+            cur = conn.cursor()
+            for table_name, source, source_label in package_tables:
+                cur.execute(
+                    "SELECT 1 FROM sqlite_master WHERE type='table' AND name=? LIMIT 1",
+                    (table_name,),
+                )
+                if not cur.fetchone():
+                    continue
+
+                cur.execute(f"PRAGMA table_info({_quote(table_name)})")
+                columns = {row["name"] for row in cur.fetchall()}
+                if "QR Code" not in columns:
+                    continue
+
+                package_id_expr = '"id_print_out"' if "id_print_out" in columns else "''"
+                package_date_expr = '"date"' if "date" in columns else "''"
+                package_time_expr = '"time"' if "time" in columns else "''"
+
+                for idx in range(0, len(cleaned_qrs), chunk_size):
+                    chunk = cleaned_qrs[idx:idx + chunk_size]
+                    placeholders = ",".join("?" for _ in chunk)
+                    query = f"""
+                        SELECT
+                            TRIM(COALESCE(CAST("QR Code" AS TEXT), '')) AS qr_code,
+                            {package_id_expr} AS package_id,
+                            {package_date_expr} AS package_date,
+                            {package_time_expr} AS package_time
+                        FROM {_quote(table_name)}
+                        WHERE TRIM(COALESCE(CAST("QR Code" AS TEXT), '')) IN ({placeholders})
+                    """
+                    cur.execute(query, chunk)
+                    for row in cur.fetchall():
+                        qr_value = str(row["qr_code"] or "").strip()
+                        if not qr_value or qr_value not in locks or locks[qr_value].get("locked"):
+                            continue
+                        locks[qr_value] = {
+                            "qr_code": qr_value,
+                            "locked": True,
+                            "source": source,
+                            "source_label": source_label,
+                            "package_id": str(row["package_id"] or "").strip(),
+                            "package_date": str(row["package_date"] or "").strip(),
+                            "package_time": str(row["package_time"] or "").strip(),
+                        }
+    except Exception as e:
+        if raise_on_error:
+            raise
+        print(f"[WARN] Failed to fetch SDI package locks: {e}")
+
+    return locks
+
+
+def _get_qr_package_lock(qr_code: object, *, raise_on_error: bool = False) -> dict:
+    qr_text = str(qr_code or "").strip()
+    if not qr_text:
+        return _empty_qr_package_lock(qr_text)
+    return _get_qr_package_lock_map([qr_text], raise_on_error=raise_on_error).get(qr_text, _empty_qr_package_lock(qr_text))
+
+
+def _attach_package_locks_to_items(items: list[dict]) -> None:
+    if not items:
+        return
+    locks = _get_qr_package_lock_map([item.get("qr_code") for item in items])
+    for item in items:
+        qr_value = str(item.get("qr_code") or "").strip()
+        lock = locks.get(qr_value, _empty_qr_package_lock(qr_value))
+        item["package_lock"] = lock
+        item["package_locked"] = bool(lock.get("locked"))
+        item["package_lock_source"] = lock.get("source", "")
+        item["package_lock_source_label"] = lock.get("source_label", "")
+        item["package_id"] = lock.get("package_id", "")
+        item["package_lock_message"] = _package_lock_message(lock) if lock.get("locked") else ""
+
+
+def _package_lock_response(lock: dict):
+    return jsonify({
+        "success": False,
+        "error": _package_lock_message(lock),
+        "package_locked": True,
+        "source": lock.get("source", ""),
+        "package_id": lock.get("package_id", ""),
+    }), 409
+
+
+def _package_lock_check_failed_response(exc: Exception):
+    return jsonify({
+        "success": False,
+        "error": f"Could not verify SDI package status: {exc}",
+    }), 500
+
+
+@app.route("/check_sdi/<qr_code>")
+@login_required
+def check_sdi(qr_code):
+    if not _connectable():
+        return jsonify({"error": "Database not accessible"}), 500
+
+    try:
+        package_lock = _get_qr_package_lock(qr_code, raise_on_error=True)
+        return jsonify({
+            "exists": bool(package_lock.get("locked")),
+            "source": package_lock.get("source", ""),
+            "package_id": package_lock.get("package_id", ""),
+        })
+    except sqlite3.OperationalError as e:
+        if "no such table" in str(e).lower():
+            return jsonify({"exists": False})
+        
+        print(f"!! DB Operational Error in /check_sdi (BF): {e}")
+        return jsonify({"error": f"Database query failed: {e}"}), 500
+    except Exception as e:
+        print(f"!! UNEXPECTED ERROR in /check_sdi (BF): {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+def _fetch_capture_meta_map(qr_codes: list[str]) -> dict:
+    """Returns {qr: {"user": str, "date": "YYYY-MM-DD", "hour": "HH:MM"}} for
+    the latest QR_code_assets entry per QR. Powers the Captured by / Date /
+    Hour columns in the Excel export."""
+    out: dict = {}
+    if not qr_codes or not _connectable():
+        return out
+    cleaned = [str(q).strip() for q in qr_codes if str(q or "").strip()]
+    if not cleaned:
+        return out
+    try:
+        with sqlite3.connect(DB_PATH) as conn:
+            cur = conn.cursor()
+            cur.execute("PRAGMA table_info(QR_code_assets)")
+            cols = [r[1] for r in cur.fetchall()]
+            if "user" not in cols or "date_hour" not in cols:
+                return out
+            chunk = 500
+            for i in range(0, len(cleaned), chunk):
+                part = cleaned[i:i + chunk]
+                placeholders = ",".join("?" for _ in part)
+                cur.execute(
+                    f"""SELECT SUBSTR(code_assets, 1, INSTR(code_assets || ' ', ' ') - 1) AS qr,
+                               user, date_hour, MAX(ID) AS latest_id
+                          FROM QR_code_assets
+                         WHERE user IS NOT NULL AND user != ''
+                           AND SUBSTR(code_assets, 1, INSTR(code_assets || ' ', ' ') - 1) IN ({placeholders})
+                         GROUP BY SUBSTR(code_assets, 1, INSTR(code_assets || ' ', ' ') - 1)""",
+                    part,
+                )
+                for qr, user, date_hour, _ in cur.fetchall():
+                    if not qr:
+                        continue
+                    stamp = (date_hour or "").strip()
+                    date_part, hour_part = "", ""
+                    if "T" in stamp:
+                        head, _, tail = stamp.partition("T")
+                        date_part = head
+                        hour_part = tail[:5]
+                    out[str(qr).strip()] = {
+                        "user": user or "",
+                        "date": date_part,
+                        "hour": hour_part,
+                    }
+    except Exception as e:
+        print(f"[WARN] _fetch_capture_meta_map failed: {e}")
+    return out
+
+
+@app.route("/export/review-xlsx", methods=["POST"])
+@login_required
+def export_review_xlsx():
+    """Export the currently visible rows of the active tab as a styled .xlsx."""
+    payload = request.get_json(silent=True) or {}
+    tab = (payload.get("tab") or "new").lower()
+    building = (payload.get("building") or "").strip()
+    qr_codes = [str(q).strip() for q in (payload.get("qr_codes") or []) if str(q or "").strip()]
+
+    process_target = {"new": "0", "update": "1", "manual": "2"}.get(tab, "0")
+    all_rows = load_json_items(process_target)
+    qr_set = set(qr_codes)
+    rows = [r for r in all_rows if str(r.get("qr_code") or "").strip() in qr_set] if qr_set else []
+    if building:
+        rows = [r for r in rows if r.get("building") == building]
+
+    meta = _fetch_capture_meta_map(qr_codes)
+    logo_path = str(BASE_DIR / "review_asset_templates" / "static" / "ubc-facilities_logo.jpg")
+    blob = excel_export.build_workbook(
+        process="BF",
+        tab=tab,
+        building=building,
+        rows=rows,
+        meta=meta,
+        process_title="Backflow",
+        logo_path=logo_path,
+    )
+    ts = datetime.now().strftime("%Y-%m-%d_%H%M")
+    bld = building or "all"
+    fname = f"Review_BF_{bld}_{ts}.xlsx"
+    return send_file(
+        BytesIO(blob),
+        as_attachment=True,
+        download_name=fname,
+        mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
+
+
+@app.route("/api/user-activity", methods=["GET", "POST"])
+@login_required
+def get_user_activity():
+    """Fetch user activity data filtered by QR codes from dashboard."""
+    if not _connectable():
+        return jsonify({"error": "Database not found"}), 404
+    
+    # Get QR codes filter from POST body
+    qr_filter = []
+    if request.method == "POST" and request.is_json:
+        data = request.get_json() or {}
+        qr_filter = data.get("qr_codes", [])
+    
+    try:
+        with sqlite3.connect(DB_PATH) as conn:
+            cursor = conn.cursor()
+            
+            # Check if required columns exist
+            cursor.execute("PRAGMA table_info(QR_code_assets)")
+            columns = [row[1] for row in cursor.fetchall()]
+            
+            if "user" not in columns or "date_hour" not in columns:
+                return jsonify({"error": "User tracking columns not available."}), 404
+            
+            # Build query based on whether we have QR filter
+            if qr_filter:
+                placeholders = ",".join(["?" for _ in qr_filter])
+                query = f"""
+                    SELECT 
+                        SUBSTR(code_assets, 1, INSTR(code_assets || ' ', ' ') - 1) as qr_code,
+                        user,
+                        date_hour,
+                        MAX(ID) as latest_id
+                    FROM QR_code_assets
+                    WHERE user IS NOT NULL AND user != ''
+                      AND SUBSTR(code_assets, 1, INSTR(code_assets || ' ', ' ') - 1) IN ({placeholders})
+                    GROUP BY SUBSTR(code_assets, 1, INSTR(code_assets || ' ', ' ') - 1)
+                    ORDER BY date_hour DESC
+                """
+                cursor.execute(query, qr_filter)
+                rows = cursor.fetchall()
+                
+                # Get unique users for dropdown (from filtered QRs only)
+                user_query = f"""
+                    SELECT DISTINCT user FROM QR_code_assets 
+                    WHERE user IS NOT NULL AND user != ''
+                      AND SUBSTR(code_assets, 1, INSTR(code_assets || ' ', ' ') - 1) IN ({placeholders})
+                    ORDER BY user
+                """
+                cursor.execute(user_query, qr_filter)
+            else:
+                # No filter - return all BF assets
+                cursor.execute("""
+                    SELECT 
+                        SUBSTR(code_assets, 1, INSTR(code_assets || ' ', ' ') - 1) as qr_code,
+                        user,
+                        date_hour,
+                        MAX(ID) as latest_id
+                    FROM QR_code_assets
+                    WHERE user IS NOT NULL AND user != ''
+                      AND (code_assets LIKE '% BF -%' OR code_assets LIKE '% BF %')
+                    GROUP BY SUBSTR(code_assets, 1, INSTR(code_assets || ' ', ' ') - 1)
+                    ORDER BY date_hour DESC
+                """)
+                rows = cursor.fetchall()
+                
+                cursor.execute("""
+                    SELECT DISTINCT user FROM QR_code_assets 
+                    WHERE user IS NOT NULL AND user != ''
+                      AND (code_assets LIKE '% BF -%' OR code_assets LIKE '% BF %')
+                    ORDER BY user
+                """)
+            
+            users = [row[0] for row in cursor.fetchall()]
+            
+            # Format response
+            activity_data = []
+            for row in rows:
+                date_part, time_part = "", ""
+                if row[2] and "T" in row[2]:
+                    parts = row[2].split("T")
+                    date_part = parts[0]
+                    time_part = parts[1][:5] if len(parts) > 1 else ""
+                
+                activity_data.append({
+                    "qr_code": row[0] or "",
+                    "user": row[1] or "",
+                    "date": date_part,
+                    "hour": time_part
+                })
+            
+            return jsonify({"data": activity_data, "users": users})
+            
+    except sqlite3.Error as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/images/<path:filename>")
+@login_required
+def serve_image(filename):
+    return send_from_directory(IMG_DIR, filename)
+
+@app.route('/logout')
+@login_required
+def logout():
+    from flask_login import logout_user
+    logout_user()
+    return redirect("https://dashboardprod.assetcap.facilities.ubc.ca/login")
+
+
+with app.app_context():
+    db.create_all()
+    ensure_user_access_table()
+
+
+if __name__ == "__main__":
+    app.run(host='0.0.0.0', port=5004, debug=True)

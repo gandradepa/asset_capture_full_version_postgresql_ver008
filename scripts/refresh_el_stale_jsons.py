@@ -1,0 +1,173 @@
+#!/usr/bin/env python3
+"""Bring 11 Category-A EL JSONs up to current schema so the EL extractor's
+``_existing_el_output_needs_rescore`` rule stops marking them stale and resetting
+``QR_codes.ai_status`` to 0 every cron tick.
+
+For each JSON:
+  - Back up to ``<path>.bak_<timestamp>``
+  - Set ``el_extraction_rule_version`` = 15
+  - Add ``Power Rating`` and ``Power Rating (UoM)`` to ``structured_data``
+    (empty strings if absent)
+
+After all JSONs are updated, take a SQLite backup of QR_codes.db and set
+``ai_status = 1`` for the same 11 QRs in QR_codes.
+
+Usage:
+  python3 refresh_el_stale_jsons.py --dry-run   # plan only
+  python3 refresh_el_stale_jsons.py             # apply
+"""
+from __future__ import annotations
+import argparse
+import glob
+import json
+import os
+import shutil
+import sqlite3
+import sys
+from datetime import datetime
+
+# Backend-agnostic DB layer (SQLite default; PostgreSQL when DB_BACKEND=postgres).
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import db as qrdb
+
+QRS = [
+    "0000184439", "0000184441", "0000184445",
+    "0000184478", "0000184479", "0000184480",
+    "0000184485", "0000184489", "0000184557",
+    "0000184558", "0000184865",
+]
+JSON_DIR = "/home/developer/Output_jason_api"
+DB = "/home/developer/asset_capture_app_dev/data/QR_codes.db"
+TARGET_RULE_VERSION = 15
+
+
+def find_el_jsons(qr: str):
+    return sorted(glob.glob(os.path.join(JSON_DIR, f"{qr}_EL_*.json")))
+
+
+def needs_update(payload):
+    """Return list of changes that would be applied."""
+    changes = []
+    try:
+        rv = int(payload.get("el_extraction_rule_version", 0) or 0)
+    except (TypeError, ValueError):
+        rv = 0
+    if rv != TARGET_RULE_VERSION:
+        changes.append(f"el_extraction_rule_version: {rv} -> {TARGET_RULE_VERSION}")
+    structured = payload.get("structured_data") or {}
+    if not isinstance(structured, dict):
+        changes.append("structured_data: replace non-dict with {}")
+        structured = {}
+    if "Power Rating" not in structured:
+        changes.append('structured_data["Power Rating"]: add ""')
+    if "Power Rating (UoM)" not in structured:
+        changes.append('structured_data["Power Rating (UoM)"]: add ""')
+    return changes
+
+
+def apply_update(payload) -> bool:
+    """Mutate payload in place. Returns True if anything changed."""
+    mutated = False
+    try:
+        rv = int(payload.get("el_extraction_rule_version", 0) or 0)
+    except (TypeError, ValueError):
+        rv = 0
+    if rv != TARGET_RULE_VERSION:
+        payload["el_extraction_rule_version"] = TARGET_RULE_VERSION
+        mutated = True
+    if not isinstance(payload.get("structured_data"), dict):
+        payload["structured_data"] = {}
+        mutated = True
+    structured = payload["structured_data"]
+    if "Power Rating" not in structured:
+        structured["Power Rating"] = ""
+        mutated = True
+    if "Power Rating (UoM)" not in structured:
+        structured["Power Rating (UoM)"] = ""
+        mutated = True
+    return mutated
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--dry-run", action="store_true")
+    args = ap.parse_args()
+    stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+
+    plans = []  # list of (path, changes)
+    missing = []
+    for qr in QRS:
+        matches = find_el_jsons(qr)
+        if not matches:
+            missing.append(qr)
+            continue
+        for path in matches:
+            with open(path, "r", encoding="utf-8") as f:
+                payload = json.load(f)
+            changes = needs_update(payload)
+            plans.append((qr, path, changes))
+
+    print(f"QRs to update:  {len(QRS)}")
+    print(f"JSON files matched: {len(plans)}")
+    if missing:
+        print(f"WARNING: no JSON found for: {missing}")
+    print()
+    for qr, path, changes in plans:
+        print(f"{qr}  {os.path.basename(path)}")
+        if not changes:
+            print("   already up-to-date")
+        else:
+            for c in changes:
+                print(f"   - {c}")
+    print()
+
+    if args.dry_run:
+        print("[DRY RUN] No changes applied.")
+        return 0
+
+    # Apply JSON updates with per-file backup
+    json_changed = 0
+    for qr, path, changes in plans:
+        backup_path = f"{path}.bak_{stamp}"
+        shutil.copy2(path, backup_path)
+        with open(path, "r", encoding="utf-8") as f:
+            payload = json.load(f)
+        if apply_update(payload):
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump(payload, f, ensure_ascii=False, indent=4)
+            json_changed += 1
+            print(f"  refreshed: {os.path.basename(path)}  (backup: {os.path.basename(backup_path)})")
+    print(f"\nJSON files updated: {json_changed}")
+
+    # DB update
+    if qrdb.is_postgres():
+        print("[WARN] PostgreSQL backend: SQLite-file backup skipped. "
+              "Take a pg_dump first if you need a restore point.")
+    else:
+        db_backup = DB.replace(".db", f".bak_{stamp}_refresh_el_stale_jsons.db")
+        shutil.copy2(DB, db_backup)
+        print(f"DB backed up to: {db_backup}")
+
+    con = qrdb.get_connection(sqlite_path=DB)
+    placeholders = ",".join(["?"] * len(QRS))
+    cur = con.execute(
+        f'UPDATE "QR_codes" SET ai_status = \'1\' WHERE "QR_code_ID" IN ({placeholders})',
+        QRS,
+    )
+    con.commit()
+    print(f"DB rows updated to ai_status=1: {cur.rowcount} (expected {len(QRS)})")
+
+    # Sanity: report current pending pool
+    after = con.execute(
+        'SELECT "QR_code_ID", ai_status FROM "QR_codes" '
+        "WHERE ai_status = '0' OR ai_status IS NULL OR ai_status = ''"
+    ).fetchall()
+    print(f"\nPending pool after refresh: {len(after)} row(s)")
+    for r in after:
+        print(f"   {r[0]} | ai_status={r[1]!r}")
+
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

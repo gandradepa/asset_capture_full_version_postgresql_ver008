@@ -1,0 +1,204 @@
+<!doctype html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0, viewport-fit=cover">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <title>{% block title %}UBC Asset Capture{% endblock %}</title>
+
+  <!-- Local Tailwind Runtime removed (replaced with custom CSS) -->
+
+  <!-- Mobile-First Custom Styles -->
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/styles.css') }}?v=20260707b">
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/ui-components.css') }}">
+
+  <link rel="icon" href="{{ url_for('static', filename='logos/ubc-facilities_logo.jpg') }}" type="image/jpeg">
+
+  <style>
+    /* Additional mobile optimizations */
+    body {
+      background-color: #f8fafc;
+      min-height: 100vh;
+      min-height: -webkit-fill-available;
+    }
+
+    .skip-link {
+      position: absolute;
+      top: -120px;
+      left: 12px;
+      z-index: 10000;
+      padding: 0.75rem 1rem;
+      background: #0f172a;
+      color: #fff;
+      border-radius: 0.5rem;
+      text-decoration: none;
+      font-weight: 600;
+      transition: top 0.2s ease;
+    }
+
+    .skip-link:focus {
+      top: 12px;
+    }
+
+    /* Header optimizations for mobile */
+    header .logo-img {
+      height: 40px;
+      width: auto;
+    }
+
+    @media (min-width: 640px) {
+      header .logo-img {
+        height: 50px;
+      }
+    }
+  </style>
+</head>
+
+<body class="text-gray-800">
+  <a href="#main-content" class="skip-link">Skip to content</a>
+  <div id="offline-banner" class="offline-banner hidden" role="status" aria-live="polite">
+    You are offline. Some features may be limited.
+  </div>
+
+  <header class="header-bar" style="padding-top: env(safe-area-inset-top, 0);">
+    <div class="container mx-auto px-4">
+      <div class="header-inner">
+        <div class="flex items-center gap-2">
+          <img src="{{ url_for('static', filename='logos/ubc-facilities_logo.jpg') }}" alt="UBC Facilities Logo"
+            class="logo-img">
+          <h1 class="text-base sm:text-lg font-semibold text-gray-800">Asset Capture</h1>
+        </div>
+
+        <div class="flex items-center gap-2 sm:gap-4">
+          {% block header_right_extra %}{% endblock %}
+
+          {% if current_user.is_authenticated %}
+          <div class="flex items-center gap-2 sm:gap-3 text-xs sm:text-sm">
+            <a href="{{ url_for('auth.change_password') }}" class="header-icon-btn"
+              title="Change Password" aria-label="Change Password">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <circle cx="8" cy="15" r="4"/>
+                <line x1="10.85" y1="12.15" x2="19" y2="4"/>
+                <line x1="18" y1="5" x2="20" y2="7"/>
+                <line x1="15" y1="8" x2="17" y2="10"/>
+              </svg>
+            </a>
+            <a href="{{ url_for('auth.logout') }}"
+              class="btn-secondary text-white py-1.5 px-2 sm:px-3 rounded text-xs sm:text-sm font-semibold"
+              style="min-height: 36px;">Logout</a>
+          </div>
+          {% endif %}
+        </div>
+
+      </div>
+    </div>
+  </header>
+
+  {% if current_user.is_authenticated %}
+  <div class="welcome-strip">
+    <div class="container mx-auto px-4">
+      Welcome, <strong>{{ username or 'User' }}</strong>
+    </div>
+  </div>
+  {% endif %}
+
+  <main id="main-content" class="container mx-auto px-4 py-6 sm:py-8">
+    <div class="max-w-2xl mx-auto">
+      {% block content %}{% endblock %}
+    </div>
+  </main>
+
+  <!-- Toast Container -->
+  <div id="toast-container" class="toast-container" aria-live="polite" aria-atomic="true"></div>
+
+  <!-- Global Toast Utility -->
+  <script>
+    window.showToast = function (message, type = 'info', duration = 4000) {
+      const container = document.getElementById('toast-container');
+      if (!container) return;
+
+      const toast = document.createElement('div');
+      toast.className = 'toast toast--' + type;
+      toast.innerHTML = `
+        <div class="toast__content">
+          <div class="toast__message">${message}</div>
+        </div>
+        <button type="button" class="toast__close" aria-label="Dismiss">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+            <line x1="18" y1="6" x2="6" y2="18"></line>
+            <line x1="6" y1="6" x2="18" y2="18"></line>
+          </svg>
+        </button>
+      `;
+
+      const closeBtn = toast.querySelector('.toast__close');
+      closeBtn.addEventListener('click', function () {
+        toast.classList.add('toast--exiting');
+        setTimeout(function () { toast.remove(); }, 200);
+      });
+
+      container.appendChild(toast);
+
+      if (duration > 0) {
+        setTimeout(function () {
+          if (toast.parentNode) {
+            toast.classList.add('toast--exiting');
+            setTimeout(function () { toast.remove(); }, 200);
+          }
+        }, duration);
+      }
+    };
+
+    (function () {
+      const offlineBanner = document.getElementById('offline-banner');
+      const flashMessages = {{ get_flashed_messages(with_categories = true) | tojson
+    }};
+    const typeMap = {
+      danger: 'error',
+      error: 'error',
+      warning: 'warning',
+      success: 'success',
+      info: 'info'
+    };
+
+    flashMessages.forEach(function (entry) {
+      const category = entry[0] || 'info';
+      const message = entry[1] || '';
+      if (message) {
+        window.showToast(message, typeMap[category] || 'info');
+      }
+    });
+
+    function syncOnlineState() {
+      const isOffline = !navigator.onLine;
+      if (!offlineBanner) return;
+      offlineBanner.classList.toggle('hidden', !isOffline);
+      offlineBanner.classList.toggle('is-visible', isOffline);
+    }
+
+    window.addEventListener('online', function () {
+      syncOnlineState();
+      window.showToast('Connection restored.', 'success', 2500);
+    });
+    window.addEventListener('offline', function () {
+      syncOnlineState();
+      window.showToast('You are offline. Some features are unavailable.', 'warning', 3500);
+    });
+    syncOnlineState();
+
+    // Normalize decorative icon accessibility for icon SVGs in interactive controls.
+    document.querySelectorAll('button svg, a svg, [role=\"button\"] svg').forEach(function (svg) {
+      if (!svg.hasAttribute('aria-hidden') && !svg.hasAttribute('aria-label') && !svg.hasAttribute('role')) {
+        svg.setAttribute('aria-hidden', 'true');
+      }
+      svg.setAttribute('focusable', 'false');
+    });
+    }) ();
+  </script>
+
+</body>
+
+</html>

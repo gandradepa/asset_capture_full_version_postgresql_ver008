@@ -1,0 +1,1224 @@
+﻿<!doctype html>
+<html lang="en">
+
+<head>
+  <meta charset="utf-8" />
+  <title>{{ title }}</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+
+  <!-- Bootstrap 5 CSS -->
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet" />
+  <!-- Bootstrap Icons -->
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css" rel="stylesheet">
+  <!-- DataTables CSS -->
+  <link href="https://cdn.datatables.net/1.13.6/css/dataTables.bootstrap5.min.css" rel="stylesheet" />
+
+  <!-- Custom CSS (Make sure style.css contains the updates above) -->
+  <link href="{{ url_for('static', filename='style.css', v=36) }}" rel="stylesheet" />
+
+  <style>
+    /* Dashboard specific overrides */
+    .dataTables_wrapper .row:first-child {
+      margin-bottom: 1rem !important;
+      padding-bottom: 1rem;
+      border-bottom: 1px dashed #e0e0e0;
+    }
+
+    /* Tabs Styling modernization */
+    .nav-tabs {
+      border-bottom: 2px solid #e9ecef;
+      gap: 5px;
+    }
+
+    .nav-tabs .nav-link {
+      border: none;
+      border-radius: 8px 8px 0 0;
+      color: #6c757d;
+      font-weight: 500;
+      padding: 0.75rem 1.25rem;
+      transition: all 0.2s ease;
+    }
+
+    .nav-tabs .nav-link:hover {
+      background-color: #f8f9fa;
+      color: var(--ubc-blue);
+    }
+
+    .nav-tabs .nav-link.active {
+      color: var(--ubc-blue);
+      background-color: transparent;
+      border-bottom: 3px solid var(--ubc-blue);
+      font-weight: 700;
+    }
+
+    /* User Nav styling */
+    .user-nav {
+      background-color: #fff;
+      border-bottom: 1px solid #f0f0f0;
+      font-size: 0.9rem;
+    }
+
+    .retrieve-modal-dialog {
+      max-width: min(780px, 96vw);
+    }
+
+    .retrieve-archive-list {
+      max-height: 250px;
+      overflow-x: auto;
+      overflow-y: auto;
+    }
+
+    .retrieve-archive-option {
+      display: flex;
+      align-items: flex-start;
+      gap: 0.5rem;
+      width: max-content;
+      min-width: 100%;
+      padding-left: 0;
+    }
+
+    .retrieve-archive-option .form-check-input {
+      flex: 0 0 auto;
+      float: none;
+      margin: 0.2rem 0 0 0;
+    }
+
+    .retrieve-archive-option .form-check-label {
+      flex: 0 0 auto;
+      white-space: nowrap;
+      min-width: max-content;
+      margin: 0;
+    }
+
+    /* ─── Embedded mode (iframe inside central dashboard) ─── */
+    body.embedded-mode .user-nav,
+    body.embedded-mode .ubc-navbar,
+    body.embedded-mode .ubc-top-strip { display: none !important; }
+  </style>
+    {% include "_shell.html" %}
+</head>
+
+<body class="ubc-body {% if g.embedded %}embedded-mode{% endif %}">
+  {% if not g.embedded %}
+  <div class="ubc-top-strip"></div>
+  {% endif %}
+
+  <!-- User Nav (Login/Logout) -->
+  {% if not g.embedded %}
+  <nav class="user-nav py-2">
+    <div class="container-fluid d-flex justify-content-end">
+      {% if current_user.is_authenticated %}
+      <div class="dropdown">
+        <button class="btn btn-sm btn-light dropdown-toggle bg-transparent border-0" type="button"
+          data-bs-toggle="dropdown" aria-expanded="false">
+          <i class="bi bi-person-circle text-primary opacity-75 me-1"></i> <span class="text-secondary">Welcome,</span>
+          <strong>{{ username }}</strong>
+        </button>
+        <ul class="dropdown-menu dropdown-menu-end shadow border-0">
+          <li><a class="dropdown-item" href="{{ url_for('main.change_password') }}"><i class="bi bi-key me-2"></i>Change
+              Password</a></li>
+          <li>
+            <hr class="dropdown-divider">
+          </li>
+          <li><a class="dropdown-item text-danger" href="{{ url_for('auth.logout') }}"><i
+                class="bi bi-box-arrow-right me-2"></i>Logout</a></li>
+        </ul>
+      </div>
+      {% endif %}
+    </div>
+  </nav>
+  {% endif %}
+
+  <!-- Modern Brand Header -->
+  {% if not g.embedded %}
+  <header class="ubc-navbar sticky-top">
+    <div class="container-fluid">
+      <div class="ubc-brandbar">
+        <!-- Main UBC Logo -->
+        <a href="https://ubc.ca" target="_blank">
+          <img src="{{ url_for('static', filename='logos/' + logo_main_name) }}"
+            alt="The University of British Columbia" class="ubc-logo" />
+        </a>
+
+        <!-- Application Title (Responsive Font) -->
+        <h1 class="ubc-brand mb-0">{{ title }}</h1>
+
+        <!-- Facilities Logo -->
+        <div class="d-flex align-items-center">
+          <img src="{{ url_for('static', filename='logos/' + logo_fac_name) }}" alt="UBC Facilities"
+            class="ubc-facilities-logo" />
+        </div>
+      </div>
+    </div>
+  </header>
+  {% endif %}
+
+  <!-- Flash Messages Area -->
+  <div class="container-fluid mt-3">
+    {% with messages = get_flashed_messages(with_categories=true) %}
+    {% if messages %}
+    {% for category, message in messages %}
+    {% if category == "stats_popup" %}
+    <div class="validation-summary-fallback d-none" data-message='{{ message|tojson }}'></div>
+    {% else %}
+    <!-- Auto-handling JS confirmation messages -->
+    <div
+      class="alert alert-{{ category }} shadow-sm border-0 py-3 my-2 d-flex align-items-center rounded-3 {% if category == 'confirmation' %}alert-confirmation{% elif category == 'planon_confirmation' %}alert-planon_confirmation{% endif %}"
+      role="alert">
+      <i class="bi bi-info-circle-fill me-2 fs-5"></i>
+      <div>{{ message }}</div>
+    </div>
+    {% endif %}
+    {% endfor %}
+    {% endif %}
+    {% endwith %}
+  </div>
+
+  <main class="container-fluid my-4">
+
+    <!-- Building Filter -->
+    <div class="row mb-4">
+      <div class="col-md-5 col-lg-4 col-xl-3">
+        <form id="buildingFilterForm" action="{{ url_for('main.dashboard') }}" method="GET">
+          <div class="form-group">
+            <label for="building-select" class="form-label text-uppercase text-secondary small fw-bold ms-1">Filter by
+              Building</label>
+            <div class="input-group">
+              <span class="input-group-text bg-white border-end-0 text-muted"><i class="bi bi-buildings"></i></span>
+              <select name="building_code" id="building-select" class="form-select border-start-0 ps-0 shadow-sm">
+                <option value="">-- Select a building --</option>
+                {% for building in all_buildings %}
+                <option value="{{ building.Code }}" {% if building.Code|string==selected_building %}selected{% endif %}>
+                  {{ building.Name }}
+                </option>
+                {% endfor %}
+              </select>
+            </div>
+          </div>
+        </form>
+      </div>
+      <div class="col-md-auto d-flex align-items-end mt-3 mt-md-0">
+        <button type="button" class="btn btn-info text-white rounded-pill shadow-sm" data-bs-toggle="modal"
+          data-bs-target="#retrieveModal">
+          <i class="bi bi-clock-history me-1"></i> Retrieve Archives
+        </button>
+      </div>
+    </div>
+
+    {% if requires_building %}
+    <!-- No building selected — block the workspace until the user picks one. -->
+    <div class="card shadow-sm border-0 mt-3">
+      <div class="card-body text-center py-5">
+        <i class="bi bi-buildings text-secondary" style="font-size: 3rem;"></i>
+        <h4 class="mt-3 mb-1">Select a Building to Continue</h4>
+        <p class="text-muted mb-0">Pick a building from the filter above to load the SDI workspace and unlock package, archive, and Planon export actions.</p>
+      </div>
+    </div>
+    {% else %}
+    <!-- Dashboard Tabs -->
+    <ul class="nav nav-tabs mb-0 border-0 ps-2" id="assetTabs" role="tablist">
+      <li class="nav-item" role="presentation">
+        <button class="nav-link active" id="unpackaged-tab" data-bs-toggle="tab"
+          data-bs-target="#unpackaged-assets-pane" type="button" role="tab" aria-controls="unpackaged-assets-pane"
+          aria-selected="true"><i class="bi bi-box-open me-2"></i>Unpackaged Assets</button>
+      </li>
+      <li class="nav-item" role="presentation">
+        <button class="nav-link" id="packaged-tab" data-bs-toggle="tab" data-bs-target="#packaged-assets-pane"
+          type="button" role="tab" aria-controls="packaged-assets-pane" aria-selected="false"><i
+            class="bi bi-box-seam-fill me-2"></i>Packaged Assets</button>
+      </li>
+      <li class="nav-item" role="presentation">
+        <button class="nav-link" id="validation-log-tab" data-bs-toggle="tab" data-bs-target="#validation-log-pane"
+          type="button" role="tab" aria-controls="validation-log-pane" aria-selected="false"><i
+            class="bi bi-clipboard-check me-2"></i>Validation Log</button>
+      </li>
+    </ul>
+
+    <!-- Tab Content Area -->
+    <div class="tab-content" id="assetTabsContent">
+
+      <!-- Unpackaged Assets Tab -->
+      <div class="tab-pane fade show active" id="unpackaged-assets-pane" role="tabpanel"
+        aria-labelledby="unpackaged-tab">
+        <div class="card shadow-sm border-0" style="border-top-left-radius: 0 !important;">
+          <!-- Remove radius on top left to merge with tab -->
+
+          <div class="card-header d-flex justify-content-end align-items-center">
+            <form id="exportForm" action="{{ url_for('main.export_to_sdi') }}" method="POST" class="m-0 tab-aware-form">
+              <input type="hidden" name="building_code" value="{{ selected_building }}">
+              <button id="exportButton" type="submit" class="btn ubc-btn text-white">
+                <i class="bi bi-file-earmark-plus me-1"></i> Create SDI Package
+              </button>
+            </form>
+          </div>
+
+          <div class="card-body">
+            <div class="table-responsive">
+              <table id="unpackagedAssetsTable" class="table table-hover align-middle w-100 display nowrap"
+                width="100%">
+                <thead>
+                  <tr>
+                    {% for c in columns %}
+                    <th class="text-nowrap {% if c == 'Floor Code' %}floor-code-col{% endif %}">{{ c }}</th>
+                    {% endfor %}
+                  </tr>
+                </thead>
+                <tbody>
+                  {% for r in unpackaged_rows %}
+                  <tr>
+                    {% for c in columns %}
+                    <td class="text-nowrap {% if c == 'Floor Code' %}floor-code-col{% endif %}">{{ r.get(c, "") }}</td>
+                    {% endfor %}
+                  </tr>
+                  {% endfor %}
+                </tbody>
+              </table>
+            </div>
+            <p class="mt-3 text-muted small ms-2">Total rows: {{ unpackaged_rows|length }}</p>
+          </div>
+        </div>
+      </div>
+
+      <!-- Packaged Assets Tab -->
+      <div class="tab-pane fade" id="packaged-assets-pane" role="tabpanel" aria-labelledby="packaged-tab">
+        <!-- Actions Toolbar for Packaged Assets -->
+        <div class="bg-white p-3 border-bottom border-start border-end rounded-bottom mb-3 shadow-sm"
+          style="border-top: none; border-top-left-radius: 0;">
+          <div class="row align-items-end g-3">
+            <div class="col-lg-6">
+              <form id="excludePackageForm" action="{{ url_for('main.exclude_package') }}" method="POST"
+                class="tab-aware-form w-100">
+                <label for="sdi-control-select" class="form-label text-uppercase text-secondary small fw-bold">Package
+                  Actions</label>
+                <div class="d-flex flex-wrap gap-2">
+                  <div class="input-group sdi-control-group"
+                    style="width: 20.736%; max-width: 20.736%; min-width: 250px; flex: 0 0 20.736%;">
+                    <span class="input-group-text bg-white"><i class="bi bi-upc-scan"></i></span>
+                    <select id="sdi-control-select" name="sdi_control_id" class="form-select">
+                      <option value="">-- Select Print Control --</option>
+                      {% for control_id in sdi_print_controls %}
+                      <option value="{{ control_id }}">{{ control_id }}</option>
+                      {% endfor %}
+                    </select>
+                  </div>
+                  <button type="submit" class="btn btn-outline-danger" title="Return to unpackaged">
+                    <i class="bi bi-x-circle me-1"></i> Exclude
+                  </button>
+                  <div class="vr mx-2"></div>
+                  <button type="submit" formaction="{{ url_for('main.move_to_archive') }}"
+                    class="btn btn-outline-secondary" data-bs-toggle="tooltip" data-bs-placement="top"
+                    title="Archive only after all package rows have been exported to Planon">
+                    <i class="bi bi-archive me-1"></i> Archive
+                  </button>
+                  <button type="button" class="btn btn-info text-white rounded-pill" data-bs-toggle="modal"
+                    data-bs-target="#retrieveModal">
+                    <i class="bi bi-clock-history me-1"></i> Retrieve
+                  </button>
+                </div>
+                <input type="hidden" name="building_code" value="{{ selected_building }}">
+              </form>
+            </div>
+          </div>
+        </div>
+
+        <div class="card shadow-sm border-0">
+          <div class="card-header d-flex justify-content-between align-items-center bg-transparent">
+            <h5 class="m-0 fs-6 text-muted fw-bold">Packaged Data Preview</h5>
+            <form id="planonExportForm" action="{{ url_for('main.export_to_planon') }}" method="POST"
+              class="m-0 tab-aware-form">
+              <input type="hidden" name="building_code" value="{{ selected_building }}">
+              <input type="hidden" id="planon-sdi-control-id" name="sdi_control_id" value="">
+              <button type="submit" class="btn ubc-btn text-white">
+                Export to Planon <i class="bi bi-box-arrow-right ms-1"></i>
+              </button>
+            </form>
+          </div>
+          <div class="card-body">
+            <div class="table-responsive">
+              <table id="packagedAssetsTable" class="table table-hover align-middle w-100 display nowrap" width="100%">
+                <thead>
+                  <tr>
+                    {% for c in columns %}
+                    <th class="text-nowrap {% if c == 'Floor Code' %}floor-code-col{% endif %}">{{ c }}</th>
+                    {% endfor %}
+                  </tr>
+                </thead>
+                <tbody>
+                  {% for r in packaged_rows %}
+                  <tr>
+                    {% for c in columns %}
+                    <td class="text-nowrap {% if c == 'Floor Code' %}floor-code-col{% endif %}">{{ r.get(c, "") }}</td>
+                    {% endfor %}
+                  </tr>
+                  {% endfor %}
+                </tbody>
+              </table>
+            </div>
+            <p class="mt-3 text-muted small ms-2">Total rows: {{ packaged_rows|length }}</p>
+          </div>
+        </div>
+      </div>
+
+      <!-- Validation Log Tab -->
+      <div class="tab-pane fade" id="validation-log-pane" role="tabpanel" aria-labelledby="validation-log-tab">
+        <div class="card shadow-sm border-0">
+          <div class="card-header bg-transparent">
+            <div class="row align-items-center g-3">
+              <div class="col-md-6">
+                <label for="validation-log-select" class="form-label text-uppercase text-secondary small fw-bold">Select
+                  Validation Log</label>
+                <div class="input-group">
+                  <span class="input-group-text bg-white"><i class="bi bi-file-earmark-text"></i></span>
+                  <select id="validation-log-select" class="form-select">
+                    <option value="">-- Select a Validation Log --</option>
+                  </select>
+                </div>
+              </div>
+              <div class="col-md-6">
+                <div class="d-flex gap-2 h-100 align-items-end">
+                  <div class="card border-danger flex-fill">
+                    <div class="card-body p-2 text-center">
+                      <div class="text-muted small">Total Errors</div>
+                      <div class="fs-4 fw-bold text-danger" id="log-total-errors">0</div>
+                    </div>
+                  </div>
+                  <div class="card border-warning flex-fill">
+                    <div class="card-body p-2 text-center">
+                      <div class="text-muted small">Affected Rows</div>
+                      <div class="fs-4 fw-bold text-warning" id="log-affected-rows">0</div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="card-body">
+            <div id="validation-log-content">
+              <div class="text-center text-muted py-5">
+                <i class="bi bi-clipboard-data fs-1 d-block mb-3 opacity-25"></i>
+                <p>Select a validation log to view error details</p>
+              </div>
+            </div>
+            <div id="validation-log-table-container" class="d-none">
+              <div class="table-responsive">
+                <table id="validationLogTable" class="table table-hover align-middle w-100 display nowrap" width="100%">
+                  <thead>
+                    <tr>
+                      <th class="text-nowrap">Row</th>
+                      <th class="text-nowrap">Column</th>
+                      <th class="text-nowrap">Value</th>
+                      <th class="text-nowrap">Actual Type</th>
+                      <th class="text-nowrap">Issue</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    {% endif %}
+  </main>
+
+  <!-- Modal: Retrieve Archived Packages -->
+  <div class="modal fade" id="retrieveModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered retrieve-modal-dialog">
+      <div class="modal-content border-0 shadow-lg" style="border-radius: 16px;">
+        <div class="modal-header border-0 pb-0">
+          <h5 class="modal-title fw-bold text-dark"><i
+              class="bi bi-arrow-counterclockwise text-primary me-2"></i>Retrieve Archives</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+        </div>
+        <form action="{{ url_for('main.retrieve_from_archive') }}" method="POST" class="tab-aware-form">
+          <div class="modal-body">
+            <p class="text-muted small mb-3">Select one or more packages to restore to the active list.</p>
+
+            <div class="input-group mb-3">
+              <span class="input-group-text bg-white"><i class="bi bi-search"></i></span>
+              <input type="search" id="retrieve-package-search" class="form-control"
+                placeholder="Search package, building, date, or asset type" aria-label="Search archived packages">
+            </div>
+
+            <div class="border rounded-3 p-3 bg-light retrieve-archive-list">
+              {% if archived_packages %}
+              {% for pkg in archived_packages %}
+              <div class="form-check form-check-custom mb-2 retrieve-archive-option"
+                data-search="{{ (pkg.id_print_out ~ ' ' ~ pkg.building_code ~ ' ' ~ pkg.package_date ~ ' ' ~ pkg.asset_types)|e }}">
+                <input class="form-check-input" type="checkbox" name="package_ids" value="{{ pkg.id_print_out }}"
+                  id="pkg_{{ loop.index }}" style="cursor: pointer;">
+                <label class="form-check-label" for="pkg_{{ loop.index }}" style="cursor: pointer;">
+                  {{ pkg.display_label }}
+                </label>
+              </div>
+              {% endfor %}
+              <div id="retrieve-no-matches" class="text-center text-muted py-4 d-none">
+                <i class="bi bi-search fs-1 d-block mb-2 opacity-25"></i>
+                <span>No archived packages match that search.</span>
+              </div>
+              {% else %}
+              <div class="text-center text-muted py-4">
+                <i class="bi bi-inbox fs-1 d-block mb-2 opacity-25"></i>
+                <span>No archived packages found.</span>
+              </div>
+              {% endif %}
+            </div>
+            <input type="hidden" name="building_code" value="{{ selected_building }}">
+          </div>
+          <div class="modal-footer border-0 pt-0">
+            <button type="button" class="btn btn-light rounded-pill px-4" data-bs-dismiss="modal">Cancel</button>
+            <button type="submit" class="btn ubc-btn text-white rounded-pill px-4" {% if not archived_packages
+              %}disabled{% endif %}>Restore</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal: Validation Summary -->
+  <div class="modal fade" id="validationSummaryModal" tabindex="-1" aria-labelledby="validationSummaryLabel"
+    aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered modal-lg">
+      <div class="modal-content validation-modal">
+        <div class="modal-header">
+          <h5 class="modal-title" id="validationSummaryLabel">
+            <i class="bi bi-shield-check me-2"></i> Validation Summary
+          </h5>
+          <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+        </div>
+        <div class="modal-body">
+          <div class="validation-summary-grid">
+
+            <!-- Card: Total -->
+            <div class="validation-summary-card card-total">
+              <div class="validation-summary-label">
+                <i class="bi bi-table stat-icon text-primary"></i> Total Rows
+              </div>
+              <div class="validation-summary-value" id="summary-total-rows">0</div>
+            </div>
+
+            <!-- Card: Correct -->
+            <div class="validation-summary-card card-correct">
+              <div class="validation-summary-label">
+                <i class="bi bi-check-circle-fill stat-icon text-success"></i> Correct
+              </div>
+              <div class="validation-summary-value text-success" id="summary-total-correct">0</div>
+            </div>
+
+            <!-- Card: Issues -->
+            <div class="validation-summary-card card-wrong">
+              <div class="validation-summary-label">
+                <i class="bi bi-exclamation-triangle-fill stat-icon text-danger"></i> Issues
+              </div>
+              <div class="validation-summary-value text-danger" id="summary-total-wrong">0</div>
+            </div>
+
+            <!-- Card: Accuracy -->
+            <div class="validation-summary-card card-percent">
+              <div class="validation-summary-label">
+                <i class="bi bi-pie-chart-fill stat-icon" style="color:#8b5cf6;"></i> Accuracy
+              </div>
+              <div class="validation-summary-value" id="summary-pct-correct">0%</div>
+            </div>
+          </div>
+
+          <div class="validation-summary-progress">
+            <div class="d-flex justify-content-between align-items-center mb-2">
+              <span class="validation-summary-caption">Overall Quality Score</span>
+              <span class="badge" id="summary-score-badge">0%</span>
+            </div>
+            <div class="progress validation-progress">
+              <div class="progress-bar progress-bar-striped progress-bar-animated" id="summary-progress-bar"
+                role="progressbar" style="width: 0%"></div>
+            </div>
+
+            <div class="validation-summary-message" id="summary-message">
+              Ready for validation.
+            </div>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn ubc-btn text-white px-4 py-2 rounded-pill shadow-sm"
+            data-bs-dismiss="modal">Close</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal: Inline alert (replaces native alert() so it also works inside the unified Dashboard iframe) -->
+  <div class="modal fade" id="sdiAlertModal" tabindex="-1" aria-labelledby="sdiAlertModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+      <div class="modal-content border-0 shadow-lg" style="border-radius: 14px;">
+        <div class="modal-header border-0 pb-0 align-items-center">
+          <span id="sdiAlertIcon" class="me-2" style="font-size: 1.6rem; line-height: 1;">
+            <i class="bi bi-info-circle text-primary"></i>
+          </span>
+          <h5 class="modal-title fw-semibold mb-0" id="sdiAlertModalLabel">Notice</h5>
+          <button type="button" class="btn-close ms-auto" data-bs-dismiss="modal" aria-label="Close"></button>
+        </div>
+        <div class="modal-body pt-2">
+          <p id="sdiAlertMessage" class="mb-0 text-secondary" style="white-space: pre-wrap;"></p>
+        </div>
+        <div class="modal-footer border-0 pt-0">
+          <button type="button" id="sdiAlertOk" class="btn btn-primary rounded-pill px-4" data-bs-dismiss="modal">OK</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal: Inline confirm (replaces native confirm() so it also works inside the unified Dashboard iframe) -->
+  <div class="modal fade" id="sdiConfirmModal" tabindex="-1" aria-labelledby="sdiConfirmModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered modal-dialog-scrollable">
+      <div class="modal-content border-0 shadow-lg" style="border-radius: 14px;">
+        <div class="modal-header border-0 pb-0 align-items-center">
+          <span id="sdiConfirmIcon" class="me-2" style="font-size: 1.6rem; line-height: 1;">
+            <i class="bi bi-exclamation-triangle-fill text-warning"></i>
+          </span>
+          <h5 class="modal-title fw-semibold mb-0" id="sdiConfirmModalLabel">Confirm</h5>
+          <button type="button" class="btn-close ms-auto" data-bs-dismiss="modal" aria-label="Close"></button>
+        </div>
+        <div class="modal-body pt-2">
+          <p id="sdiConfirmMessage" class="mb-0 text-secondary" style="white-space: pre-wrap; word-break: break-word;"></p>
+        </div>
+        <div class="modal-footer border-0 pt-0">
+          <button type="button" id="sdiConfirmCancel" class="btn btn-light rounded-pill px-4" data-bs-dismiss="modal">Cancel</button>
+          <button type="button" id="sdiConfirmOk" class="btn btn-primary rounded-pill px-4">OK</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <footer class="ubc-footer py-3 mt-4">
+    <div class="container-fluid text-center">
+      <span class="footer-text opacity-75 small">&copy; 2025 University of British Columbia - Maintenance Planning
+        Department</span>
+    </div>
+  </footer>
+  <div class="ubc-bottom-strip"></div>
+
+  <!-- Javascript -->
+  <script src="https://code.jquery.com/jquery-3.7.1.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+  <script src="https://cdn.datatables.net/1.13.6/js/jquery.dataTables.min.js"></script>
+  <script src="https://cdn.datatables.net/1.13.6/js/dataTables.bootstrap5.min.js"></script>
+
+  <script>
+    // Iframe-safe replacement for window.alert(). Cross-origin iframes block
+    // native alert() (Chrome 92+ and similar), so any alert fired from the
+    // SDI dashboard while it's embedded in the unified Dashboard never shows.
+    // showSdiAlert() uses a Bootstrap modal that renders inside the iframe's
+    // own DOM, so the message is visible in both standalone and embedded modes.
+    //
+    // Usage:
+    //   showSdiAlert('Pick a building first.');
+    //   showSdiAlert('Export failed. Please try again.', { severity: 'danger' });
+    //   showSdiAlert('Done!', { severity: 'success', title: 'Saved' });
+    window.showSdiAlert = function (message, opts) {
+      opts = opts || {};
+      var severity = String(opts.severity || 'info').toLowerCase();
+      var titles  = { info: 'Notice', warning: 'Heads up', danger: 'Error', success: 'Done' };
+      var icons   = {
+        info:    '<i class="bi bi-info-circle text-primary"></i>',
+        warning: '<i class="bi bi-exclamation-triangle-fill text-warning"></i>',
+        danger:  '<i class="bi bi-x-octagon-fill text-danger"></i>',
+        success: '<i class="bi bi-check-circle-fill text-success"></i>'
+      };
+      var btnClass = {
+        info:    'btn-primary',
+        warning: 'btn-warning',
+        danger:  'btn-danger',
+        success: 'btn-success'
+      };
+      var titleEl = document.getElementById('sdiAlertModalLabel');
+      var iconEl  = document.getElementById('sdiAlertIcon');
+      var msgEl   = document.getElementById('sdiAlertMessage');
+      var btnEl   = document.getElementById('sdiAlertOk');
+      var modalEl = document.getElementById('sdiAlertModal');
+      if (!modalEl || !msgEl) {
+        // Defensive fallback: if the modal somehow isn't on the page,
+        // surface the message via console so we never silently swallow it.
+        try { console.warn('[SDI] showSdiAlert fallback:', message); } catch (e) {}
+        return;
+      }
+      titleEl.textContent = opts.title || titles[severity] || titles.info;
+      iconEl.innerHTML = icons[severity] || icons.info;
+      msgEl.textContent = String(message == null ? '' : message);
+      btnEl.className = 'btn rounded-pill px-4 ' + (btnClass[severity] || btnClass.info);
+      bootstrap.Modal.getOrCreateInstance(modalEl).show();
+    };
+
+    // Iframe-safe replacement for window.confirm(). Returns Promise<boolean>:
+    // resolves true if the user clicks the confirm button, false if they
+    // cancel, click outside, press Esc, or close the modal any other way.
+    //
+    // Usage:
+    //   const ok = await showSdiConfirm('Re-export?', { severity: 'warning', confirmText: 'Re-export' });
+    //   if (ok) doIt();
+    window.showSdiConfirm = function (message, opts) {
+      opts = opts || {};
+      return new Promise(function (resolve) {
+        var severity = String(opts.severity || 'warning').toLowerCase();
+        var icons   = {
+          info:    '<i class="bi bi-info-circle text-primary"></i>',
+          warning: '<i class="bi bi-exclamation-triangle-fill text-warning"></i>',
+          danger:  '<i class="bi bi-x-octagon-fill text-danger"></i>',
+          success: '<i class="bi bi-check-circle-fill text-success"></i>'
+        };
+        var btnClass = { info: 'btn-primary', warning: 'btn-primary', danger: 'btn-danger', success: 'btn-success' };
+        var titleEl   = document.getElementById('sdiConfirmModalLabel');
+        var iconEl    = document.getElementById('sdiConfirmIcon');
+        var msgEl     = document.getElementById('sdiConfirmMessage');
+        var okBtn     = document.getElementById('sdiConfirmOk');
+        var cancelBtn = document.getElementById('sdiConfirmCancel');
+        var modalEl   = document.getElementById('sdiConfirmModal');
+        if (!modalEl || !msgEl) {
+          try { console.warn('[SDI] showSdiConfirm fallback (modal missing):', message); } catch (e) {}
+          resolve(false);
+          return;
+        }
+        titleEl.textContent = opts.title || 'Confirm';
+        iconEl.innerHTML = icons[severity] || icons.warning;
+        msgEl.textContent = String(message == null ? '' : message);
+        okBtn.textContent = opts.confirmText || 'OK';
+        okBtn.className = 'btn rounded-pill px-4 ' + (btnClass[severity] || btnClass.warning);
+        cancelBtn.textContent = opts.cancelText || 'Cancel';
+
+        // Settlement: confirm-click -> true; any other dismissal -> false.
+        var settled = false;
+        var modal = bootstrap.Modal.getOrCreateInstance(modalEl);
+        function settle(value) {
+          if (settled) return;
+          settled = true;
+          okBtn.removeEventListener('click', onOk);
+          modalEl.removeEventListener('hidden.bs.modal', onHidden);
+          resolve(value);
+        }
+        function onOk() {
+          settle(true);
+          modal.hide();
+        }
+        function onHidden() {
+          settle(false);
+        }
+        okBtn.addEventListener('click', onOk);
+        modalEl.addEventListener('hidden.bs.modal', onHidden);
+        modal.show();
+      });
+    };
+
+    $(function () {
+      // Init Tooltips
+      var tooltipTriggerList = [].slice.call(document.querySelectorAll('[data-bs-toggle="tooltip"]'))
+      var tooltipList = tooltipTriggerList.map(function (tooltipTriggerEl) {
+        return new bootstrap.Tooltip(tooltipTriggerEl)
+      })
+
+      // Datatable configuration - Cleaner Look
+      const commonDataTableOptions = {
+        pageLength: 25,
+        order: [],
+        stateSave: true,
+        lengthMenu: [10, 25, 50, 100],
+        scrollX: true,
+        autoWidth: false,
+        responsive: false, // Turned off to respect scrollX for large data sets
+        language: {
+          search: "_INPUT_",
+          searchPlaceholder: "Search records..."
+        }
+      };
+
+      // The building dropdown drives the gating of the workspace, so wire its
+      // change handler BEFORE the optional table-init block. When there's no
+      // selected building, #assetTabs isn't on the page; fall back to ''.
+      $('#building-select').on('change', function () {
+        const form = $('#buildingFilterForm');
+        const baseUrl = form.attr('action');
+        const buildingCode = $(this).val();
+        const activeTabEl = $('#assetTabs .nav-link.active').attr('data-bs-target');
+        const activeTabHash = activeTabEl || '';
+        const newUrl = `${baseUrl}?building_code=${encodeURIComponent(buildingCode)}${activeTabHash}`;
+        window.location.href = newUrl;
+      });
+
+      function filterRetrievePackages() {
+        const query = String($('#retrieve-package-search').val() || '').trim().toLowerCase();
+        const options = $('.retrieve-archive-option');
+        let visibleCount = 0;
+
+        options.each(function () {
+          const searchText = String($(this).data('search') || $(this).text() || '').toLowerCase();
+          const shouldShow = !query || searchText.indexOf(query) !== -1;
+          $(this).toggle(shouldShow);
+          if (shouldShow) {
+            visibleCount += 1;
+          }
+        });
+
+        $('#retrieve-no-matches').toggleClass('d-none', visibleCount > 0 || options.length === 0);
+      }
+
+      $('#retrieve-package-search').on('input', filterRetrievePackages);
+      $('#retrieveModal').on('shown.bs.modal', function () {
+        $('#retrieve-package-search').trigger('focus');
+        filterRetrievePackages();
+      });
+
+      // Gated workspace: when no building is selected the asset tables/tabs
+      // aren't rendered. DataTables init on missing elements degrades silently
+      // but downstream column-helpers throw, so skip the whole table block.
+      if (!document.getElementById('unpackagedAssetsTable')) {
+        return;
+      }
+      const unpackagedTable = $('#unpackagedAssetsTable').DataTable(commonDataTableOptions);
+      const packagedTable = $('#packagedAssetsTable').DataTable(commonDataTableOptions);
+
+      function applyFloorCodeAlignment(table) {
+        const headers = table.columns().header().toArray();
+        const floorIndex = headers.findIndex(h => $(h).text().trim() === 'Floor Code');
+        if (floorIndex === -1) {
+          return;
+        }
+        $(headers[floorIndex]).addClass('text-center');
+        table.column(floorIndex).nodes().to$().addClass('text-center');
+      }
+
+      applyFloorCodeAlignment(unpackagedTable);
+      applyFloorCodeAlignment(packagedTable);
+      unpackagedTable.on('draw', function () { applyFloorCodeAlignment(unpackagedTable); });
+      packagedTable.on('draw', function () { applyFloorCodeAlignment(packagedTable); });
+
+      function adjustVisibleTables() {
+        if ($.fn.dataTable && $.fn.dataTable.tables) {
+          $.fn.dataTable.tables({ visible: true, api: true }).columns.adjust();
+        }
+      }
+      setTimeout(adjustVisibleTables, 200);
+      let resizeTimer;
+      $(window).on('resize', function () {
+        clearTimeout(resizeTimer);
+        resizeTimer = setTimeout(adjustVisibleTables, 200);
+      });
+
+      // Adjust columns when tabs are switched
+      $('button[data-bs-toggle="tab"]').on('shown.bs.tab', function (e) {
+        const targetPaneSelector = $(e.target).attr('data-bs-target');
+        const tableInPane = $(targetPaneSelector).find('table');
+
+        if ($.fn.DataTable.isDataTable(tableInPane)) {
+          setTimeout(function () {
+            $(tableInPane).DataTable().columns.adjust();
+          }, 150);
+        }
+      });
+
+      // Active tab from Hash
+      const hash = window.location.hash;
+      if (hash) {
+        const tabToActivate = $(`#assetTabs button[data-bs-target="${hash}"]`);
+        if (tabToActivate.length) {
+          const tab = new bootstrap.Tab(tabToActivate[0]);
+          tab.show();
+        }
+      }
+
+      // (Building-select change handler moved above the table-init guard so it
+      // also runs when the workspace is gated.)
+
+      // Submit handlers to keep tabs
+      $('form.tab-aware-form').on('submit', function (e) {
+        const activeTabHash = $('#assetTabs .nav-link.active').attr('data-bs-target');
+        if (activeTabHash) {
+          $(this).find('input[name="active_tab"]').remove();
+          $(this).append(`<input type="hidden" name="active_tab" value="${activeTabHash.substring(1)}">`);
+        }
+      });
+
+      // Packaged table filter
+      $('#sdi-control-select').on('change', function () {
+        const selectedValue = $(this).val();
+        $('#planon-sdi-control-id').val(selectedValue);
+        packagedTable
+          .column(0)
+          .search(selectedValue ? '^' + selectedValue + '$' : '', true, false)
+          .draw();
+      });
+
+      // Exclude/Archive Logic
+      $('#excludePackageForm').on('submit', function (e) {
+        const selectedPackage = $('#sdi-control-select').val();
+        const submitter = e.originalEvent ? e.originalEvent.submitter : (e.submitter || null);
+        const isArchive = submitter && submitter.getAttribute('formaction') && submitter.getAttribute('formaction').includes('move_to_archive');
+
+        if (!selectedPackage) {
+          e.preventDefault();
+          showSdiAlert('Please select a package from the dropdown to proceed.', { severity: 'warning' });
+          return;
+        }
+
+        // Bypass: when we re-submit programmatically after the user confirmed
+        // in the modal, this flag short-circuits the confirm step so the
+        // native submit proceeds without re-prompting.
+        if (this.dataset.sdiConfirmed === '1') {
+          delete this.dataset.sdiConfirmed;
+          return;
+        }
+
+        let message = `Are you sure you want to exclude package "${selectedPackage}"?\n\nAssets will return to the Unpackaged list.`;
+        let confirmText = 'Exclude';
+        if (isArchive) {
+          message = `Are you sure you want to ARCHIVE package "${selectedPackage}"?\n\nArchive is allowed only after every row has been exported to Planon. This will move the package into the archive list. Use Retrieve later to bring it back.`;
+          confirmText = 'Archive';
+        }
+
+        e.preventDefault();
+        const formEl = this;
+        showSdiConfirm(message, { severity: 'warning', confirmText: confirmText }).then(function (ok) {
+          if (!ok) return;
+          formEl.dataset.sdiConfirmed = '1';
+          if (typeof formEl.requestSubmit === 'function') {
+            formEl.requestSubmit(submitter);
+          } else {
+            formEl.submit();
+          }
+        });
+      });
+
+      // Validation Summary Logic
+      function parseSummaryFromMessage(message) {
+        if (!message) return null;
+        const match = message.match(/Total rows:\\s*(\\d+).*Correct:\\s*(\\d+).*Wrong:\\s*(\\d+).*% Correct:\\s*([\\d.]+).*% Wrong:\\s*([\\d.]+)/i);
+        if (!match) return null;
+        return {
+          total_rows: parseInt(match[1], 10),
+          total_correct: parseInt(match[2], 10),
+          total_wrong: parseInt(match[3], 10),
+          pct_correct: parseFloat(match[4]),
+          pct_wrong: parseFloat(match[5])
+        };
+      }
+
+      function showValidationModal(summary, message) {
+        const modalEl = document.getElementById('validationSummaryModal');
+        if (!modalEl) return;
+
+        const parsedSummary = summary || parseSummaryFromMessage(message);
+        // Default to zero if not parsed
+        const stats = parsedSummary || { total_rows: 0, total_correct: 0, total_wrong: 0, pct_correct: 0 };
+
+        $('#summary-total-rows').text(stats.total_rows);
+        $('#summary-total-correct').text(stats.total_correct);
+        $('#summary-total-wrong').text(stats.total_wrong);
+        $('#summary-pct-correct').text(stats.pct_correct + '%');
+        $('#summary-score-badge').text(stats.pct_correct + '%');
+
+        const progressBar = $('#summary-progress-bar');
+        const messageEl = $('#summary-message');
+
+        progressBar.css('width', stats.pct_correct + '%');
+
+        // Remove classes
+        progressBar.removeClass('bg-success bg-warning bg-danger');
+        const badge = $('#summary-score-badge');
+        badge.removeClass('bg-success bg-warning bg-danger');
+
+        if (!parsedSummary && message) {
+          messageEl.text(message);
+        } else if (stats.pct_correct >= 100) {
+          progressBar.addClass('bg-success');
+          badge.addClass('bg-success');
+          messageEl.text('Perfect! The data is 100% compliant.');
+        } else if (stats.pct_correct >= 90) {
+          progressBar.addClass('bg-warning');
+          badge.addClass('bg-warning text-dark');
+          messageEl.text('Good to go, but there are minor issues. Please check the warnings.');
+        } else {
+          progressBar.addClass('bg-danger');
+          badge.addClass('bg-danger');
+          messageEl.text('Critical issues found. Do not export until fixed.');
+        }
+
+        const modal = bootstrap.Modal.getOrCreateInstance(modalEl);
+        modal.show();
+      }
+
+      function getDownloadFilename(response) {
+        const headerName = response.headers.get('X-Download-Filename');
+        if (headerName) return headerName;
+        const disposition = response.headers.get('Content-Disposition') || '';
+        const match = /filename\*=UTF-8''([^;]+)|filename=\"?([^\";]+)\"?/i.exec(disposition);
+        if (match) return decodeURIComponent(match[1] || match[2]);
+        return 'export.xlsx';
+      }
+
+      // AJAX for Planon Export
+      async function submitPlanonExport(forceExport) {
+        const form = document.getElementById('planonExportForm');
+        const formData = new FormData(form);
+        formData.set('ajax', '1');
+        if (forceExport) formData.set('force_planon_export', 'true');
+
+        try {
+          const response = await fetch(form.action, {
+            method: 'POST',
+            body: formData,
+            headers: { 'X-Requested-With': 'XMLHttpRequest' }
+          });
+
+          const contentType = response.headers.get('Content-Type') || '';
+
+          if (contentType.includes('application/json')) {
+            const data = await response.json();
+            if (data.status === 'confirm' && data.codes) {
+              const confirmMsg = 'QR Codes already exported:\n' + data.codes.join(', ') + '\n\nExport again?';
+              if (await showSdiConfirm(confirmMsg, { severity: 'warning', confirmText: 'Export again' })) {
+                submitPlanonExport(true);
+              }
+            } else {
+              showSdiAlert(data.message || 'Export error.', { severity: 'danger' });
+            }
+            return;
+          }
+
+          if (!response.ok) { throw new Error('Network response was not ok'); }
+
+          const summaryHeader = response.headers.get('X-Validation-Summary');
+          if (summaryHeader) {
+            showValidationModal(JSON.parse(summaryHeader), null);
+          }
+
+          // Download logic
+          const blob = await response.blob();
+          const link = document.createElement('a');
+          link.href = window.URL.createObjectURL(blob);
+          link.download = getDownloadFilename(response);
+          document.body.appendChild(link);
+          link.click();
+          link.remove();
+
+        } catch (error) {
+          showSdiAlert('Export failed. Please try again.', { severity: 'danger' });
+        }
+      }
+
+      // Hooks
+      const summaryFallback = document.querySelector('.validation-summary-fallback');
+      if (summaryFallback) {
+        try {
+          showValidationModal(null, JSON.parse(summaryFallback.dataset.message || '\"\"'));
+        } catch (e) { }
+      }
+
+      $('#planonExportForm').on('submit', function (e) {
+        const selectedPackage = $('#planon-sdi-control-id').val();
+        if (!selectedPackage) {
+          e.preventDefault();
+          showSdiAlert('Select an SDI Print Control ID first.', { severity: 'warning' });
+          return;
+        }
+        e.preventDefault();
+        submitPlanonExport(false);
+      });
+
+      // Handle server-side alert confirmations (Legacy)
+      $('.alert-confirmation, .alert-planon_confirmation').each(function () {
+        const txt = $(this).text().trim();
+        if (txt.includes('CONFIRM:')) {
+          $(this).hide();
+          const cleanTxt = txt.replace(/^(PLANON_)?CONFIRM:/, '');
+          showSdiConfirm(`Assets previously exported: ${cleanTxt}. Re-export?`, {
+            severity: 'warning',
+            confirmText: 'Re-export'
+          }).then(function (ok) {
+            if (!ok) return;
+            // Create temp form field and submit logic here if strictly needed by legacy flow
+            // But ideally handled via AJAX now.
+            if (txt.includes('PLANON')) {
+              // Logic for Planon re-submit would go here
+            } else {
+              const f = $('#exportForm');
+              $('<input>').attr({ type: 'hidden', name: 'force_replace', value: 'true' }).appendTo(f);
+              f.submit();
+            }
+          });
+        }
+      });
+    });
+
+    // Validation Log Tab Functionality
+    let validationLogTable = null;
+
+    // Load available validation logs
+    function loadValidationLogs() {
+      $.ajax({
+        url: '{{ url_for("main.get_validation_logs") }}',
+        method: 'GET',
+        success: function (response) {
+          const select = $('#validation-log-select');
+          select.find('option:not(:first)').remove();
+
+          if (response.logs && response.logs.length > 0) {
+            response.logs.forEach(function (log) {
+              const option = $('<option></option>')
+                .val(log.filename)
+                .text(`${log.display_name} (${log.error_count} errors - ${log.modified})`);
+              select.append(option);
+            });
+          } else {
+            select.append('<option disabled>No validation logs found</option>');
+          }
+        },
+        error: function (xhr, status, error) {
+          console.error('Error loading validation logs:', error);
+        }
+      });
+    }
+
+    // Load validation log content
+    function loadValidationLogContent(filename) {
+      if (!filename) {
+        $('#validation-log-content').removeClass('d-none');
+        $('#validation-log-table-container').addClass('d-none');
+        $('#log-total-errors').text('0');
+        $('#log-affected-rows').text('0');
+        if (validationLogTable) {
+          validationLogTable.clear().draw();
+        }
+        return;
+      }
+
+      $.ajax({
+        url: `{{ url_for("main.get_validation_log", filename="") }}${filename}`,
+        method: 'GET',
+        success: function (response) {
+          $('#log-total-errors').text(response.total_errors || 0);
+          $('#log-affected-rows').text(response.affected_rows || 0);
+
+          $('#validation-log-content').addClass('d-none');
+          $('#validation-log-table-container').removeClass('d-none');
+
+          if (!validationLogTable) {
+            validationLogTable = $('#validationLogTable').DataTable({
+              data: response.errors || [],
+              columns: [
+                { data: 'Row', title: 'Row' },
+                { data: 'Column', title: 'Column' },
+                {
+                  data: 'Value',
+                  title: 'Value',
+                  render: function (data, type, row) {
+                    if (type === 'display' && data && data.length > 50) {
+                      return '<span title="' + data + '">' + data.substring(0, 50) + '...</span>';
+                    }
+                    return data || '';
+                  }
+                },
+                {
+                  data: 'Actual Type',
+                  title: 'Actual Type',
+                  defaultContent: '-'
+                },
+                { data: 'Issue', title: 'Issue' }
+              ],
+              pageLength: 25,
+              order: [[0, 'asc']],
+              scrollX: true,
+              autoWidth: false,
+              language: {
+                search: "_INPUT_",
+                searchPlaceholder: "Search errors..."
+              }
+            });
+          } else {
+            validationLogTable.clear();
+            validationLogTable.rows.add(response.errors || []);
+            validationLogTable.draw();
+          }
+        },
+        error: function (xhr, status, error) {
+          console.error('Error loading validation log:', error);
+          showSdiAlert('Error loading validation log. Please try again.', { severity: 'danger' });
+        }
+      });
+    }
+
+    $('#validation-log-select').on('change', function () {
+      const selectedFile = $(this).val();
+      loadValidationLogContent(selectedFile);
+    });
+
+    $('#validation-log-tab').on('shown.bs.tab', function () {
+      loadValidationLogs();
+      if (validationLogTable) {
+        setTimeout(function () {
+          validationLogTable.columns.adjust();
+        }, 150);
+      }
+    });
+
+    // --- FIX FOR MISSING BUILDING CODE IN FORMS ---
+    $(document).ready(function () {
+      // Function to sync the main building select to hidden inputs
+      function syncBuildingCode(form) {
+        const selectedBuilding = $('#building-select').val();
+        // alert("Debug: Syncing Building Code. Value: " + selectedBuilding); // Debug alert
+
+        const hiddenInput = form.find('input[name="building_code"]');
+
+        if (hiddenInput.length) {
+          hiddenInput.val(selectedBuilding);
+        } else {
+          // If it doesn't exist, create it (safety net)
+          $('<input>').attr({
+            type: 'hidden',
+            name: 'building_code',
+            value: selectedBuilding
+          }).appendTo(form);
+        }
+        return selectedBuilding;
+      }
+
+      // Hook into specific forms to ensure building code is sent
+      const formsToSync = ['#exportForm', '#excludePackageForm', '#planonExportForm'];
+
+      formsToSync.forEach(selector => {
+        $(selector).on('submit', function (e) {
+          const buildingCode = syncBuildingCode($(this));
+
+          // Specific check for Export Form - it strictly requires a building
+          if (selector === '#exportForm' && !buildingCode) {
+            e.preventDefault();
+            showSdiAlert("To create a package, please select a building from the 'Filter by Building' dropdown first.", { severity: 'warning' });
+          }
+          // else { alert("Debug: Form " + selector + " submitting with building: " + buildingCode); }
+        });
+      });
+
+      // Also handle the Retrieve Modal form
+      $('#retrieveModal form').on('submit', function (e) {
+        syncBuildingCode($(this));
+      });
+    });
+  </script>
+
+  <script>
+  (function () {
+      const params = new URLSearchParams(window.location.search);
+      if (params.get('embedded') !== 'true') return;
+
+      // Preserve ?embedded=true on all internal link clicks
+      document.addEventListener('click', function (e) {
+          const a = e.target.closest('a[href]');
+          if (!a) return;
+          const href = a.getAttribute('href');
+          if (!href || href.startsWith('#') || href.startsWith('http') || href.startsWith('mailto')) return;
+          if (href.includes('embedded=true')) return;
+          a.setAttribute('href', href + (href.includes('?') ? '&' : '?') + 'embedded=true');
+      });
+  })();
+  </script>
+</body>
+
+</html>

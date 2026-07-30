@@ -1,0 +1,539 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>SDI Live Pipeline</title>
+
+  <style>
+    :root {
+      --bg-page: #ffffff;
+      --bg-soft: #f8fafc;
+      --border: #e5e7eb;
+      --text-main: #111827;
+      --text-muted: #64748b;
+      --blue: #0055b7;
+      --amber: #b7791f;
+      --green: #16845a;
+      --red: #b42318;
+      --shadow: 0 10px 26px rgba(15, 23, 42, 0.08);
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      min-height: 100%;
+      background: transparent;
+      color: var(--text-main);
+      font-family: Arial, Helvetica, sans-serif;
+    }
+
+    .pipeline-shell {
+      width: 100%;
+      max-width: none;
+      margin: 0;
+      padding: 0 0 14px;
+    }
+
+    .pipeline-panel {
+      background: var(--bg-page);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      box-shadow: var(--shadow);
+      overflow: hidden;
+    }
+
+    .pipeline-header {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 16px;
+      padding: 18px 20px 14px;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .pipeline-title {
+      margin: 0;
+      color: var(--blue);
+      font-size: 18px;
+      font-weight: 700;
+      line-height: 1.25;
+    }
+
+    .pipeline-subtitle {
+      margin: 5px 0 0;
+      color: var(--text-muted);
+      font-size: 12px;
+      line-height: 1.4;
+    }
+
+    .total-pill {
+      min-width: 134px;
+      padding: 9px 12px;
+      border: 1px solid #bfdbfe;
+      border-radius: 8px;
+      background: #eff6ff;
+      text-align: right;
+      white-space: nowrap;
+    }
+
+    .total-pill span {
+      display: block;
+      color: var(--text-muted);
+      font-size: 11px;
+      font-weight: 700;
+      text-transform: uppercase;
+    }
+
+    .total-pill strong {
+      display: block;
+      margin-top: 2px;
+      color: var(--blue);
+      font-size: 24px;
+      line-height: 1;
+    }
+
+    .kpi-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 12px;
+      padding: 16px 20px 14px;
+    }
+
+    .kpi-card {
+      position: relative;
+      min-height: 98px;
+      padding: 15px 16px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: #ffffff;
+      overflow: hidden;
+    }
+
+    .kpi-card::before {
+      content: "";
+      position: absolute;
+      inset: 0 auto 0 0;
+      width: 5px;
+      background: var(--accent, var(--blue));
+    }
+
+    .kpi-card[data-tone="blue"] {
+      --accent: var(--blue);
+    }
+
+    .kpi-card[data-tone="amber"] {
+      --accent: var(--amber);
+    }
+
+    .kpi-card[data-tone="green"] {
+      --accent: var(--green);
+    }
+
+    .kpi-label {
+      margin: 0;
+      color: var(--text-muted);
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: 0;
+      text-transform: uppercase;
+    }
+
+    .kpi-count {
+      display: block;
+      margin-top: 10px;
+      color: var(--text-main);
+      font-size: 34px;
+      font-weight: 800;
+      line-height: 1;
+    }
+
+    .flow-wrap {
+      padding: 2px 20px 22px;
+    }
+
+    .flow-track {
+      position: relative;
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 58px minmax(0, 1fr) 58px minmax(0, 1fr);
+      align-items: center;
+      gap: 0;
+      padding: 16px;
+      border: 1px solid #dbeafe;
+      border-radius: 8px;
+      background:
+        linear-gradient(135deg, rgba(0, 85, 183, 0.08), rgba(22, 132, 90, 0.06)),
+        var(--bg-soft);
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.8);
+      overflow: hidden;
+    }
+
+    .flow-step {
+      --accent: var(--blue);
+      --accent-soft: #eff6ff;
+      --accent-border: #bfdbfe;
+      position: relative;
+      min-height: 132px;
+      padding: 16px;
+      border: 1px solid var(--accent-border);
+      border-radius: 8px;
+      background:
+        linear-gradient(180deg, rgba(255, 255, 255, 0.94), rgba(255, 255, 255, 0.82)),
+        var(--accent-soft);
+      box-shadow: 0 12px 24px rgba(15, 23, 42, 0.08);
+      overflow: hidden;
+    }
+
+    .flow-step::after {
+      content: "";
+      position: absolute;
+      inset: 0 0 auto;
+      height: 4px;
+      background: var(--accent);
+    }
+
+    .flow-step[data-tone="amber"] {
+      --accent: var(--amber);
+      --accent-soft: #fffbeb;
+      --accent-border: #fde68a;
+    }
+
+    .flow-step[data-tone="green"] {
+      --accent: var(--green);
+      --accent-soft: #ecfdf5;
+      --accent-border: #a7f3d0;
+    }
+
+    .flow-step__top {
+      display: flex;
+      align-items: center;
+      gap: 9px;
+      min-width: 0;
+    }
+
+    .flow-step__badge {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      flex: 0 0 30px;
+      width: 30px;
+      height: 30px;
+      border-radius: 999px;
+      background: var(--accent);
+      color: #ffffff;
+      font-size: 11px;
+      font-weight: 800;
+      line-height: 1;
+    }
+
+    .flow-step__label {
+      min-width: 0;
+      color: var(--text-muted);
+      font-size: 11px;
+      font-weight: 800;
+      letter-spacing: 0;
+      text-transform: uppercase;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .flow-step__count {
+      display: block;
+      margin-top: 16px;
+      color: var(--text-main);
+      font-size: 34px;
+      font-weight: 850;
+      line-height: 0.92;
+    }
+
+    .flow-step__caption {
+      margin: 9px 0 0;
+      color: var(--text-muted);
+      font-size: 12.65px;
+      line-height: 1.35;
+      min-height: 30px;
+    }
+
+    .flow-connector {
+      position: relative;
+      height: 100%;
+      min-height: 132px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .flow-connector::before {
+      content: "";
+      position: absolute;
+      left: 0;
+      right: 0;
+      top: 50%;
+      height: 2px;
+      background: linear-gradient(90deg, rgba(0, 85, 183, 0.2), rgba(0, 85, 183, 0.72), rgba(22, 132, 90, 0.2));
+    }
+
+    .flow-connector span {
+      position: relative;
+      z-index: 1;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 28px;
+      height: 28px;
+      border: 1px solid #bfdbfe;
+      border-radius: 999px;
+      background: #ffffff;
+      color: var(--blue);
+      font-size: 16px;
+      font-weight: 700;
+      box-shadow: 0 8px 18px rgba(0, 85, 183, 0.14);
+    }
+
+    .empty-state {
+      display: none;
+      margin: 0 20px 20px;
+      padding: 16px;
+      border: 1px dashed #cbd5e1;
+      border-radius: 8px;
+      background: #f8fafc;
+      color: var(--text-muted);
+      font-size: 13px;
+      text-align: center;
+    }
+
+    .diagnostic {
+      display: none;
+      margin: 0 20px 18px;
+      color: var(--red);
+      font-size: 12px;
+      text-align: right;
+    }
+
+    @media (max-width: 760px) {
+      .pipeline-header {
+        flex-direction: column;
+        padding: 16px;
+      }
+
+      .total-pill {
+        width: 100%;
+        text-align: left;
+      }
+
+      .kpi-grid,
+      .flow-track {
+        grid-template-columns: 1fr;
+      }
+
+      .kpi-grid,
+      .flow-wrap {
+        padding-left: 16px;
+        padding-right: 16px;
+      }
+
+      .flow-connector {
+        min-height: 38px;
+      }
+
+      .flow-connector::before {
+        left: 50%;
+        right: auto;
+        top: 0;
+        bottom: 0;
+        width: 2px;
+        height: auto;
+      }
+
+      .flow-connector span {
+        transform: rotate(90deg);
+      }
+    }
+  </style>
+  {% include "_shell.html" %}
+</head>
+<body>
+  <main class="pipeline-shell">
+    <section class="pipeline-panel" aria-labelledby="pipeline-title">
+      <header class="pipeline-header">
+        <div>
+          <h1 class="pipeline-title" id="pipeline-title">SDI Live Pipeline</h1>
+          <p class="pipeline-subtitle">Distinct QR codes by review state</p>
+        </div>
+        <div class="total-pill" aria-label="Total distinct QR codes">
+          <span>Total QR</span>
+          <strong id="total-count">0</strong>
+        </div>
+      </header>
+
+      <div class="kpi-grid" id="kpi-grid" aria-label="Review state counts"></div>
+      <p class="empty-state" id="empty-state">No SDI pipeline data is available.</p>
+
+      <div class="flow-wrap">
+        <div class="flow-track" id="flow-track" aria-label="SDI process flow"></div>
+      </div>
+      <p class="diagnostic" id="diagnostic"></p>
+    </section>
+  </main>
+
+  <script>
+    const workflow = {{ chart_data | default({}, true) | tojson }};
+
+    const defaultCards = [
+      { key: "new", label: "New Assets", tone: "blue", count: 0 },
+      { key: "update", label: "Update Existing", tone: "amber", count: 0 },
+      { key: "manual", label: "Manual Entry", tone: "green", count: 0 }
+    ];
+
+    const defaultFlow = [
+      { key: "queue", label: "SDI Queue", tone: "blue", caption: "Curated records ready for SDI packaging", count: 0 },
+      { key: "requested", label: "Requested", tone: "amber", caption: "Assets currently staged for Planon request", count: 0 },
+      { key: "planon", label: "Into Planon", tone: "green", caption: "Archived packages already sent forward", count: 0 }
+    ];
+
+    function normalizeWorkflow(raw) {
+      if (!raw || Array.isArray(raw) || typeof raw !== "object") {
+        return { cards: defaultCards, flow: defaultFlow, total_distinct_qr: 0, unclassified_count: 0 };
+      }
+      const cards = Array.isArray(raw.cards) && raw.cards.length ? raw.cards : defaultCards;
+      const flow = Array.isArray(raw.flow) && raw.flow.length ? raw.flow : defaultFlow;
+      return {
+        cards,
+        flow,
+        total_distinct_qr: Number(raw.total_distinct_qr) || 0,
+        unclassified_count: Number(raw.unclassified_count) || 0
+      };
+    }
+
+    function formatCount(value) {
+      return (Number(value) || 0).toLocaleString();
+    }
+
+    function renderCount(el, value) {
+      const target = Number(value) || 0;
+      const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+      if (reduceMotion || target === 0) {
+        el.textContent = formatCount(target);
+        return;
+      }
+
+      const startTime = performance.now();
+      const duration = 650;
+      function tick(now) {
+        const progress = Math.min((now - startTime) / duration, 1);
+        const eased = 1 - Math.pow(1 - progress, 3);
+        el.textContent = formatCount(Math.round(target * eased));
+        if (progress < 1) {
+          requestAnimationFrame(tick);
+        }
+      }
+      requestAnimationFrame(tick);
+    }
+
+    function renderCards(data) {
+      const grid = document.getElementById("kpi-grid");
+      grid.innerHTML = "";
+
+      data.cards.forEach((card) => {
+        const article = document.createElement("article");
+        article.className = "kpi-card";
+        article.dataset.tone = card.tone || "blue";
+
+        const label = document.createElement("p");
+        label.className = "kpi-label";
+        label.textContent = card.label || "";
+
+        const count = document.createElement("strong");
+        count.className = "kpi-count";
+        count.textContent = "0";
+
+        article.append(label, count);
+        grid.append(article);
+        renderCount(count, card.count);
+      });
+    }
+
+    function renderFlow(data) {
+      const track = document.getElementById("flow-track");
+      track.innerHTML = "";
+
+      data.flow.forEach((step, index) => {
+        const item = document.createElement("div");
+        item.className = "flow-step";
+        item.dataset.tone = step.tone || "blue";
+
+        const top = document.createElement("div");
+        top.className = "flow-step__top";
+
+        const badge = document.createElement("span");
+        badge.className = "flow-step__badge";
+        badge.textContent = String(index + 1).padStart(2, "0");
+
+        const label = document.createElement("span");
+        label.className = "flow-step__label";
+        label.textContent = step.label || "";
+
+        top.append(badge, label);
+
+        const count = document.createElement("strong");
+        count.className = "flow-step__count";
+        count.textContent = "0";
+
+        const caption = document.createElement("p");
+        caption.className = "flow-step__caption";
+        caption.textContent = step.caption || "";
+
+        item.append(top, count, caption);
+        track.append(item);
+        renderCount(count, step.count);
+
+        if (index < data.flow.length - 1) {
+          const arrow = document.createElement("div");
+          arrow.className = "flow-connector";
+          arrow.setAttribute("aria-hidden", "true");
+          const arrowIcon = document.createElement("span");
+          arrowIcon.textContent = ">";
+          arrow.append(arrowIcon);
+          track.append(arrow);
+        }
+      });
+    }
+
+    function sendHeight() {
+      if (window.parent === window) {
+        return;
+      }
+      let targetOrigin = window.location.origin;
+      try {
+        if (document.referrer) {
+          targetOrigin = new URL(document.referrer).origin;
+        }
+      } catch (error) {
+        targetOrigin = window.location.origin;
+      }
+      window.parent.postMessage({ type: "sdi-chart-height", height: document.body.scrollHeight }, targetOrigin);
+    }
+
+    const data = normalizeWorkflow(workflow);
+    document.getElementById("total-count").textContent = formatCount(data.total_distinct_qr);
+    renderCards(data);
+    renderFlow(data);
+
+    const hasData = data.total_distinct_qr > 0 || data.flow.some((step) => Number(step.count) > 0);
+    document.getElementById("empty-state").style.display = hasData ? "none" : "block";
+
+    if (data.unclassified_count > 0) {
+      const diagnostic = document.getElementById("diagnostic");
+      diagnostic.textContent = `${formatCount(data.unclassified_count)} QR code(s) have an unclassified review state.`;
+      diagnostic.style.display = "block";
+    }
+
+    window.addEventListener("load", sendHeight);
+    window.addEventListener("resize", sendHeight);
+  </script>
+</body>
+</html>

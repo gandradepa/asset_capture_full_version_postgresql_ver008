@@ -1,0 +1,331 @@
+"""Audit the EL approve -> package -> archive data flow for integrity drift.
+
+Read-only reconciliation across QR_codes, sdi_dataset_EL, QR_code_assets,
+sdi_print_out and sdi_print_out_arch (plus the review JSONs). Surfaces assets
+that cannot complete the flow and cross-table inconsistencies that the
+application's atomic writers would normally prevent.
+
+The intended flow:
+    (1) approve            sdi_dataset_EL.Approved = '1'  (+ QR_codes.Approved)
+    (2) package            approved, non-excluded rows -> sdi_print_out
+    (3) archive            Package Actions -> sdi_print_out_arch
+
+SDI-exclusion (Manual Entry) is a parallel terminal state. The canonical
+writer _db_toggle_qr_sdi() (Asset_dashboard_EL.py) keeps two stores aligned:
+    QR_codes.sdi = 1   <->   QR_code_assets.Col_process = 2
+(The review JSON "ExcludeSDI" is derived from Col_process at load time, not
+stored, so it is not a separate source of truth.)
+
+Checks (EL-scoped; TYPE_CONFIG leaves room to extend to ME/BF later). The
+exclusion legs are matched the way the app does it: QR_code_assets.code_assets
+LIKE '<qr>%' (code_assets is "<qr> <building> <type> - <n>", not the bare QR).
+    A  exclusion_pair_mismatch  [DRIFT]    QR_codes.sdi=1 without a matching
+                                            QR_code_assets.Col_process=2 (or the
+                                            inverse) -> exclusion set outside the
+                                            canonical /toggle_sdi path.
+    B  approved_but_unarchivable [WORKLIST] Approved=1 AND properly SDI-excluded
+                                            (sdi=1 + Col_process=2) AND not
+                                            archived. Excluded assets are terminal
+                                            and never package/archive -- a valid
+                                            state, surfaced for a case-by-case
+                                            decision (re-include vs keep excluded)
+                                            per the runbook
+                                            (Markdowns_documentation/special_processes/
+                                            sdi_flow_remediation.md).
+    C  approval_mismatch        [DRIFT]    For a NON-archived QR, the Approved
+                                            signal disagrees across
+                                            sdi_dataset_EL / QR_codes / JSON.
+                                            (Archived QRs are skipped: their live
+                                            rows are expected to read blank after
+                                            the nightly rebuild.)
+    D  ready_not_packaged       [INFO]     Approved=1, not excluded, not archived,
+                                            not yet in sdi_print_out. Normal "ready
+                                            to package" backlog.
+    E  approved_blank_identity  [INFO]     Approved=1 with a blank UBC Asset Tag.
+                                            Data-quality flag (may be acceptable
+                                            for Manual-Entry / excluded assets).
+
+Exit code:
+    0 - no DRIFT findings (WORKLIST/INFO may still be printed)
+    1 - one or more DRIFT findings (or any finding when --strict)
+    2 - setup error (missing DB / required table)
+
+Usage:
+    python3 scripts/audit_sdi_flow_integrity.py               # human report
+    python3 scripts/audit_sdi_flow_integrity.py --quiet       # print only on findings
+    python3 scripts/audit_sdi_flow_integrity.py --qr 0000184485
+    python3 scripts/audit_sdi_flow_integrity.py --building 314-1
+    python3 scripts/audit_sdi_flow_integrity.py --strict      # INFO also -> exit 1
+
+Cron (hourly, records only findings):
+    0 * * * *  /usr/bin/python3 /home/developer/scripts/audit_sdi_flow_integrity.py --quiet \
+                   >> /home/developer/logs/sdi_flow_audit.log 2>&1
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import sqlite3
+import sys
+from typing import Optional
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+REPO_ROOT = os.path.abspath(os.path.join(HERE, os.pardir))
+DEFAULT_JSON_DIR = os.path.join(REPO_ROOT, "Output_jason_api")
+DEFAULT_DB_PATH = os.environ.get(
+    "DB_PATH", os.path.join(REPO_ROOT, "asset_capture_app_dev", "data", "QR_codes.db")
+)
+
+# QR strings that must never participate in a join / SDI operation.
+PLACEHOLDER_QRS = {"", "none", "nan", "null"}
+
+# Per-type wiring. Only EL is exercised today; ME/BF can be added later.
+TYPE_CONFIG = {
+    "EL": {"table": "sdi_dataset_EL", "json_suffix": "EL"},
+}
+
+SEVERITY = {
+    "exclusion_pair_mismatch": "DRIFT",
+    "approval_mismatch": "DRIFT",
+    "approved_but_unarchivable": "WORKLIST",
+    "approved_blank_identity": "INFO",
+    "ready_not_packaged": "INFO",
+}
+# Only true cross-table corruption fails the run. WORKLIST (human decision) and
+# INFO (backlogs/data-quality) print but do not flip the exit code unless --strict.
+EXIT_SEVERITIES = {"DRIFT"}
+
+
+def _is_blank(value) -> bool:
+    return value is None or str(value).strip() == ""
+
+
+def _norm(value) -> str:
+    return "" if value is None else str(value).strip()
+
+
+def _is_placeholder_qr(qr: str) -> bool:
+    return qr.strip().lower() in PLACEHOLDER_QRS
+
+
+def _approved_true(value) -> bool:
+    """sdi_dataset_EL / QR_codes store '1'; review JSON stores 'True'."""
+    return _norm(value).lower() in {"1", "true"}
+
+
+def table_exists(conn: sqlite3.Connection, name: str) -> bool:
+    return conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (name,)
+    ).fetchone() is not None
+
+
+def _connect_ro(db_path: str) -> sqlite3.Connection:
+    conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+    conn.row_factory = sqlite3.Row
+    return conn
+
+
+def _json_approved(json_dir: str, qr: str, building: str, suffix: str) -> Optional[str]:
+    """structured_data.Approved from the review JSON, or None if unreadable."""
+    path = os.path.join(json_dir, f"{qr}_{suffix}_{building}.json")
+    if not os.path.isfile(path):
+        return None
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            sd = (json.load(f) or {}).get("structured_data") or {}
+        return sd.get("Approved") if isinstance(sd, dict) else None
+    except (OSError, json.JSONDecodeError):
+        return None
+
+
+def audit(db_path: str, json_dir: str,
+          only_qr: Optional[str] = None,
+          only_building: Optional[str] = None) -> tuple[int, list[dict]]:
+    """Returns (scanned, anomalies). EL-scoped."""
+    if not os.path.exists(db_path):
+        raise FileNotFoundError(f"DB not found: {db_path}")
+
+    cfg = TYPE_CONFIG["EL"]
+    el_table = cfg["table"]
+    only_qr_n = only_qr.strip() if only_qr else None
+    only_bldg_n = only_building.strip().upper() if only_building else None
+
+    anomalies: list[dict] = []
+    scanned = 0
+
+    with _connect_ro(db_path) as conn:
+        if not table_exists(conn, el_table):
+            raise FileNotFoundError(f"Required table missing: {el_table}")
+        have_qr_codes = table_exists(conn, "QR_codes")
+        have_assets = table_exists(conn, "QR_code_assets")
+        have_pkg = table_exists(conn, "sdi_print_out")
+        have_arch = table_exists(conn, "sdi_print_out_arch")
+
+        rows = conn.execute(f'''
+            SELECT
+              TRIM(s."QR Code") AS qr,
+              COALESCE(s.Building, '') AS building,
+              MAX(CASE WHEN TRIM(COALESCE(s.Approved,''))='1' THEN 1 ELSE 0 END) AS sdi_approved,
+              COALESCE(MAX(NULLIF(TRIM(COALESCE(s."UBC Asset Tag",'')),'')), '') AS ubc_tag,
+              COALESCE(MAX(NULLIF(TRIM(COALESCE(s."Asset Group",'')),'')), '') AS asset_group,
+              COALESCE(MAX(NULLIF(TRIM(COALESCE(s."Location",'')),'')), '') AS location
+            FROM "{el_table}" s
+            WHERE TRIM(COALESCE(s."QR Code",'')) <> ''
+            GROUP BY TRIM(s."QR Code"), COALESCE(s.Building, '')
+        ''').fetchall()
+
+        for r in rows:
+            qr = r["qr"]
+            building = r["building"]
+            if _is_placeholder_qr(qr):
+                continue
+            if only_qr_n and qr != only_qr_n:
+                continue
+            if only_bldg_n and building.strip().upper() != only_bldg_n:
+                continue
+
+            scanned += 1
+            sdi_approved = bool(r["sdi_approved"])
+            ubc_tag = r["ubc_tag"]
+
+            # QR_codes legs
+            qrc_sdi = False
+            qrc_approved_raw = None
+            if have_qr_codes:
+                q = conn.execute(
+                    'SELECT "sdi", "Approved" FROM QR_codes WHERE TRIM("QR_code_ID")=? LIMIT 1',
+                    (qr,),
+                ).fetchone()
+                if q is not None:
+                    qrc_sdi = _norm(q["sdi"]) == "1"
+                    qrc_approved_raw = q["Approved"]
+
+            # QR_code_assets: a Col_process=2 row for this QR (code_assets starts with the QR)
+            col2 = False
+            if have_assets:
+                a = conn.execute(
+                    'SELECT 1 FROM QR_code_assets '
+                    'WHERE (TRIM("code_assets")=? OR TRIM("code_assets") LIKE ?) '
+                    '  AND (Col_process=2 OR TRIM(CAST(Col_process AS TEXT))=\'2\') LIMIT 1',
+                    (qr, qr + "%"),
+                ).fetchone()
+                col2 = a is not None
+
+            in_pkg = bool(have_pkg and conn.execute(
+                'SELECT 1 FROM sdi_print_out WHERE TRIM("QR Code")=? LIMIT 1', (qr,)
+            ).fetchone())
+            in_arch = bool(have_arch and conn.execute(
+                'SELECT 1 FROM sdi_print_out_arch WHERE TRIM("QR Code")=? LIMIT 1', (qr,)
+            ).fetchone())
+
+            def add(kind: str, detail: str) -> None:
+                anomalies.append({
+                    "kind": kind, "severity": SEVERITY[kind],
+                    "qr": qr, "building": building, "detail": detail,
+                })
+
+            # A - exclusion pair (only meaningful when QR_code_assets exists)
+            if have_qr_codes and have_assets:
+                if qrc_sdi and not col2:
+                    add("exclusion_pair_mismatch",
+                        "QR_codes.sdi=1 but no QR_code_assets.Col_process=2 "
+                        "(exclusion set outside the canonical /toggle_sdi path)")
+                elif col2 and not qrc_sdi:
+                    add("exclusion_pair_mismatch",
+                        "QR_code_assets.Col_process=2 but QR_codes.sdi<>1")
+
+            # B - approved + properly SDI-excluded -> terminal, never archives
+            if sdi_approved and qrc_sdi and not in_arch:
+                add("approved_but_unarchivable",
+                    f'Approved + SDI-excluded (Manual Entry) -> terminal; will not '
+                    f'package or archive. Decide: re-include in SDI or keep excluded. '
+                    f'ubc_tag="{ubc_tag or "(blank)"}" '
+                    f'group="{r["asset_group"]}" loc="{r["location"]}"'
+                    + ("  [BLANK UBC TAG]" if _is_blank(ubc_tag) else ""))
+
+            # E - approved with no usable identity
+            if sdi_approved and _is_blank(ubc_tag):
+                add("approved_blank_identity",
+                    "Approved=1 but UBC Asset Tag is blank (cannot form a valid SDI row)")
+
+            # D - approved, includible, not archived, not yet packaged
+            if sdi_approved and not qrc_sdi and not in_arch and not in_pkg:
+                add("ready_not_packaged",
+                    "Approved + in-SDI + not archived + not packaged "
+                    "(ready to package)")
+
+            # C - approval disagreement across stores (live/non-archived only)
+            if not in_arch:
+                jraw = _json_approved(json_dir, qr, building, cfg["json_suffix"])
+                signals = {"sdi_dataset_EL": sdi_approved}
+                if have_qr_codes and qrc_approved_raw is not None:
+                    signals["QR_codes"] = _approved_true(qrc_approved_raw)
+                if jraw is not None:
+                    signals["json"] = _approved_true(jraw)
+                if len(set(signals.values())) > 1:
+                    parts = ", ".join(f"{k}={'1' if v else '0'}" for k, v in signals.items())
+                    add("approval_mismatch", f"Approved disagrees across stores: {parts}")
+
+    return scanned, anomalies
+
+
+def _print_report(scanned: int, anomalies: list[dict], quiet: bool) -> None:
+    by_sev: dict[str, int] = {}
+    by_kind: dict[str, int] = {}
+    for a in anomalies:
+        by_sev[a["severity"]] = by_sev.get(a["severity"], 0) + 1
+        by_kind[a["kind"]] = by_kind.get(a["kind"], 0) + 1
+
+    if not anomalies:
+        if not quiet:
+            print(f"[AUDIT] OK - scanned {scanned} EL asset(s), no findings")
+        return
+
+    sev_summary = ", ".join(f"{k}={v}" for k, v in sorted(by_sev.items()))
+    print(f"[AUDIT] FINDINGS: {len(anomalies)} across {scanned} EL asset(s) ({sev_summary})")
+    for a in sorted(anomalies, key=lambda x: (x["severity"], x["kind"], x["building"], x["qr"])):
+        print(f'  - [{a["severity"]}] {a["kind"]}  qr={a["qr"]}  building={a["building"]}')
+        print(f"      {a['detail']}")
+
+    # Worklist table: the case-by-case remediation set.
+    worklist = [a for a in anomalies if a["kind"] == "approved_but_unarchivable"]
+    if worklist and not quiet:
+        print(f"\n[AUDIT] WORKLIST - approved-but-unarchivable ({len(worklist)}):")
+        print(f'  {"building":<10} {"qr":<14} detail')
+        for a in sorted(worklist, key=lambda x: (x["building"], x["qr"])):
+            print(f'  {a["building"]:<10} {a["qr"]:<14} {a["detail"]}')
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description="Audit EL approve->package->archive integrity (read-only).")
+    parser.add_argument("--db-path", default=DEFAULT_DB_PATH)
+    parser.add_argument("--json-dir", default=DEFAULT_JSON_DIR)
+    parser.add_argument("--qr", default=None, help="drill down on a single QR code")
+    parser.add_argument("--building", default=None, help="filter to one building code")
+    parser.add_argument("--quiet", action="store_true",
+                        help="suppress OK line and worklist table; print only findings")
+    parser.add_argument("--strict", action="store_true",
+                        help="treat INFO findings as failures too (exit 1)")
+    args = parser.parse_args()
+
+    try:
+        scanned, anomalies = audit(args.db_path, args.json_dir, args.qr, args.building)
+    except FileNotFoundError as exc:
+        print(f"[AUDIT] ERROR: {exc}", file=sys.stderr)
+        return 2
+
+    _print_report(scanned, anomalies, args.quiet)
+
+    fail_set = set(SEVERITY.values()) if args.strict else EXIT_SEVERITIES
+    failing = [a for a in anomalies if a["severity"] in fail_set]
+    if failing:
+        import datetime
+        stamp = datetime.datetime.now().isoformat(timespec="seconds")
+        print(f"[AUDIT] RUN_AT={stamp} FINDINGS={len(anomalies)} FAILING={len(failing)}")
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

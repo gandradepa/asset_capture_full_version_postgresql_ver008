@@ -1,0 +1,98 @@
+#!/usr/bin/env python3
+"""Idempotent migration: create the unified `audit_trail` table + indexes.
+
+Run on every deploy via run_update_db.sh. Safe to run repeatedly.
+"""
+
+from __future__ import annotations
+
+import argparse
+import os
+import sqlite3
+import sys
+
+# Backend-agnostic DB layer (SQLite default; PostgreSQL when DB_BACKEND=postgres).
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import db as qrdb
+
+DEFAULT_DB = "/home/developer/asset_capture_app_dev/data/QR_codes.db"
+
+DDL = """
+CREATE TABLE IF NOT EXISTS audit_trail (
+    id                INTEGER PRIMARY KEY AUTOINCREMENT,
+    qr_code           TEXT,
+    description       TEXT,
+    modification_date TEXT NOT NULL,
+    modification_time TEXT NOT NULL,
+    modified_by       TEXT NOT NULL,
+    source            TEXT NOT NULL,
+    app_name          TEXT NOT NULL,
+    table_name        TEXT NOT NULL,
+    record_pk         TEXT NOT NULL,
+    op_type           TEXT NOT NULL CHECK (op_type IN ('INSERT','UPDATE','DELETE')),
+    field_name        TEXT,
+    old_value         TEXT,
+    new_value         TEXT,
+    created_at        TEXT NOT NULL DEFAULT (CURRENT_TIMESTAMP)
+);
+"""
+
+INDEXES = [
+    "CREATE INDEX IF NOT EXISTS ix_audit_trail_qr        ON audit_trail(qr_code);",
+    "CREATE INDEX IF NOT EXISTS ix_audit_trail_date      ON audit_trail(modification_date);",
+    "CREATE INDEX IF NOT EXISTS ix_audit_trail_user      ON audit_trail(modified_by);",
+    "CREATE INDEX IF NOT EXISTS ix_audit_trail_app_table ON audit_trail(app_name, table_name);",
+    "CREATE INDEX IF NOT EXISTS ix_audit_trail_record    ON audit_trail(table_name, record_pk);",
+]
+
+
+def migrate(db_path: str) -> None:
+    if not qrdb.is_postgres() and not os.path.exists(db_path):
+        print(f"[migrate] DB not found: {db_path}", file=sys.stderr)
+        sys.exit(2)
+    conn = qrdb.get_connection(sqlite_path=db_path, timeout=10.0)
+    try:
+        if qrdb.is_postgres():
+            # On PostgreSQL the audit_trail table + indexes are created by the C3/C4
+            # migrations (c3_model.sql + c4_audit_trail_indexes.sql). The SQLite DDL
+            # below (INTEGER PRIMARY KEY AUTOINCREMENT) is invalid on PG, so this
+            # idempotent step is verify-only when run against PostgreSQL.
+            if not qrdb.has_table(conn, "audit_trail"):
+                print("[migrate] audit_trail MISSING on PostgreSQL — apply the C3 model "
+                      "and c4_audit_trail_indexes.sql.", file=sys.stderr)
+                sys.exit(1)
+            cols = qrdb.table_columns(conn, "audit_trail")
+            idx = [r[0] for r in conn.execute(
+                "SELECT indexname FROM pg_indexes WHERE tablename='audit_trail'"
+            ).fetchall()]
+            print(f"[migrate] audit_trail OK (PostgreSQL, verify-only) — {len(cols)} cols, {len(idx)} indexes")
+            print(f"[migrate]   columns: {cols}")
+            print(f"[migrate]   indexes: {idx}")
+            return
+        conn.execute("PRAGMA foreign_keys = ON;")
+        conn.executescript(DDL)
+        for sql in INDEXES:
+            conn.execute(sql)
+        conn.commit()
+        cols = [r[1] for r in conn.execute("PRAGMA table_info(audit_trail)").fetchall()]
+        idx = [r[1] for r in conn.execute("PRAGMA index_list(audit_trail)").fetchall()]
+        print(f"[migrate] audit_trail OK — {len(cols)} cols, {len(idx)} indexes")
+        print(f"[migrate]   columns: {cols}")
+        print(f"[migrate]   indexes: {idx}")
+    finally:
+        conn.close()
+
+
+def main() -> None:
+    p = argparse.ArgumentParser(description=__doc__)
+    p.add_argument(
+        "--db",
+        default=os.environ.get("DB_PATH", DEFAULT_DB),
+        help=f"Path to SQLite DB (default: $DB_PATH or {DEFAULT_DB})",
+    )
+    args = p.parse_args()
+    migrate(args.db)
+
+
+if __name__ == "__main__":
+    main()

@@ -1,0 +1,362 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{{ title }}</title>
+  <link rel="icon" href="{{ url_for('life_cycle.static', filename='img/ubc-facilities_logo.jpg') }}" type="image/jpeg">
+  <link rel="stylesheet" href="{{ url_for('life_cycle.static', filename='css/styles.css') }}?v=20260723-2">
+  {# When embedded in the Asset Portal dashboard iframe (?embedded=true), hide
+     this app's own header chrome so only the content shows. #}
+  <style>
+    body.embedded-mode .app-header { display: none !important; }
+    /* Full standalone page: when the shared shell sidebar/topbar is mounted,
+       keep this app's sticky header just below the 64px shell topbar. */
+    body.acshell-host .app-header { top: 64px; }
+  </style>
+</head>
+<body class="{% if g.embedded %}embedded-mode{% endif %}">
+  {# Shared Asset Management shell (sidebar + topbar). Self-suppresses inside the
+     dashboard iframe; only mounted on the full standalone page. #}
+  {% if not g.embedded %}{% include "_shell.html" %}{% endif %}
+  {% set header_labels = {'Property Name': 'Building', 'years': 'Years', 'classification': 'Classification', 'flag': 'Captured'} %}
+  {% set center_cols = ['Installation Date', 'years', 'classification', 'flag', 'Capture Date'] %}
+  {% set wrap_cols = ['Property Name', 'Space Name', 'Description'] %}
+  {% set class_titles = {
+      'G': 'Good — under 8 years',
+      'Y': 'Caution — 8 to 10 years',
+      'R': 'Critical — 10 years or more'
+  } %}
+  {% macro render_table(complete) %}
+    {# Both tabs show the two capture columns (Captured flag + Capture Date)
+       appended after the base display_columns. #}
+    {% set cols = display_columns + capture_columns %}
+    <div class="table-wrap">
+      <table class="data-table">
+        <thead>
+          <tr>
+            {% for col in cols %}
+              <th class="sortable {{ 'center' if col in center_cols else '' }}"
+                  data-key="{{ col }}"
+                  data-type="{% if col == 'years' %}number{% elif col == 'flag' %}number{% elif col == 'Installation Date' %}date{% elif col == 'classification' %}class{% else %}text{% endif %}"
+                  scope="col" tabindex="0" role="button" aria-label="Sort by {{ header_labels.get(col, col) }}">
+                <span class="th-label">{{ header_labels.get(col, col) }}</span>
+                <span class="sort-ind" aria-hidden="true"></span>
+              </th>
+            {% endfor %}
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in rows if row.complete == complete %}
+            <tr data-group="{{ row[group_code_field] }}" data-cls="{{ row['classification'] or '' }}"
+                data-years="{{ row['years'] if row['years'] is not none else '' }}"
+                data-install-year="{{ (row['Installation Date']|string)[-4:] if row['Installation Date'] else '' }}"
+                data-qr="{{ (row['QR Code'] or '')|lower }}"
+                data-tag="{{ (row['Asset Tag'] or '')|lower }}"
+                data-building="{{ row['Property Name'] or '' }}"
+                data-capture="{{ 'yes' if row['captured'] else 'no' }}"
+                data-capture-date="{{ row['Capture Date'] or '' }}">
+              {% for col in cols %}
+                {% if col == 'classification' %}
+                  {% set tl = {'G': 'green', 'Y': 'yellow', 'R': 'red'}.get(row['classification']) %}
+                  <td class="center col-classification" data-sort="{{ {'G': 1, 'Y': 2, 'R': 3}.get(row['classification'], '') }}">
+                    {% if tl %}
+                      <span class="lc-traffic lc-traffic--{{ tl }}"
+                            title="{{ class_titles.get(row['classification'], '') }}"
+                            aria-label="{{ class_titles.get(row['classification'], '') }}"></span>
+                    {% else %}<span class="muted">—</span>{% endif %}
+                  </td>
+                {% elif col == 'years' %}
+                  <td class="center tnum">{% if row['years'] is not none %}{{ '%.2f'|format(row['years']) }}{% else %}<span class="muted">—</span>{% endif %}</td>
+                {% elif col == 'QR Code' %}
+                  <td class="mono">{{ row['QR Code'] }}</td>
+                {% elif col == 'flag' %}
+                  <td class="center col-sdi" data-sort="{{ 1 if row['captured'] else 0 }}">
+                    {% if row['captured'] %}
+                      <span class="lc-traffic lc-traffic--found"
+                            title="Captured in the field" aria-label="Captured in the field"></span>
+                    {% else %}<span class="muted">—</span>{% endif %}
+                  </td>
+                {% elif col == 'Capture Date' %}
+                  <td class="center tnum col-capture-date">{% if row['Capture Date'] %}{{ row['Capture Date'] }}{% else %}<span class="muted">—</span>{% endif %}</td>
+                {% else %}
+                  <td class="{% if col in center_cols %}center{% elif col in wrap_cols %}wrap{% endif %}{% if col in key_columns and row[col] in [none, ''] %} missing{% endif %}">{% if row[col] not in [none, ''] %}{{ row[col] }}{% else %}<span class="muted">—</span>{% endif %}</td>
+                {% endif %}
+              {% endfor %}
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  {% endmacro %}
+
+  {% macro filter_strip(tab, with_chart, with_capture=false) %}
+    <div class="filter-strip">
+      <div class="lc-filters">
+        <div class="filter-field">
+          <label class="filter-label" for="filter-qr-{{ tab }}">Search QR Code</label>
+          <div class="filter-control">
+            <span class="filter-icon" aria-hidden="true">
+              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" viewBox="0 0 16 16">
+                <path d="M0 .5A.5.5 0 0 1 .5 0h3a.5.5 0 0 1 0 1H1v2.5a.5.5 0 0 1-1 0zm12 0a.5.5 0 0 1 .5-.5h3a.5.5 0 0 1 .5.5v3a.5.5 0 0 1-1 0V1h-2.5a.5.5 0 0 1-.5-.5M.5 12a.5.5 0 0 1 .5.5V15h2.5a.5.5 0 0 1 0 1h-3a.5.5 0 0 1-.5-.5v-3a.5.5 0 0 1 .5-.5m15 0a.5.5 0 0 1 .5.5v3a.5.5 0 0 1-.5.5h-3a.5.5 0 0 1 0-1H15v-2.5a.5.5 0 0 1 .5-.5M4 4h1v1H4z"/>
+                <path d="M7 2H2v5h5zM3 3h3v3H3zm2 8H4v1h1z"/>
+                <path d="M7 9H2v5h5zm-4 1h3v3H3zm8-6h1v1h-1z"/>
+                <path d="M9 2h5v5H9zm1 1v3h3V3zM8 8v2h1v1H8v1h2v-2h1v2h1v-1h2v-1h-3V8zm2 2H9V9h1zm4 2h-1v1h-2v1h3zm-4 2v-1H8v1z"/>
+                <path d="M12 9h2V8h-2z"/>
+              </svg>
+            </span>
+            <input id="filter-qr-{{ tab }}" class="filter-input has-icon" type="search" placeholder="QR Code…" autocomplete="off">
+          </div>
+        </div>
+        <div class="filter-field">
+          <label class="filter-label" for="filter-tag-{{ tab }}">UBC Asset Tag</label>
+          <div class="filter-control">
+            <span class="filter-icon" aria-hidden="true">
+              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" viewBox="0 0 16 16">
+                <path d="M6 4.5a1.5 1.5 0 1 1-3 0 1.5 1.5 0 0 1 3 0M5 4.5a.5.5 0 1 0-1 0 .5.5 0 0 0 1 0"/>
+                <path d="M2 1a1 1 0 0 0-1 1v4.586a1 1 0 0 0 .293.707l7 7a1 1 0 0 0 1.414 0l4.586-4.586a1 1 0 0 0 0-1.414l-7-7A1 1 0 0 0 6.586 1zm0 1h4.586l7 7L9 13.586l-7-7z"/>
+              </svg>
+            </span>
+            <input id="filter-tag-{{ tab }}" class="filter-input has-icon" type="search" placeholder="Asset tag…" autocomplete="off">
+          </div>
+        </div>
+        <div class="filter-field">
+          <span class="filter-label" id="filter-building-label-{{ tab }}">Building</span>
+          <div id="filter-building-{{ tab }}" class="ms">
+            <button type="button" class="filter-input ms-toggle" aria-haspopup="listbox"
+                    aria-expanded="false" aria-labelledby="filter-building-label-{{ tab }}">
+              <span class="ms-text">All buildings</span>
+              <span class="ms-caret" aria-hidden="true">▾</span>
+            </button>
+            <div class="ms-panel" role="listbox" aria-multiselectable="true" hidden>
+              <input type="search" class="ms-search" placeholder="Filter buildings…"
+                     autocomplete="off" aria-label="Filter the building list">
+              <div class="ms-actions">
+                <button type="button" class="ms-action" data-act="all">Select all</button>
+                <button type="button" class="ms-action" data-act="none">Clear</button>
+              </div>
+              <div class="ms-options"><!-- checkbox rows injected by dashboard.js --></div>
+            </div>
+          </div>
+        </div>
+        {% if with_capture %}
+        <div class="filter-field">
+          <label class="filter-label" for="filter-capture-{{ tab }}">Captured</label>
+          <select id="filter-capture-{{ tab }}" class="filter-input">
+            <option value="">All</option>
+            <option value="yes">Yes</option>
+            <option value="no">No</option>
+          </select>
+        </div>
+        <div class="filter-field">
+          <label class="filter-label" for="filter-capture-date-{{ tab }}">Capture Date</label>
+          <div class="filter-control">
+            <span class="filter-icon" aria-hidden="true">
+              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" viewBox="0 0 16 16">
+                <path d="M6.445 11.688V6.354h-.633A12.6 12.6 0 0 0 4.5 7.16v.695c.375-.257.969-.62 1.258-.777h.012v4.61h.675zm1.188-1.305c.047.64.594 1.406 1.703 1.406 1.258 0 2-1.066 2-2.871 0-1.934-.781-2.785-2.087-2.785-.957 0-1.81.643-1.81 1.712 0 1.084.799 1.677 1.731 1.677.74 0 1.236-.423 1.353-.788h.025c-.005 1.215-.461 1.916-1.214 1.916-.596 0-.991-.413-1.027-.851zm2.505-2.431c0 .719-.539 1.082-1.04 1.082-.42 0-1.018-.218-1.018-1.029 0-.804.539-1.166 1.045-1.166.494 0 1.013.36 1.013 1.113z"/>
+                <path d="M4 .5a.5.5 0 0 0-1 0V1H2a2 2 0 0 0-2 2v11a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V3a2 2 0 0 0-2-2h-1V.5a.5.5 0 0 0-1 0V1H4zM1 4v-1a1 1 0 0 1 1-1h12a1 1 0 0 1 1 1v1zm0 1h14v9a1 1 0 0 1-1 1H2a1 1 0 0 1-1-1z"/>
+              </svg>
+            </span>
+            <input id="filter-capture-date-{{ tab }}" class="filter-input has-icon" type="date">
+          </div>
+        </div>
+        {% endif %}
+      </div>
+      {% if with_chart %}
+      <div class="chart-panel" id="class-chart-{{ tab }}" role="group" aria-label="Filter by classification status">
+        <div class="chart-head">
+          <span class="chart-title">Classification</span>
+          <span class="chart-sub">Click a bar to filter · click again to clear</span>
+        </div>
+        <div class="chart-bars">
+          <button type="button" class="chart-bar" data-cls="G" aria-pressed="false" title="Good — under 8 years">
+            <span class="chart-count">0</span>
+            <span class="chart-track"><span class="chart-fill chart-fill--green"></span></span>
+            <span class="chart-xlabel">Good</span>
+          </button>
+          <button type="button" class="chart-bar" data-cls="Y" aria-pressed="false" title="Caution — 8 to 10 years">
+            <span class="chart-count">0</span>
+            <span class="chart-track"><span class="chart-fill chart-fill--yellow"></span></span>
+            <span class="chart-xlabel">Caution</span>
+          </button>
+          <button type="button" class="chart-bar" data-cls="R" aria-pressed="false" title="Critical — 10 years or more">
+            <span class="chart-count">0</span>
+            <span class="chart-track"><span class="chart-fill chart-fill--red"></span></span>
+            <span class="chart-xlabel">Critical</span>
+          </button>
+        </div>
+      </div>
+      {% endif %}
+    </div>
+  {% endmacro %}
+
+  <header class="app-header">
+    <img src="{{ url_for('life_cycle.static', filename='img/ubc-facilities_logo.jpg') }}" alt="UBC Facilities" class="cmd-logo">
+    <div class="brand-text">
+      <span class="brand-org">Maintenance Planning Department &bull; Life Cycle</span>
+      <h1 class="brand-title">{{ title }}</h1>
+    </div>
+    <div class="header-actions">
+      <span id="refresh-status" class="refresh-status" role="status" aria-live="polite"></span>
+      <input id="refresh-file" class="visually-hidden" type="file" accept=".xlsx,.xls"
+             aria-hidden="true" tabindex="-1">
+      <button type="button" id="refresh-btn" class="btn-refresh"
+              title="Choose a source Excel file and load it into PostgreSQL">
+        <span class="btn-refresh-icon" aria-hidden="true">
+          <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" fill="currentColor" viewBox="0 0 16 16">
+            <path fill-rule="evenodd" d="M8 3a5 5 0 1 0 4.546 2.914.5.5 0 0 1 .908-.417A6 6 0 1 1 8 2z"/>
+            <path d="M8 4.466V.534a.25.25 0 0 1 .41-.192l2.36 1.966c.12.1.12.284 0 .384L8.41 4.658A.25.25 0 0 1 8 4.466"/>
+          </svg>
+        </span>
+        Update Database
+      </button>
+      <span class="last-updated" id="last-updated"
+            title="When the life cycle data was last loaded into the database">
+        <span class="last-updated-label">Last updated</span>
+        <span class="last-updated-value">{{ last_loaded or '—' }}</span>
+      </span>
+    </div>
+  </header>
+
+  <main class="container">
+    <section class="card selector-card">
+      <div class="selector-row">
+        <div class="selector-field">
+          <label class="field-label" for="group-select">Which asset group?</label>
+          <select id="group-select" class="select" autocomplete="off">
+            <option value="">Choose an asset group to begin</option>
+            {% for g in groups %}
+              <option value="{{ g.code }}">{{ g.name or g.code }} ({{ g.code }}) — {{ g.total }} assets</option>
+            {% endfor %}
+          </select>
+          <p class="helper">Pick a group to see its life cycle records, split by data completeness.</p>
+        </div>
+
+        {# Whole-table age-classification summary (all rows, both tabs). #}
+        <div class="lc-measure" role="group"
+             aria-label="Age classification across the whole life cycle table">
+          <div class="lc-measure-head">
+            <span class="lc-measure-title">Age Classification</span>
+            <span class="lc-measure-sub">by years in service</span>
+          </div>
+          {# Fancy donut: an SVG ring (r chosen so circumference = 100, letting
+             percentages map straight to stroke-dasharray) plus a legend.
+             Counts/percentages start empty (no group selected on load);
+             dashboard.js fills the segments + legend for the chosen group. #}
+          <div class="lc-donut-wrap">
+            <div class="lc-donut">
+              <svg class="lc-donut-svg" viewBox="0 0 42 42" role="img"
+                   aria-label="Age classification donut chart by years in service">
+                <circle class="lc-donut-track" cx="21" cy="21" r="15.91549431"></circle>
+                {% for it in classification_summary['items'] %}
+                <circle class="lc-donut-seg lc-donut-seg--{{ it.tone }}"
+                        data-bucket="{{ it.key }}" cx="21" cy="21" r="15.91549431"
+                        stroke-dasharray="0 100" stroke-dashoffset="25">
+                  <title>{{ it.label }} · {{ it.sub }}</title>
+                </circle>
+                {% endfor %}
+              </svg>
+              <div class="lc-donut-center">
+                <span class="lc-donut-total" data-donut-total>0</span>
+                <span class="lc-donut-total-label">assets</span>
+              </div>
+            </div>
+            <ul class="lc-legend">
+              {% for it in classification_summary['items'] %}
+              <li class="lc-legend-item is-empty" data-bucket="{{ it.key }}">
+                <span class="lc-legend-dot lc-legend-dot--{{ it.tone }}"></span>
+                <span class="lc-legend-label">{{ it.label }}
+                  <span class="lc-legend-sub">· {{ it.sub }}</span></span>
+                <span class="lc-legend-count">0</span>
+                <span class="lc-legend-pct">0%</span>
+              </li>
+              {% endfor %}
+            </ul>
+            {# Companion bar chart: life-cycle expiry by year (X = install year +
+               10, i.e. the year the asset reaches 10 yrs of service), Y = years
+               in service, dashed 10-year line. Built by dashboard.js. #}
+            <div class="lc-agechart" role="img"
+                 aria-label="Life-cycle expiry by year: the year each asset reaches 10 years of service, with a 10-year line">
+              <div class="lc-agechart-head">
+                <span class="lc-agechart-title">Life-cycle Expiry</span>
+                <span class="lc-agechart-sub">year reaching 10 yrs · yrs in service</span>
+              </div>
+              <div class="lc-agechart-plotwrap" id="age-chart">
+                <span class="lc-agechart-emptymsg">Select a group to see asset ages</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section id="empty-state" class="empty-state">
+      <div class="empty-icon" aria-hidden="true">⌕</div>
+      <p class="empty-title">Select an asset group above</p>
+      <p class="empty-sub">Your asset tables will appear here once you choose a group.</p>
+    </section>
+
+    <section id="results" class="results" hidden>
+      <div class="results-head">
+        <h2 id="group-title" class="group-title"></h2>
+        <div class="head-controls">
+          <button type="button" id="reset-btn" class="btn-reset" title="Clear filters, chart filter and sorting (keeps the asset group)">
+            <span class="btn-reset-icon" aria-hidden="true">↺</span> Reset
+          </button>
+          <button type="button" id="export-btn" class="btn-export" title="Export the current (filtered) view to Excel">
+            <span class="btn-export-icon" aria-hidden="true">
+              <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" fill="currentColor" viewBox="0 0 16 16">
+                <path d="M.5 9.9a.5.5 0 0 1 .5.5v2.5a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-2.5a.5.5 0 0 1 1 0v2.5a2 2 0 0 1-2 2H2a2 2 0 0 1-2-2v-2.5a.5.5 0 0 1 .5-.5"/>
+                <path d="M7.646 11.854a.5.5 0 0 0 .708 0l3-3a.5.5 0 0 0-.708-.708L8.5 10.293V1.5a.5.5 0 0 0-1 0v8.793L5.354 8.146a.5.5 0 1 0-.708.708z"/>
+              </svg>
+            </span> Export
+          </button>
+        </div>
+      </div>
+
+      <div class="tabs" role="tablist" aria-label="Data completeness">
+        <button type="button" class="tab active" id="tab-complete" data-tab="complete" role="tab" aria-selected="true">
+          Complete <span class="count" id="count-complete">0</span>
+        </button>
+        <button type="button" class="tab" id="tab-incomplete" data-tab="incomplete" role="tab" aria-selected="false">
+          Incomplete <span class="count" id="count-incomplete">0</span>
+        </button>
+      </div>
+
+      <p class="tab-hint" id="tab-hint"></p>
+
+      <div class="card pane active" id="pane-complete" role="tabpanel" aria-labelledby="tab-complete">
+        {{ filter_strip('complete', true, true) }}
+        {{ render_table(true) }}
+        <p class="no-rows" hidden>No matching assets in this view.</p>
+      </div>
+
+      <div class="card pane" id="pane-incomplete" role="tabpanel" aria-labelledby="tab-incomplete" hidden>
+        {{ filter_strip('incomplete', false, true) }}
+        {{ render_table(false) }}
+        <p class="no-rows" hidden>No matching assets in this view.</p>
+      </div>
+    </section>
+  </main>
+
+  <footer class="app-footer">
+    <span>Source: <code>{{ db_name }}.life_cycle</code></span>
+    <span>Complete = Installation Date is present</span>
+  </footer>
+
+  <dialog id="refresh-dialog" class="lc-dialog" aria-labelledby="refresh-dialog-title">
+    <form method="dialog" class="lc-dialog-form">
+      <div class="lc-dialog-head">
+        <span id="refresh-dialog-icon" class="lc-dialog-icon" aria-hidden="true"></span>
+        <h2 id="refresh-dialog-title" class="lc-dialog-title"></h2>
+      </div>
+      <div id="refresh-dialog-body" class="lc-dialog-body"></div>
+      <div class="lc-dialog-actions">
+        <button type="submit" id="refresh-dialog-ok" class="btn-export" value="ok" autofocus></button>
+      </div>
+    </form>
+  </dialog>
+
+  <script src="{{ url_for('life_cycle.static', filename='js/dashboard.js') }}?v=20260723-2" defer></script>
+</body>
+</html>
