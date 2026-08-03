@@ -1,6 +1,6 @@
 # Industrial Asset Extraction API â€” Agent Instructions
 
-Current documentation refresh: 2026-06-11.
+Current documentation refresh: 2026-08-03.
 
 ## Application Identity
 
@@ -77,6 +77,12 @@ All three scripts share an identical OOP architecture:
 | **Pydantic Model** | `MEStructuredExtraction`, `MEReasonedExtraction` |
 | **Completeness Fields** | Manufacturer, Model, Serial Number, Year, UBC Tag (+ Technical Safety BC when seq 3 exists) |
 | **Lines** | ~1,940 |
+
+#### ME UBC Tag Hybrid Consensus
+
+- Sequence `-1` keeps low-detail `gpt-5.4-mini` as the primary reader. The local validator locates the dominant placard and uses four bounded Tesseract variants as one source.
+- A missing, malformed, dictionary-unknown, low-confidence, or locally contradicted tag can make one independent `gpt-5.6-terra` call with `detail=original`; it receives two opposite placard rotations, at most 1280 pixels per edge and 220 completion tokens, with no retry.
+- Resolve prefix and core independently. Change a component only when two non-empty sources agree; unresolved/judge-failure outcomes preserve the primary component, cap UBC confidence at 65, and add `manual_review.ubc_consensus`. Dictionary validity is an escalation trigger, not visual evidence or a veto.
 
 ### Electrical (EL) â€” `API_interface_EL_ver00.py`
 

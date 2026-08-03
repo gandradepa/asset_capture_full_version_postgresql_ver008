@@ -2,7 +2,7 @@
 
 > **🐘 Database backend: PostgreSQL (C4 cutover complete, 2026-06-08).** The platform now runs on PostgreSQL (`qr_code_db`, VM `127.0.0.1:5433`) via a backend-agnostic `db.py` layer, switched by `DB_BACKEND=postgres` in `/home/developer/db_backend.env`. The SQLite `QR_codes.db` referenced throughout is now the **frozen rollback** (flip the env back to `sqlite` + restart to revert). See `Markdowns_documentation/special_processes/04_database_topography.md`, `C4_CUTOVER_RUNBOOK.md`, and the `pg-cutover-complete` memory.
 
-Current documentation refresh: 2026-06-11.
+Current documentation refresh: 2026-08-03.
 
 ## Overview
 
@@ -37,7 +37,7 @@ Owns:
 Owns:
 
 - OCR and LLM extraction
-- default single-model policy: ME and BF use `gpt-5.4-mini`; EL and SLD use `gpt-5.4`; model fallback is disabled unless explicitly re-enabled with the existing environment overrides
+- default single-model policy: ME and BF use `gpt-5.4-mini`; EL and SLD use `gpt-5.4`; model fallback is disabled unless explicitly re-enabled with the existing environment overrides. ME's sequence `-1` UBC tag has a narrow exception: a challenged component can use one independent `gpt-5.6-terra` original-detail judge call after local OCR validation.
 - discipline-aware validation via shared validators (`validators_shared.py`)
 - JSON artifact creation
 - AI status updates

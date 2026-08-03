@@ -1,6 +1,6 @@
 # Workflow: Run Extraction for ME, EL, and BF
 
-Current documentation refresh: 2026-07-08.
+Current documentation refresh: 2026-08-03.
 
 ## Purpose
 
@@ -27,12 +27,20 @@ Process captured images into discipline-specific JSON payloads and sync summary 
 
 ## OpenAI Model Policy
 
-- ME uses `gpt-5.4-mini`.
+- ME uses `gpt-5.4-mini` at low image detail for normal extraction. A challenged sequence `-1` UBC tag may make one additional, independent `gpt-5.6-terra` original-detail judge call; it is not a general fallback.
 - BF uses `gpt-5.4-mini`.
 - EL uses `gpt-5.4`.
 - Each asset uses one model and one API attempt by default: model fallback is disabled, `MAX_LLM_ATTEMPTS_PER_ASSET=1`, and `MAX_LLM_ATTEMPTS_PER_MODEL=1`.
 - Existing discipline-specific environment variables remain available as explicit overrides.
 - SLD extraction is a separate EL Review subprocess and uses `gpt-5.4` with an empty fallback-model list by default.
+
+### ME UBC Tag Consensus Guard
+
+- Enabled by default with `ME_UBC_CONSENSUS_ENABLED=1`; set it to `0` to retain the legacy targeted reread path.
+- The local validator reads the dominant tag placard, not the QR card, using four bounded Tesseract variants. It supplies one corroborating vote only when at least two variants agree.
+- Escalation is limited to one call per asset, no retry, two opposite placard rotations, a 1280-pixel maximum edge, and 220 completion tokens. Defaults are `ME_UBC_JUDGE_MODEL=gpt-5.6-terra`, `ME_UBC_JUDGE_DETAIL=original`, and `ME_UBC_JUDGE_REASONING_EFFORT=low`.
+- The judge prompt is independent: it is not told the primary or local candidate. A prefix/core component changes only with two agreeing non-empty sources; unresolved or failed judge outcomes preserve the primary component, cap UBC confidence at 65, and flag manual review.
+- `manual_review.ubc_consensus` records the status, trigger codes, component votes, final tag, judge metadata, call count, token usage, and normalized failure category. Human-reviewed and override-protected records remain authoritative.
 
 ## Discipline Rules
 

@@ -1,6 +1,6 @@
 ﻿# UBC Asset Capture Application Documentation
 
-Current documentation refresh: 2026-05-25.
+Current documentation refresh: 2026-08-03.
 
 ## Overview
 
@@ -84,6 +84,7 @@ Primary rules:
 - `Technical Safety BC` is only counted when seq `-3` exists
 - seq ownership matters: `-0` plate, `-1` UBC, `-3` TSBC
 - seq `-4` is the optional **Extra Photo** slot — captured/displayed but excluded from completeness, AI confidence, AI extraction, and "Missed Photo"
+- seq `-1` tags use hybrid consensus: `gpt-5.4-mini` low-detail extraction is primary; local OCR and, only when challenged, one independent `gpt-5.6-terra` original-detail judge resolve the prefix/core by two-source agreement. Unresolved conflicts preserve the primary value, cap confidence, and route to review.
 
 ### Backflow (BF)
 

@@ -1,6 +1,6 @@
 ﻿# UBC Asset Capture Application â€“ Technical Documentation
 
-Current documentation refresh: 2026-05-25.
+Current documentation refresh: 2026-08-03.
 
 ## 1. System Overview
 
@@ -188,6 +188,7 @@ Extra Photo note: the optional Extra Photo sequence (ME `-4`, BF `-3`, EL `-3`) 
 - `Avg_ai_conf` is discipline-aware
 - EL excludes `Volts`, `Location`, and `Branch Panel`
 - ME includes `Technical Safety BC` only when seq `-3` exists
+- A challenged ME sequence `-1` UBC tag is resolved independently by primary extraction, local OCR, and at most one Terra judge. A fully resolved quorum is at least 92 confidence; unresolved consensus preserves the primary tag, caps it at 65, and records manual-review metadata.
 
 ### 4.4 Review / SDI Contract
 
