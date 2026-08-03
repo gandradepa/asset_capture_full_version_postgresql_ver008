@@ -16,6 +16,7 @@ import os
 import json
 import base64
 import re
+import ast
 import tempfile
 import time
 import logging
@@ -187,7 +188,7 @@ except ImportError:
         filled = sum(1 for f in fields if d.get(f))
         return (filled / len(fields)) * 100.0
 
-ME_SCRIPT_VERSION = "2026-03-06-highres-35"
+ME_SCRIPT_VERSION = "2026-08-03-ubc-consensus-36"
 
 
 def _compact_lookup_key(value: str) -> str:
@@ -553,6 +554,29 @@ class Config:
     SIMPLE_IMAGE_DETAIL = os.getenv("ME_IMAGE_DETAIL", "high").strip().lower()
     if SIMPLE_IMAGE_DETAIL not in {"low", "high", "auto"}:
         SIMPLE_IMAGE_DETAIL = "high"
+    # ME seq-1 UBC-tag hybrid consensus. These settings do not change the
+    # primary low-detail extraction; the independent judge is challenge-only.
+    ME_UBC_CONSENSUS_ENABLED = os.getenv(
+        "ME_UBC_CONSENSUS_ENABLED", "1"
+    ).strip().lower() not in {"0", "false", "no", "off"}
+    ME_UBC_JUDGE_MODEL = (
+        os.getenv("ME_UBC_JUDGE_MODEL", "gpt-5.6-terra").strip()
+        or "gpt-5.6-terra"
+    )
+    ME_UBC_JUDGE_DETAIL = os.getenv(
+        "ME_UBC_JUDGE_DETAIL", "original"
+    ).strip().lower()
+    if ME_UBC_JUDGE_DETAIL not in {"low", "high", "auto", "original"}:
+        ME_UBC_JUDGE_DETAIL = "original"
+    ME_UBC_JUDGE_REASONING_EFFORT = os.getenv(
+        "ME_UBC_JUDGE_REASONING_EFFORT", "low"
+    ).strip().lower()
+    if ME_UBC_JUDGE_REASONING_EFFORT not in _REASONING_EFFORTS:
+        ME_UBC_JUDGE_REASONING_EFFORT = "low"
+    # Deliberately not configurable: these guards bound surprise cost.
+    ME_UBC_JUDGE_MAX_CALLS = 1
+    ME_UBC_JUDGE_MAX_INPUT_EDGE = 1280
+    ME_UBC_JUDGE_MAX_COMPLETION_TOKENS = 220
     try:
         _early_score_env = float(os.getenv("ME_EARLY_ACCEPT_SCORE", "95"))
     except ValueError:
@@ -847,6 +871,17 @@ class AssetProcessor:
             Config.SIMPLE_MAX_TOKENS,
             Config.SIMPLE_REASONING_EFFORT,
             Config.SIMPLE_IMAGE_DETAIL,
+        )
+        logging.info(
+            "ME UBC consensus: enabled=%s | judge_model=%s | detail=%s | reasoning=%s "
+            "| call_cap=%s | max_edge=%s | completion_cap=%s",
+            Config.ME_UBC_CONSENSUS_ENABLED,
+            Config.ME_UBC_JUDGE_MODEL,
+            Config.ME_UBC_JUDGE_DETAIL,
+            Config.ME_UBC_JUDGE_REASONING_EFFORT,
+            Config.ME_UBC_JUDGE_MAX_CALLS,
+            Config.ME_UBC_JUDGE_MAX_INPUT_EDGE,
+            Config.ME_UBC_JUDGE_MAX_COMPLETION_TOKENS,
         )
         logging.info(
             "ME reasoning tiers: normal=%s | hard=%s",
@@ -1335,6 +1370,10 @@ class AssetProcessor:
             )
             run_ocr_manufacturer = not bool(llm_manufacturer_no_ocr)
             run_ocr_ubc = not bool(llm_ubc_no_ocr)
+        if Config.ME_UBC_CONSENSUS_ENABLED:
+            # The dedicated local validator below is an independent vote; do
+            # not fold ordinary OCR into the primary model candidate first.
+            run_ocr_ubc = False
         ocr_assisted_rescue = bool(
             Config.OCR_MODE != "off" and (run_ocr_model_serial or run_ocr_manufacturer or run_ocr_ubc)
         )
@@ -1363,6 +1402,17 @@ class AssetProcessor:
             "UBC Tag": raw_ubc_tag,
             "Technical Safety BC": raw_tsbc,
         }
+        primary_confidence_scores = result.get("confidence_scores", {})
+        if not isinstance(primary_confidence_scores, dict):
+            primary_confidence_scores = {}
+        final_ubc_tag, ubc_consensus = self._maybe_resolve_ubc_consensus(
+            qr=qr,
+            primary_tag=llm_cleaned.get("UBC Tag", ""),
+            primary_confidence=primary_confidence_scores.get("UBC Tag", 0),
+            images=info.get("images", {}),
+        )
+        if Config.ME_UBC_CONSENSUS_ENABLED:
+            llm_cleaned["UBC Tag"] = final_ubc_tag
 
         if Config.UI_PARITY_MODE:
             merged_struct = self._build_ui_parity_struct(
@@ -1460,6 +1510,11 @@ class AssetProcessor:
                 has_nameplate_source=has_nameplate_source,
                 has_tsbc_source=has_tsbc_source,
             )
+            if ubc_consensus:
+                conf_scores = self._apply_ubc_consensus_confidence(
+                    conf_scores,
+                    ubc_consensus,
+                )
             serial_date_misread = bool(getattr(self, "_last_serial_date_misread", False))
             serial_unverified = bool(getattr(self, "_last_serial_unverified", False))
             pressure_vessel_unlabeled_serial = bool(
@@ -1489,11 +1544,13 @@ class AssetProcessor:
                         "has_tsbc_source": has_tsbc_source,
                         "ocr_assisted_rescue": ocr_assisted_rescue,
                         "ocr_mode": Config.OCR_MODE,
+                        "ubc_consensus": ubc_consensus,
                         "extra_reason_codes": (
                             (["serial_date_misread_suspected"] if serial_date_misread else [])
                             + (["serial_unverified"] if serial_unverified else [])
                             + (["pressure_vessel_unlabeled_serial"] if pressure_vessel_unlabeled_serial else [])
                             + (["model_serial_collision"] if self._last_model_serial_collision else [])
+                            + list(ubc_consensus.get("reason_codes", []))
                         ),
                     },
                 },
@@ -1739,18 +1796,24 @@ class AssetProcessor:
         manufacturer_lower = merged_struct["Manufacturer"].lower()
         
         # 1. UBC Tag Formatting Precision (The "FC-4C.012" Enforcer)
-        raw_tag = merged_struct["UBC Tag"].upper().replace(" ", "")
-        if (
-            re.fullmatch(r"\d[A-Z][\.\-]\d{2,4}", raw_tag)
-            or re.fullmatch(r"[A-Z]\d[\.\-]\d{2,4}", raw_tag)
-            or re.fullmatch(r"(?:\d[A-Z]|[A-Z]\d)\d{2,4}", raw_tag)
-        ):
-             if re.fullmatch(r"(?:\d[A-Z]|[A-Z]\d)\d{2,4}", raw_tag):
-                 raw_tag = f"{raw_tag[:2]}.{raw_tag[2:]}"
-             if "-" in raw_tag: raw_tag = raw_tag.replace("-", ".")
-             merged_struct["UBC Tag"] = f"FC-{raw_tag}"
+        if ubc_consensus:
+            merged_struct["UBC Tag"] = str(
+                ubc_consensus.get("final_tag") or ""
+            )
         else:
-             merged_struct["UBC Tag"] = raw_tag
+            raw_tag = merged_struct["UBC Tag"].upper().replace(" ", "")
+            if (
+                re.fullmatch(r"\d[A-Z][\.\-]\d{2,4}", raw_tag)
+                or re.fullmatch(r"[A-Z]\d[\.\-]\d{2,4}", raw_tag)
+                or re.fullmatch(r"(?:\d[A-Z]|[A-Z]\d)\d{2,4}", raw_tag)
+            ):
+                if re.fullmatch(r"(?:\d[A-Z]|[A-Z]\d)\d{2,4}", raw_tag):
+                    raw_tag = f"{raw_tag[:2]}.{raw_tag[2:]}"
+                if "-" in raw_tag:
+                    raw_tag = raw_tag.replace("-", ".")
+                merged_struct["UBC Tag"] = f"FC-{raw_tag}"
+            else:
+                merged_struct["UBC Tag"] = raw_tag
 
         # 2. Brand-Gated Hallucination Filters
         # Only apply '1803' / 'FCH' wipe if the brand is Williams.
@@ -1832,6 +1895,11 @@ class AssetProcessor:
             has_nameplate_source=has_nameplate_source,
             has_tsbc_source=has_tsbc_source,
         )
+        if ubc_consensus:
+            conf_scores = self._apply_ubc_consensus_confidence(
+                conf_scores,
+                ubc_consensus,
+            )
         avg_conf = self._compute_avg_ai_conf(conf_scores, has_tsbc_source=has_tsbc_source)
 
         return (
@@ -1847,8 +1915,10 @@ class AssetProcessor:
                     "has_tsbc_source": has_tsbc_source,
                     "ocr_assisted_rescue": ocr_assisted_rescue,
                     "ocr_mode": Config.OCR_MODE,
+                    "ubc_consensus": ubc_consensus,
                     "extra_reason_codes": (
-                        ["model_serial_collision"] if self._last_model_serial_collision else []
+                        (["model_serial_collision"] if self._last_model_serial_collision else [])
+                        + list(ubc_consensus.get("reason_codes", []))
                     ),
                 },
             },
@@ -2379,7 +2449,10 @@ class AssetProcessor:
                     merged["Year"] = self._fallback_year_from_ocr(images)
 
         ubc_raw = merged.get("UBC Tag", "")
-        if self._needs_ocr_for_ubc(ubc_raw):
+        if (
+            not Config.ME_UBC_CONSENSUS_ENABLED
+            and self._needs_ocr_for_ubc(ubc_raw)
+        ):
             ubc_reread = self._reread_ubc_from_tag_llm(qr, images)
             if ubc_reread:
                 ubc_raw = ubc_reread
@@ -5402,6 +5475,590 @@ Output must be strict JSON with exactly one key: "Technical Safety BC".
 
         return ""
 
+    @staticmethod
+    def _split_ubc_tag_components(tag: str) -> Dict[str, str]:
+        """Return normalized UBC prefix/core components without inventing either."""
+        normalized = AssetProcessor._parse_ubc_tag_from_text(tag)
+        if not normalized:
+            return {"tag": "", "prefix": "", "core": "", "separator": "-"}
+        if normalized.startswith("HUM "):
+            prefix, core = normalized.split(" ", 1)
+            return {
+                "tag": normalized,
+                "prefix": prefix,
+                "core": core,
+                "separator": " ",
+            }
+        prefix, separator, core = normalized.partition("-")
+        if not separator or not prefix or not core:
+            return {"tag": "", "prefix": "", "core": "", "separator": "-"}
+        return {
+            "tag": normalized,
+            "prefix": prefix,
+            "core": core,
+            "separator": "-",
+        }
+
+    @staticmethod
+    def _join_ubc_tag_components(prefix: str, core: str, separator: str = "-") -> str:
+        prefix = str(prefix or "").strip().upper()
+        core = str(core or "").strip().upper()
+        if not prefix or not core:
+            return ""
+        actual_separator = " " if prefix == "HUM" else "-"
+        return f"{prefix}{actual_separator}{core}"[:32]
+
+    @staticmethod
+    def _load_me_ubc_prefixes() -> Set[str]:
+        """AST-safely load dictionary prefixes that are valid for ME assets."""
+        candidates: List[str] = []
+        for env_name in ("MECH_DICT_PATH", "MECHANICAL_DICT_PATH"):
+            configured = os.environ.get(env_name, "").strip()
+            if configured:
+                candidates.append(os.path.normpath(configured))
+        candidates.extend(
+            [
+                os.path.normpath("/home/developer/dictionary/mechanical_dictionary.py"),
+                os.path.normpath(
+                    os.path.join(
+                        os.path.dirname(os.path.abspath(__file__)),
+                        "..",
+                        "dictionary",
+                        "mechanical_dictionary.py",
+                    )
+                ),
+            ]
+        )
+
+        for path in dict.fromkeys(candidates):
+            if not path or not os.path.exists(path):
+                continue
+            try:
+                with open(path, "r", encoding="utf-8-sig") as dictionary_file:
+                    tree = ast.parse(dictionary_file.read(), filename=path)
+                asset_dictionary: Dict[str, Any] = {}
+                for node in tree.body:
+                    if not isinstance(node, ast.Assign):
+                        continue
+                    if any(
+                        isinstance(target, ast.Name) and target.id == "ASSET_DICTIONARY"
+                        for target in node.targets
+                    ):
+                        parsed = ast.literal_eval(node.value)
+                        if isinstance(parsed, dict):
+                            asset_dictionary = parsed
+                        break
+
+                prefixes: Set[str] = set()
+                for raw_key, entry in asset_dictionary.items():
+                    key = str(raw_key or "").strip().upper()
+                    if not key:
+                        continue
+                    if "|" in key:
+                        prefix, discipline = key.rsplit("|", 1)
+                        if discipline == "ME" and prefix:
+                            prefixes.add(prefix.rstrip("- ."))
+                        continue
+                    if isinstance(entry, dict):
+                        entry_type = str(
+                            entry.get("asset_type") or entry.get("type") or ""
+                        ).strip().upper()
+                        if entry_type == "ME":
+                            prefixes.add(key.rstrip("- ."))
+                return {prefix for prefix in prefixes if prefix}
+            except Exception as exc:
+                logging.warning("Failed to AST-load ME UBC prefixes from %s: %s", path, exc)
+        return set()
+
+    @staticmethod
+    def _detect_ubc_placard(image: np.ndarray) -> Tuple[np.ndarray, Tuple[int, int, int, int]]:
+        """Select the dominant dark, elongated placard; fall back to the full frame."""
+        if cv2 is None or image is None or not getattr(image, "size", 0):
+            return image, (0, 0, 0, 0)
+        height, width = image.shape[:2]
+        fallback = (0, 0, width, height)
+        try:
+            gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+            dark_mask = cv2.inRange(gray, 0, 85)
+            kernel_side = max(5, int(round(min(height, width) * 0.03)))
+            kernel = cv2.getStructuringElement(
+                cv2.MORPH_RECT, (kernel_side, kernel_side)
+            )
+            closed = cv2.morphologyEx(
+                dark_mask, cv2.MORPH_CLOSE, kernel, iterations=2
+            )
+            contours, _ = cv2.findContours(
+                closed, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
+            )
+            frame_area = float(max(1, width * height))
+            best: Optional[Tuple[float, Tuple[int, int, int, int]]] = None
+            for contour in contours:
+                x, y, box_width, box_height = cv2.boundingRect(contour)
+                box_area = float(box_width * box_height)
+                area_ratio = box_area / frame_area
+                short_side = max(1, min(box_width, box_height))
+                elongation = max(box_width, box_height) / short_side
+                fill = float(cv2.contourArea(contour)) / max(1.0, box_area)
+                if not (0.03 <= area_ratio <= 0.75):
+                    continue
+                if elongation < 1.6 or fill < 0.5:
+                    continue
+                score = box_area * fill
+                if best is None or score > best[0]:
+                    best = (score, (x, y, box_width, box_height))
+            if best is None:
+                return image, fallback
+            x, y, box_width, box_height = best[1]
+            return image[y : y + box_height, x : x + box_width], best[1]
+        except Exception as exc:
+            logging.warning("UBC placard detection failed; using full seq-1 image: %s", exc)
+            return image, fallback
+
+    def _extract_local_ubc_vote(
+        self,
+        images: Dict[str, str],
+        known_prefixes: Optional[Set[str]] = None,
+    ) -> Dict[str, Any]:
+        """Return one local OCR source vote after four bounded placard reads."""
+        empty = {"prefix": "", "core": "", "prefix_votes": 0, "core_votes": 0}
+        if cv2 is None or not isinstance(images, dict):
+            return empty
+        seq1_path = str(images.get("1") or "")
+        if not self._is_readable_source_path(seq1_path):
+            return empty
+        image = cv2.imread(seq1_path)
+        if image is None:
+            return empty
+        placard, _ = self._detect_ubc_placard(image)
+        if placard is None or not placard.size:
+            return empty
+
+        prefixes = {
+            str(prefix or "").strip().upper()
+            for prefix in (known_prefixes if known_prefixes is not None else self._load_me_ubc_prefixes())
+            if str(prefix or "").strip()
+        }
+        if placard.shape[0] > placard.shape[1]:
+            orientations = [
+                cv2.rotate(placard, cv2.ROTATE_90_CLOCKWISE),
+                cv2.rotate(placard, cv2.ROTATE_90_COUNTERCLOCKWISE),
+            ]
+        else:
+            orientations = [placard, cv2.rotate(placard, cv2.ROTATE_180)]
+
+        prefix_counts: Dict[str, int] = defaultdict(int)
+        core_counts: Dict[str, int] = defaultdict(int)
+        config = (
+            "--oem 3 --psm 11 "
+            "-c tessedit_char_whitelist=ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789.-"
+        )
+        for oriented in orientations:
+            start = int(oriented.shape[1] * 0.15)
+            end = int(oriented.shape[1] * 0.85)
+            centered = oriented[:, start:end] if end > start else oriented
+            gray = cv2.cvtColor(centered, cv2.COLOR_BGR2GRAY)
+            scale = max(1.0, 500.0 / max(1, gray.shape[0]))
+            if scale > 1.0:
+                gray = cv2.resize(
+                    gray,
+                    None,
+                    fx=scale,
+                    fy=scale,
+                    interpolation=cv2.INTER_CUBIC,
+                )
+            enhanced = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8, 8)).apply(gray)
+            _, otsu = cv2.threshold(
+                enhanced, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU
+            )
+            for variant in (gray, otsu):
+                raw_text = self._safe_tesseract_ubc_text(variant, config).upper()
+                parsed_vote = self._split_ubc_tag_components(raw_text)
+                if parsed_vote.get("tag"):
+                    prefix_counts[parsed_vote["prefix"]] += 1
+                    core_counts[parsed_vote["core"]] += 1
+                    continue
+                compact = re.sub(r"[^A-Z0-9]", "", raw_text)
+                if not compact:
+                    continue
+                reverse_compact = compact[::-1]
+                matched_prefix = ""
+                matched_view = compact
+                for prefix in sorted(prefixes, key=len, reverse=True):
+                    if prefix in compact:
+                        matched_prefix = prefix
+                        matched_view = compact
+                        break
+                    if prefix in reverse_compact:
+                        matched_prefix = prefix
+                        matched_view = reverse_compact
+                        break
+                if not matched_prefix:
+                    continue
+                prefix_counts[matched_prefix] += 1
+                if matched_view.startswith(matched_prefix):
+                    tail = matched_view[len(matched_prefix) :]
+                    if re.fullmatch(r"[IL][A-Z]", tail):
+                        tail = f"1{tail[1]}"
+                    elif re.fullmatch(r"[OQ][A-Z0-9]", tail):
+                        tail = f"0{tail[1]}"
+                    normalized_core = self._normalize_ubc_core(tail)
+                    if normalized_core and re.search(r"\d", normalized_core):
+                        core_counts[normalized_core] += 1
+
+        def winner(counts: Dict[str, int]) -> Tuple[str, int]:
+            if not counts:
+                return "", 0
+            value, votes = sorted(counts.items(), key=lambda item: (-item[1], item[0]))[0]
+            return (value, votes) if votes >= 2 else ("", votes)
+
+        prefix, prefix_votes = winner(prefix_counts)
+        core, core_votes = winner(core_counts)
+        return {
+            "prefix": prefix,
+            "core": core,
+            "prefix_votes": prefix_votes,
+            "core_votes": core_votes,
+        }
+
+    @staticmethod
+    def _safe_tesseract_ubc_text(image_data: np.ndarray, config: str) -> str:
+        """Run a local UBC read with the fixed four-second cost/time guard."""
+        try:
+            return pytesseract.image_to_string(
+                image_data,
+                config=config,
+                timeout=4,
+            )
+        except Exception:
+            return ""
+
+    @staticmethod
+    def _normalize_ubc_judge_failure_category(exc: BaseException) -> str:
+        """Map a judge failure to a stable category without retaining details."""
+        message = str(exc).lower()
+        class_name = exc.__class__.__name__.lower()
+        if "timeout" in class_name or isinstance(exc, TimeoutError):
+            return "timeout"
+        if any(
+            marker in message
+            for marker in (
+                "insufficient_quota",
+                "exceeded your current quota",
+                "billing_hard_limit_reached",
+            )
+        ):
+            return "quota"
+        if is_auth_error(exc):
+            return "auth"
+        status_code = getattr(exc, "status_code", None) or getattr(
+            exc, "http_status", None
+        )
+        if isinstance(exc, RateLimitError) or status_code == 429:
+            return "rate_limit"
+        if isinstance(exc, (APIConnectionError, APIStatusError, BadRequestError)):
+            return "api"
+        return "parse"
+
+    def _reread_ubc_consensus_judge(
+        self,
+        qr: str,
+        images: Dict[str, str],
+    ) -> Dict[str, Any]:
+        """Run the one-shot independent UBC judge on two placard orientations."""
+        empty_usage = {
+            "prompt_tokens": 0,
+            "completion_tokens": 0,
+            "total_tokens": 0,
+        }
+        failure: Dict[str, Any] = {
+            "tag": "",
+            "model": Config.ME_UBC_JUDGE_MODEL,
+            "call_count": 0,
+            "usage": dict(empty_usage),
+            "error": "parse",
+        }
+        if cv2 is None or not getattr(self, "client", None):
+            return failure
+        seq1_path = str((images or {}).get("1") or "")
+        if not self._is_readable_source_path(seq1_path):
+            return failure
+
+        try:
+            image = cv2.imread(seq1_path)
+            if image is None or not image.size:
+                return failure
+            placard, _ = self._detect_ubc_placard(image)
+            if placard is None or not placard.size:
+                placard = image
+
+            if placard.shape[0] > placard.shape[1]:
+                orientations = (
+                    cv2.rotate(placard, cv2.ROTATE_90_CLOCKWISE),
+                    cv2.rotate(placard, cv2.ROTATE_90_COUNTERCLOCKWISE),
+                )
+            else:
+                orientations = (
+                    placard,
+                    cv2.rotate(placard, cv2.ROTATE_180),
+                )
+
+            prepared_urls: List[str] = []
+            max_edge = Config.ME_UBC_JUDGE_MAX_INPUT_EDGE
+            for oriented in orientations:
+                height, width = oriented.shape[:2]
+                scale = min(1.0, float(max_edge) / max(height, width, 1))
+                prepared = oriented
+                if scale < 1.0:
+                    prepared = cv2.resize(
+                        oriented,
+                        (max(1, int(round(width * scale))), max(1, int(round(height * scale)))),
+                        interpolation=cv2.INTER_AREA,
+                    )
+                prepared_urls.append(self._encode_image_from_data(prepared))
+
+            prompt = (
+                "Read ONLY the printed UBC Tag on this identification placard. "
+                "The two images show the same placard in opposite orientations. "
+                "Preserve every visible letter, digit, dot, and tag segment. "
+                "Normalize a standard tag as PREFIX-CORE; preserve HUM tags as HUM CORE. "
+                "Do not return a QR number, model, order number, or serial number. "
+                "If the placard text is unreadable, return an empty string. "
+                'Return strict JSON with exactly one key: "UBC Tag".'
+            )
+            content: List[Dict[str, Any]] = [{"type": "text", "text": prompt}]
+            content.extend(
+                {
+                    "type": "image_url",
+                    "image_url": {
+                        "url": data_url,
+                        "detail": Config.ME_UBC_JUDGE_DETAIL,
+                    },
+                }
+                for data_url in prepared_urls
+            )
+            failure["call_count"] = 1
+            response = self.client.beta.chat.completions.parse(
+                model=Config.ME_UBC_JUDGE_MODEL,
+                messages=[{"role": "user", "content": content}],
+                max_completion_tokens=Config.ME_UBC_JUDGE_MAX_COMPLETION_TOKENS,
+                reasoning_effort=Config.ME_UBC_JUDGE_REASONING_EFFORT,
+                response_format=MEUBCTagOnlyExtraction,
+            )
+            message = response.choices[0].message
+            if getattr(message, "refusal", None) or getattr(message, "parsed", None) is None:
+                raise ValueError("judge response was not parsed")
+
+            parsed: MEUBCTagOnlyExtraction = message.parsed
+            raw_tag = parsed.model_dump(by_alias=True).get("UBC Tag", "")
+            normalized_tag = self._split_ubc_tag_components(str(raw_tag or "")).get(
+                "tag", ""
+            )
+            usage_obj = getattr(response, "usage", None)
+            usage = {
+                "prompt_tokens": int(getattr(usage_obj, "prompt_tokens", 0) or 0),
+                "completion_tokens": int(
+                    getattr(usage_obj, "completion_tokens", 0) or 0
+                ),
+                "total_tokens": int(getattr(usage_obj, "total_tokens", 0) or 0),
+            }
+            return {
+                "tag": normalized_tag,
+                "model": Config.ME_UBC_JUDGE_MODEL,
+                "call_count": 1,
+                "usage": usage,
+                "error": "" if normalized_tag else "parse",
+            }
+        except Exception as exc:
+            category = self._normalize_ubc_judge_failure_category(exc)
+            logging.warning(
+                "[%s] ME UBC consensus judge failed: category=%s exception_type=%s",
+                qr,
+                category,
+                exc.__class__.__name__,
+            )
+            failure["error"] = category
+            return failure
+
+    def _resolve_ubc_consensus(
+        self,
+        *,
+        qr: str,
+        primary_tag: str,
+        primary_confidence: Any,
+        images: Dict[str, str],
+    ) -> Dict[str, Any]:
+        """Resolve challenged UBC components with a strict two-source quorum."""
+        primary = self._split_ubc_tag_components(primary_tag)
+        try:
+            primary_score = self._normalize_confidence_score(primary_confidence)
+        except Exception:
+            primary_score = 0
+        metadata: Dict[str, Any] = {
+            "status": "accepted_primary",
+            "triggers": [],
+            "primary": {
+                **primary,
+                "confidence": primary_score,
+            },
+            "local": {"prefix": "", "core": "", "prefix_votes": 0, "core_votes": 0},
+            "judge": {
+                "tag": "",
+                "prefix": "",
+                "core": "",
+                "model": Config.ME_UBC_JUDGE_MODEL,
+                "call_count": 0,
+                "usage": {
+                    "prompt_tokens": 0,
+                    "completion_tokens": 0,
+                    "total_tokens": 0,
+                },
+                "error": "",
+            },
+            "final_tag": primary.get("tag", ""),
+            "confidence_floor": 0,
+            "confidence_cap": 100,
+            "reason_codes": [],
+        }
+        seq1_path = str((images or {}).get("1") or "")
+        if not self._is_readable_source_path(seq1_path):
+            metadata["final_tag"] = ""
+            return metadata
+
+        try:
+            known_prefixes = self._load_me_ubc_prefixes()
+        except Exception as exc:
+            known_prefixes = set()
+            logging.warning("[%s] ME UBC dictionary validation unavailable: %s", qr, exc)
+        local = self._extract_local_ubc_vote(images, known_prefixes)
+        metadata["local"] = local
+
+        challenged: Set[str] = set()
+        if not primary.get("tag"):
+            metadata["triggers"].append("primary_missing_or_malformed")
+            challenged.update(("prefix", "core"))
+        if primary.get("prefix") and known_prefixes and primary["prefix"] not in known_prefixes:
+            metadata["triggers"].append("prefix_unrecognized")
+            challenged.add("prefix")
+        if primary.get("tag") and 0 < primary_score < 70:
+            metadata["triggers"].append("primary_low_confidence")
+            challenged.update(("prefix", "core"))
+        for component in ("prefix", "core"):
+            local_value = str(local.get(component) or "")
+            primary_value = str(primary.get(component) or "")
+            if local_value and local_value != primary_value:
+                metadata["triggers"].append(f"local_{component}_disagreement")
+                challenged.add(component)
+
+        if not challenged:
+            return metadata
+
+        judge_result = self._reread_ubc_consensus_judge(qr, images)
+        if not isinstance(judge_result, dict):
+            judge_result = {"tag": "", "usage": {}, "error": "parse"}
+        judge_parts = self._split_ubc_tag_components(str(judge_result.get("tag") or ""))
+        metadata["judge"] = {
+            "tag": judge_parts.get("tag", ""),
+            "prefix": judge_parts.get("prefix", ""),
+            "core": judge_parts.get("core", ""),
+            "model": str(judge_result.get("model") or ""),
+            "call_count": min(
+                max(int(judge_result.get("call_count", 0) or 0), 0),
+                Config.ME_UBC_JUDGE_MAX_CALLS,
+            ),
+            "usage": judge_result.get("usage") if isinstance(judge_result.get("usage"), dict) else {},
+            "error": str(judge_result.get("error") or ""),
+        }
+
+        final_components = {
+            "prefix": str(primary.get("prefix") or ""),
+            "core": str(primary.get("core") or ""),
+        }
+        unresolved = False
+        for component in challenged:
+            votes = [
+                str(primary.get(component) or ""),
+                str(local.get(component) or ""),
+                str(judge_parts.get(component) or ""),
+            ]
+            counts: Dict[str, int] = defaultdict(int)
+            for vote in votes:
+                if vote:
+                    counts[vote] += 1
+            quorum_value = next(
+                (value for value, count in counts.items() if count >= 2), ""
+            )
+            if quorum_value:
+                final_components[component] = quorum_value
+            else:
+                unresolved = True
+
+        final_tag = self._join_ubc_tag_components(
+            final_components["prefix"],
+            final_components["core"],
+            str(primary.get("separator") or "-"),
+        )
+        metadata["final_tag"] = final_tag or primary.get("tag", "")
+        if unresolved:
+            metadata["status"] = "unresolved"
+            metadata["confidence_cap"] = 65
+            metadata["reason_codes"].append("ubc_consensus_unresolved")
+            if (
+                primary.get("prefix")
+                and known_prefixes
+                and primary["prefix"] not in known_prefixes
+            ):
+                metadata["reason_codes"].append("ubc_prefix_unrecognized")
+        else:
+            metadata["confidence_floor"] = 92
+            metadata["status"] = (
+                "corrected_by_quorum"
+                if metadata["final_tag"] != primary.get("tag", "")
+                else "confirmed_by_quorum"
+            )
+        metadata["triggers"] = sorted(set(metadata["triggers"]))
+        metadata["reason_codes"] = sorted(set(metadata["reason_codes"]))
+        return metadata
+
+    def _maybe_resolve_ubc_consensus(
+        self,
+        *,
+        qr: str,
+        primary_tag: str,
+        primary_confidence: Any,
+        images: Dict[str, str],
+    ) -> Tuple[str, Dict[str, Any]]:
+        """Feature-gated bridge that leaves the legacy UBC path untouched."""
+        if not Config.ME_UBC_CONSENSUS_ENABLED:
+            return str(primary_tag or ""), {}
+        consensus = self._resolve_ubc_consensus(
+            qr=qr,
+            primary_tag=primary_tag,
+            primary_confidence=primary_confidence,
+            images=images,
+        )
+        judge = consensus.get("judge", {})
+        local = consensus.get("local", {})
+        primary = consensus.get("primary", {})
+        usage = judge.get("usage", {}) if isinstance(judge, dict) else {}
+        logging.info(
+            "[%s] ME_UBC_CONSENSUS status=%s triggers=%s primary=(%s,%s) "
+            "local=(%s,%s) judge=(%s,%s) final=%s calls=%s tokens=%s error=%s",
+            qr,
+            consensus.get("status", ""),
+            consensus.get("triggers", []),
+            primary.get("prefix", "") if isinstance(primary, dict) else "",
+            primary.get("core", "") if isinstance(primary, dict) else "",
+            local.get("prefix", "") if isinstance(local, dict) else "",
+            local.get("core", "") if isinstance(local, dict) else "",
+            judge.get("prefix", "") if isinstance(judge, dict) else "",
+            judge.get("core", "") if isinstance(judge, dict) else "",
+            consensus.get("final_tag", ""),
+            judge.get("call_count", 0) if isinstance(judge, dict) else 0,
+            usage.get("total_tokens", 0) if isinstance(usage, dict) else 0,
+            judge.get("error", "") if isinstance(judge, dict) else "",
+        )
+        return str(consensus.get("final_tag") or ""), consensus
+
     def _ocr_text_candidates_for_ubc(self, images: Dict[str, str]) -> List[str]:
         """Collect OCR text (tag-first ordering) for UBC tag recovery."""
         if cv2 is None or not images:
@@ -6245,7 +6902,10 @@ TRANSCRIPTION RULES:
                 f"Simple multi-image extraction returning best partial candidate for {qr} "
                 f"(completeness={best_score:.0f}%, missing={best_missing})."
             )
-            return {"extracted_data": best_data}
+            return {
+                "extracted_data": best_data,
+                "confidence_scores": best_confidence or {},
+            }
 
         logging.error(f"Simple multi-image extraction failed for {qr}")
         return {}
@@ -6728,10 +7388,6 @@ TRANSCRIPTION RULES:
         if not target:
             return False
 
-        raw_target = self._canonicalize_ubc_tag(raw_ubc_tag) or self._parse_ubc_tag_from_text(raw_ubc_tag)
-        if raw_target == target:
-            return True
-
         roi_candidate = self._extract_ubc_from_fc_no_rois(images)
         if roi_candidate == target:
             return True
@@ -6857,6 +7513,38 @@ TRANSCRIPTION RULES:
 
         return scores
 
+    def _apply_ubc_consensus_confidence(
+        self,
+        confidence_scores: Optional[Dict[str, Any]],
+        consensus: Optional[Dict[str, Any]],
+    ) -> Dict[str, int]:
+        """Apply the documented UBC confidence floor/cap after final synthesis."""
+        scores = {
+            str(field): self._normalize_confidence_score(score)
+            for field, score in (confidence_scores or {}).items()
+        }
+        metadata = consensus if isinstance(consensus, dict) else {}
+        final_tag = str(metadata.get("final_tag") or "").strip()
+        if not final_tag:
+            scores["UBC Tag"] = 0
+            return scores
+
+        status = str(metadata.get("status") or "accepted_primary")
+        current = self._normalize_confidence_score(scores.get("UBC Tag", 0))
+        if status in {"confirmed_by_quorum", "corrected_by_quorum"}:
+            scores["UBC Tag"] = max(current, 92)
+        elif status == "unresolved":
+            scores["UBC Tag"] = min(current or 65, 65)
+        elif self._normalize_confidence_score(
+            (metadata.get("primary") or {}).get("confidence", 0)
+            if isinstance(metadata.get("primary"), dict)
+            else 0
+        ) <= 0:
+            scores["UBC Tag"] = 84
+        else:
+            scores["UBC Tag"] = current
+        return scores
+
     @staticmethod
     def _compute_avg_ai_conf(
         confidence_scores: Optional[Dict[str, Any]],
@@ -6926,6 +7614,11 @@ TRANSCRIPTION RULES:
             reason_codes.extend(str(code) for code in extra_codes if code)
 
         reason_codes = sorted(set(reason_codes))
+        ubc_consensus = context.get("ubc_consensus")
+        if not isinstance(ubc_consensus, dict):
+            ubc_consensus = existing.get("ubc_consensus", {})
+        if not isinstance(ubc_consensus, dict):
+            ubc_consensus = {}
         return {
             "flag_for_review": 1 if reason_codes else 0,
             "reason_codes": reason_codes,
@@ -6936,6 +7629,7 @@ TRANSCRIPTION RULES:
                 "min_critical_confidence": Config.MANUAL_REVIEW_MIN_CONFIDENCE,
             },
             "raw_ocr": existing.get("raw_ocr", []),
+            "ubc_consensus": ubc_consensus,
         }
 
     def _save_result(self, data: Dict[str, Any]) -> Dict[str, Any]:
@@ -7378,10 +8072,17 @@ Example format:
     def _canonicalize_ubc_tag(text: str) -> str:
         """Finds a UBC tag in text by trying multiple regex patterns."""
         if not text: return ""
+
+        parsed = AssetProcessor._parse_ubc_tag_from_text(str(text))
+        if parsed:
+            return parsed
         
         for pattern in Config.UBC_TAG_PATTERNS:
             if match := re.search(pattern, text, re.IGNORECASE):
-                return match.group(1).upper().replace(" ", "")
+                candidate = match.group(1).upper()
+                if candidate.startswith("HUM "):
+                    return candidate
+                return candidate.replace(" ", "")
         
         return ""
 

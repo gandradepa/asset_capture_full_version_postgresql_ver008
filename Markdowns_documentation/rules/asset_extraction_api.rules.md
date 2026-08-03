@@ -1,6 +1,6 @@
 # Extraction API Rules
 
-Current documentation refresh: 2026-07-30.
+Current documentation refresh: 2026-08-03.
 
 ## Purpose
 
@@ -71,6 +71,22 @@ Current documentation refresh: 2026-07-30.
 - TSBC rereads may send zoomed UNIT NO. row/value crops ahead of the full seq `-3` image; ambiguous digits must stay blank rather than guessed.
 - Seq `-4` is the optional **Extra Photo** slot, owns no fields, and is never sent to the LLM (excluded via `VALID_SUFFIXES`).
 - If the owning source is absent or not evidenced, leave the field blank.
+
+## ME UBC Tag Hybrid Consensus
+
+Current documentation refresh: 2026-08-03.
+
+- The normal ME simple extraction remains the primary source: production keeps `gpt-5.4-mini` with `ME_IMAGE_DETAIL=low`. Consensus adds no API call for an unchallenged tag.
+- For every readable seq `-1`, the local validator detects the dominant dark elongated placard (3-75% frame area, elongation at least 1.6, rectangular fill at least 0.5), falling back to the full image. It performs exactly four bounded Tesseract reads: two opposite orientations, each as grayscale and Otsu, over the central 70%, PSM 11, character whitelist, four-second timeout.
+- Local OCR is one independent source, not four sources. A local prefix or core vote exists only when at least two variants agree. Partial evidence such as prefix `HX` with no reliable core is valid.
+- ME prefixes are loaded from `dictionary/mechanical_dictionary.py` through `ast.parse()` and `ast.literal_eval()`. Dictionary membership may challenge a prefix but is never counted as visual evidence. Dictionary read/parse failure is non-fatal.
+- Challenge triggers are: missing/malformed primary tag, a dictionary-unknown prefix, an explicit primary confidence below 70, or local disagreement with the primary. A missing model confidence alone is not a challenge.
+- A challenged asset receives at most one independent judge call, with no retry: `ME_UBC_JUDGE_MODEL=gpt-5.6-terra`, `ME_UBC_JUDGE_DETAIL=original`, and `ME_UBC_JUDGE_REASONING_EFFORT=low`. The call sends two opposite orientations without disclosing primary/local candidates. Each prepared image has a 1280-pixel maximum edge, and output is capped at 220 completion tokens.
+- Prefix and core are resolved separately. A challenged component changes only when two non-empty visual sources agree; unchallenged primary components are preserved. Existing forms including `HUM 5`, dotted cores, and multi-segment tags remain valid.
+- Unresolved disagreement or judge failure preserves the primary component, caps UBC confidence at 65, and adds `ubc_consensus_unresolved`; an unresolved unknown prefix also adds `ubc_prefix_unrecognized`. Confirmed/corrected quorum receives at least 92 confidence. An accepted unchallenged tag with no primary model score receives 84, not a synthesized 95.
+- `manual_review.ubc_consensus` records status (`accepted_primary`, `confirmed_by_quorum`, `corrected_by_quorum`, or `unresolved`), triggers, component votes, final tag, judge model, call count, token usage, and only a normalized failure category (`timeout`, `quota`, `auth`, `rate_limit`, `api`, or `parse`). Raw API exception details are not stored.
+- Cost guard and rollback: `ME_UBC_CONSENSUS_ENABLED=1` enables the cascade; setting it to `0` restores the legacy targeted UBC reread behavior. Monitor returned judge token usage, but never relax the one-call/no-retry/image/token caps without explicit approval.
+- This behavior is ME-only. It introduces no database schema or endpoint changes and does not alter BF or EL. Human-reviewed values and existing manual-override protections remain authoritative.
 
 ## ME Manufacturer Canonicalization
 
