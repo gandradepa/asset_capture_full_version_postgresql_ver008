@@ -127,6 +127,7 @@ DISTRIBUTION_ASSET_GROUPS = (
     "Panels",
     "Other Service and Distribution",
     "Interior Distribution Transformers",
+    "Main Transformers",
     "Motor Control Centers",
     "Enclosed Circuit Breakers",
     "Automatic Transfer Switches",

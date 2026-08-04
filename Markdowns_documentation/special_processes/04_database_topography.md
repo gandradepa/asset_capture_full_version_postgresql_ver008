@@ -140,6 +140,21 @@ The view's `"Code"` column is sourced from `"UBC - Asset Data Master Info"."Code
 
 Historical `QR_codes*.db` backup files may still show `"Code"` as numeric/integer without leading zeros. Do not use those backup files to validate current production state.
 
+### `Asset_Group`
+
+`Asset_Group` is the asset-classification lookup. Its `elec_dist_setup`
+column is a required one-character Y/N flag: `N` is the default for existing
+and newly inserted groups, and the table constraint rejects any other value.
+The owner-run, transactional migration is
+`scripts/migrations/2026-08-04_asset_group_elec_dist_setup.sql`.
+
+The following electrical distribution names are seeded to `Y` by
+`scripts/migrations/2026-08-04_asset_group_elec_dist_setup_values.sql`:
+Panels (both matching rows), Other Service and Distribution, Interior
+Distribution Transformers, Main Transformers, Motor Control Centers,
+Enclosed Circuit Breakers, and Automatic Transfer Switches. All other rows
+remain `N` unless explicitly changed later.
+
 ## Relationship Notes
 
 - Review apps sync JSON corrections into the SDI dataset tables.

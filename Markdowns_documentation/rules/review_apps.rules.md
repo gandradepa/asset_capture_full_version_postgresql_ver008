@@ -51,6 +51,7 @@ Use the project-standard plugins (enabled in `.claude/settings.json`; see `01_GL
 
 - The visible quick filters are based on current UI behavior, not on older archived controls.
 - The Electrical dashboard defaults to a landing page to segment "General" vs "Distribution" assets.
+- The General/Distribution split is by `Asset Group` membership in `EL_DISTRIBUTION_ASSET_GROUPS` (`excel_export.py`, mirrored as a tuple in `sld_blueprint.py`): Panels, Other Service and Distribution, Interior Distribution Transformers, Main Transformers (added 2026-08-04), Motor Control Centers, Enclosed Circuit Breakers, Automatic Transfer Switches. Any other group lands in the General (`/review-all`) view. Keep the mirror in sync when the set changes.
 - The "Update Existing" tab and "Main Asset" column are deprecated/hidden specifically in the Electrical dashboard UI.
 - Confidence slicers must filter rows consistently on the frontend and backend.
 - `Avg AI Conf` display and coloring should use the same value the backend exposes.
