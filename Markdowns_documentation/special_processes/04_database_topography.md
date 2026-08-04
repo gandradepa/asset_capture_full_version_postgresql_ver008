@@ -155,6 +155,16 @@ Distribution Transformers, Main Transformers, Motor Control Centers,
 Enclosed Circuit Breakers, and Automatic Transfer Switches. All other rows
 remain `N` unless explicitly changed later.
 
+As of 2026-08-04 the application consumes this flag as the single source of
+the EL General vs Distribution split: the EL review dashboard loads the `Y`
+names via `get_distribution_asset_groups()` (60-second TTL cache) for the
+`/review-all` vs `/review-distribution` views, the XLSX export, and the
+amperage-warning gating, and the SLD Switch Over query filters by it via
+`_distribution_asset_groups()` in `sld_blueprint.py`. The hard-coded
+`EL_DISTRIBUTION_ASSET_GROUPS` frozenset in `excel_export.py` (tuple mirror
+in `sld_blueprint.py`) is only the fallback when the column or database is
+unavailable (e.g. the frozen local SQLite copy).
+
 ## Relationship Notes
 
 - Review apps sync JSON corrections into the SDI dataset tables.

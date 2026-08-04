@@ -149,13 +149,16 @@ def el_amperage_exceeds_fed_from(amperage_rating, fed_from_amperage_rating) -> b
     )
 
 
-def has_el_amperage_warning(asset_group, amperage_rating, fed_from_amperage_rating) -> bool:
-    if str(asset_group or "").strip() not in EL_DISTRIBUTION_ASSET_GROUPS:
+def has_el_amperage_warning(asset_group, amperage_rating, fed_from_amperage_rating,
+                            distribution_groups=None) -> bool:
+    groups = distribution_groups if distribution_groups else EL_DISTRIBUTION_ASSET_GROUPS
+    if str(asset_group or "").strip() not in groups:
         return False
     return el_amperage_exceeds_fed_from(amperage_rating, fed_from_amperage_rating)
 
 
-def _enrich_row(process: str, tab: str, row: dict, meta: dict) -> dict:
+def _enrich_row(process: str, tab: str, row: dict, meta: dict,
+                distribution_groups=None) -> dict:
     """Add computed fields (_source, _manual, paired ratings, captured date/hour)."""
     qr = str(row.get("qr_code") or "").strip()
     info = meta.get(qr) or {}
@@ -177,7 +180,8 @@ def _enrich_row(process: str, tab: str, row: dict, meta: dict) -> dict:
         )
         amperage_value = row.get("Amperage Rating") or row.get("Ampere")
         row["_amp_rating_warning"] = has_el_amperage_warning(
-            row.get("Asset Group"), amperage_value, row.get("Fed From Amperage Rating")
+            row.get("Asset Group"), amperage_value, row.get("Fed From Amperage Rating"),
+            distribution_groups=distribution_groups,
         )
 
     return row
@@ -229,13 +233,15 @@ def build_workbook(
     meta: Optional[dict] = None,
     process_title: str = "",
     logo_path: Optional[str] = None,
+    distribution_groups: Optional[frozenset] = None,
 ) -> bytes:
     if process not in COLUMNS:
         raise ValueError(f"Unknown process: {process!r}")
     meta = meta or {}
     columns = COLUMNS[process]
 
-    enriched = [_enrich_row(process, tab, dict(r), meta) for r in rows]
+    enriched = [_enrich_row(process, tab, dict(r), meta,
+                            distribution_groups=distribution_groups) for r in rows]
 
     wb = Workbook()
     ws = wb.active

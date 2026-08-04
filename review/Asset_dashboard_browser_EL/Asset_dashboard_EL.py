@@ -5,6 +5,7 @@ import os
 import json
 import re
 import sqlite3
+import time
 import copy
 from typing import Optional
 import sys
@@ -2822,7 +2823,44 @@ def asset_dictionary_api():
     return response
 
 
-DISTRIBUTION_ASSET_GROUPS = excel_export.EL_DISTRIBUTION_ASSET_GROUPS
+# Distribution-view Asset Groups come from Asset_Group.elec_dist_setup = 'Y'
+# (2026-08-04 migration). The static excel_export.EL_DISTRIBUTION_ASSET_GROUPS
+# frozenset remains only as the fallback when the DB is unreachable or the
+# column is absent (e.g. the frozen local SQLite dev copy).
+_DIST_GROUPS_CACHE_TTL_SECONDS = 60.0
+_dist_groups_cache = {"groups": None, "expires": 0.0}
+_dist_groups_lock = Lock()
+
+
+def get_distribution_asset_groups() -> frozenset:
+    now = time.monotonic()
+    with _dist_groups_lock:
+        if _dist_groups_cache["groups"] is not None and now < _dist_groups_cache["expires"]:
+            return _dist_groups_cache["groups"]
+    groups = None
+    if _connectable():
+        try:
+            with qrdb.get_connection(sqlite_path=DB_PATH) as conn:
+                conn.row_factory = sqlite3.Row
+                cur = conn.cursor()
+                cur.execute(
+                    'SELECT DISTINCT "Name" FROM "Asset_Group" '
+                    "WHERE UPPER(TRIM(COALESCE(elec_dist_setup, ''))) = 'Y'"
+                )
+                names = {(r["Name"] or "").strip() for r in cur.fetchall()}
+                names.discard("")
+                if names:
+                    groups = frozenset(names)
+        except Exception as e:
+            print(f"[WARN] Distribution asset-group fetch failed; using static fallback: {e}")
+    if groups is None:
+        groups = excel_export.EL_DISTRIBUTION_ASSET_GROUPS
+    with _dist_groups_lock:
+        _dist_groups_cache["groups"] = groups
+        _dist_groups_cache["expires"] = now + _DIST_GROUPS_CACHE_TTL_SECONDS
+    return groups
+
+
 def _parse_filter_values(raw):
     """Parse a comma-joined filter value ('A' or 'A,B') -> ordered de-duplicated
     list. Shared by the building and asset-group filters. '' / None -> []."""
@@ -2877,10 +2915,12 @@ def get_filtered_data_and_counts(query_args, process_target: str = "0", apply_cl
     if conf_min != 0 or conf_max != 100:
         base_data = [item for item in base_data if _matches_conf_range(item, conf_min, conf_max)]
 
-    if distribution_mode == "only":
-        base_data = [item for item in base_data if item.get("Asset Group") in DISTRIBUTION_ASSET_GROUPS]
-    elif distribution_mode == "exclude":
-        base_data = [item for item in base_data if item.get("Asset Group") not in DISTRIBUTION_ASSET_GROUPS]
+    if distribution_mode in ("only", "exclude"):
+        dist_groups = get_distribution_asset_groups()
+        if distribution_mode == "only":
+            base_data = [item for item in base_data if item.get("Asset Group") in dist_groups]
+        else:
+            base_data = [item for item in base_data if item.get("Asset Group") not in dist_groups]
         
     data_to_filter = base_data
     if flagged_filter == "true" and modified_filter == "true":
@@ -2946,10 +2986,12 @@ def get_filtered_data_and_counts(query_args, process_target: str = "0", apply_cl
 
 def _get_card_scope_data(process_target: str, building_filter: str = "", distribution_mode: str = None):
     data = load_json_items(process_target)
-    if distribution_mode == "only":
-        data = [item for item in data if item.get("Asset Group") in DISTRIBUTION_ASSET_GROUPS]
-    elif distribution_mode == "exclude":
-        data = [item for item in data if item.get("Asset Group") not in DISTRIBUTION_ASSET_GROUPS]
+    if distribution_mode in ("only", "exclude"):
+        dist_groups = get_distribution_asset_groups()
+        if distribution_mode == "only":
+            data = [item for item in data if item.get("Asset Group") in dist_groups]
+        else:
+            data = [item for item in data if item.get("Asset Group") not in dist_groups]
     codes = _parse_filter_values(building_filter)
     if codes:
         code_set = set(codes)
@@ -3829,6 +3871,7 @@ def review(doc_id):
         asset_group,
         data.get("Ampere"),
         data.get("Fed From Amperage Rating"),
+        distribution_groups=get_distribution_asset_groups(),
     )
     avg_ai_conf, avg_ai_conf_display = _normalize_avg_ai_conf(_extract_avg_ai_conf(loaded))
     
@@ -3924,7 +3967,7 @@ def review(doc_id):
         base_route=base_route,
         review_revision=review_revision,
         amp_rating_warning=amp_rating_warning,
-        distribution_asset_groups=sorted(DISTRIBUTION_ASSET_GROUPS),
+        distribution_asset_groups=sorted(get_distribution_asset_groups()),
         review_buttons=REVIEW_BUTTONS,
         review_endpoints=dict(REVIEW_ENDPOINTS_STATIC, dashboard=base_route),
     )
@@ -4833,6 +4876,7 @@ def export_review_xlsx():
         meta=meta,
         process_title="Electrical",
         logo_path=logo_path,
+        distribution_groups=get_distribution_asset_groups(),
     )
     ts = datetime.now().strftime("%Y-%m-%d_%H%M")
     if not bld_codes:

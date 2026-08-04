@@ -109,6 +109,7 @@ Session and remember cookies use `SameSite=None; Secure` for cross-subdomain sha
 ### Electrical (EL)
 - Uses `sdi_dataset_EL` table
 - Canonical Planon-facing fields: Amperage Rating, Voltage Rating, Equipment ID, Equipment Type, Fed From Equipment ID, Power Type
+- **General vs Distribution views (2026-08-04):** the EL dashboard splits assets by `Asset_Group.elec_dist_setup` — `'Y'` → `/review-distribution`, `'N'` (default) → `/review-all`. Loaded via `get_distribution_asset_groups()` (60s TTL cache) and passed to the XLSX export / amp-warning gating; the SLD Switch Over query reads it via `_distribution_asset_groups()`. The static `EL_DISTRIBUTION_ASSET_GROUPS` frozenset in `excel_export.py` (tuple mirror in `sld_blueprint.py`) is only the DB-unavailable fallback. Moving a group between views is an audited DB data change, not a code change.
 - **Rating storage convention (2026-07-08/09):** rating values are stored bare (`208/120`, `100`); the unit lives in the `(UoM)` columns — `VLT`/`AMP` are the intentional Planon UoM codes on the SDI tables (do not "fix" them), while `electrical_building_schema` stores display units `V`/`A`. Write paths strip unit letters from values; display layers add the units (`withRatingUnit()` in sld.js, `_sld_rating_text()` in the review report).
 - Confidence averages exclude `Volts`, `Location`, `Branch Panel`
 - Sequence `-3` is the optional **Extra Photo** slot — same exclusion rules as ME `-4`
