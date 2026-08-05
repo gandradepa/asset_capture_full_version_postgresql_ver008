@@ -474,13 +474,21 @@ class AmperageGuardTests(unittest.TestCase):
 # building panel). Unit-FIRST column layout: 'Amps 225', 'Volts AC/CA 120/240'.
 SIEMENS_EQ_LABEL = """SIEMENS
 EQ Loadcentre / Centre de Consommation EQ
-EQ42225
+Siemens Canada Limited
+Made in Canada
+EQ442225
 Amps 225
 Volts AC/CA 120/240
 3 Phase 4 Wire
 Circuits 42/84
-Siemens Canada Limited  Made in Canada
-CSA LL13069"""
+Front for flush or surface mount.
+For repairs or alterations call an electrician.
+WARNING/AVERTISSEMENT
+Hazardous Voltage.
+Turn off power supplying this equipment before working inside.
+CSA
+LL13069
+3259A 18"""
 
 
 class UnitFirstLabelTests(unittest.TestCase):
@@ -520,6 +528,23 @@ class UnitFirstLabelTests(unittest.TestCase):
             self.assertEqual(
                 legacy_flow.legacy_ratings_from_label(text)["ampere"], "", text
             )
+
+    def test_drawing_number_never_beats_the_declared_amps_header(self) -> None:
+        # '3259A 18' (the label's bottom-corner drawing/revision number)
+        # matches the bare digits+A scan; the label's own 'Amps 225' field
+        # must win. Production regression: QR 0000186139 healed to 3259 A.
+        self.assertEqual(self.r["ampere"], "225")
+
+    def test_drawing_number_line_alone_yields_no_amperage(self) -> None:
+        # No Amps header to prefer -- the 'nnnnA nn' line shape itself is a
+        # drawing number, not a rating.
+        r = legacy_flow.legacy_ratings_from_label("PANEL X\n9259A 18")
+        self.assertEqual(r["ampere"], "")
+
+    def test_bare_amp_value_on_its_own_line_still_parses(self) -> None:
+        # Ordinary lamacoid layout: '400A' alone on a line is a real rating.
+        r = legacy_flow.legacy_ratings_from_label("PANEL U\n120/208V\n400A")
+        self.assertEqual(r["ampere"], "400")
 
     def test_value_then_unit_still_wins_over_header(self) -> None:
         # Ordinary lamacoids keep their existing behavior.

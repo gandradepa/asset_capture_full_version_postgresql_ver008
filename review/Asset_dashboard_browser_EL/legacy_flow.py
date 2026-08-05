@@ -197,34 +197,48 @@ def legacy_ratings_from_label(text):
         # lamacoid check because the row label precedes the tap percentage.
         if _NAMEPLATE_AMP_CONTEXT_RE.search(up[max(0, start - 28):start]):
             continue
+        # Reject drawing/revision numbers: a line that is nothing but
+        # 'digits + A + digits' ('3259A 18', a Siemens label's bottom-corner
+        # drawing number) is a part reference, not a rating. A real rating
+        # line carries more ('400A 3PH') or stands alone ('400A').
+        line_start = up.rfind("\n", 0, start) + 1
+        line_end = up.find("\n", m.end())
+        if line_end == -1:
+            line_end = len(up)
+        if re.fullmatch(r"\d{2,4}\s*A\s+\d+", up[line_start:line_end].strip()):
+            continue
         # Track: (digit_run, has_word_form, is_brk_followed)
         is_word_form = unit in ("AMP", "AMPS")
         is_brk_followed = bool(re.search(r"\bBRK\b", up[m.end():m.end() + 20]))
         candidates.append((digit_run, is_word_form, is_brk_followed))
 
-    if candidates:
-        # Prefer: first with word form, or first with BRK-followed, or first overall
-        word_form = next((c for c in candidates if c[1]), None)
-        if word_form:
-            out["ampere"], out["ampere_uom"] = word_form[0], "AMP"
-        else:
-            brk_followed = next((c for c in candidates if c[2]), None)
-            if brk_followed:
-                out["ampere"], out["ampere_uom"] = brk_followed[0], "AMP"
-            else:
-                out["ampere"], out["ampere_uom"] = candidates[0][0], "AMP"
-    else:
-        # Unit-first column layout ('Amps 225', Siemens EQ loadcentres).
-        # Same-line window; `(?![,\d])` rejects thousands-separated
-        # interrupting ratings ('AMPS. 10,000' must not yield 10), and any
-        # RMS/SYM/INTERRUPTING context just before the header is a breaker
-        # sticker's fault-current rating, not the asset's amperage.
-        m = re.search(r"\bAMPS?\b[ \t:.]{1,6}(\d{2,4})(?![,\d])", up)
-        if m and not re.search(
-            r"(?:RMS|SYM|INTERRUPTING)[.\s]*(?:SYM[.\s]*)?AMPS?\b",
-            up[max(0, m.start() - 24):m.end()],
-        ):
-            out["ampere"], out["ampere_uom"] = m.group(1), "AMP"
+    # Unit-first column header ('Amps 225', Siemens EQ loadcentres): the
+    # label's own declared field. Same-line window; `(?![,\d])` rejects
+    # thousands-separated interrupting ratings ('AMPS. 10,000' must not
+    # yield 10), and any RMS/SYM/INTERRUPTING context just before the header
+    # is a breaker sticker's fault-current rating, not the asset's amperage.
+    header_amp = None
+    m = re.search(r"\bAMPS?\b[ \t:.]{1,6}(\d{2,4})(?![,\d])", up)
+    if m and not re.search(
+        r"(?:RMS|SYM|INTERRUPTING)[.\s]*(?:SYM[.\s]*)?AMPS?\b",
+        up[max(0, m.start() - 24):m.end()],
+    ):
+        header_amp = m.group(1)
+
+    # Preference: explicit word form ('400 AMPS') > the label's own 'Amps'
+    # header > BRK-followed > first bare digits+A. A bare 'nnnnA' is the
+    # weakest signal -- that is what let a drawing number outrank the
+    # declared rating on QR 0000186139.
+    word_form = next((c for c in candidates if c[1]), None)
+    brk_followed = next((c for c in candidates if c[2]), None)
+    if word_form:
+        out["ampere"], out["ampere_uom"] = word_form[0], "AMP"
+    elif header_amp:
+        out["ampere"], out["ampere_uom"] = header_amp, "AMP"
+    elif brk_followed:
+        out["ampere"], out["ampere_uom"] = brk_followed[0], "AMP"
+    elif candidates:
+        out["ampere"], out["ampere_uom"] = candidates[0][0], "AMP"
 
     m = re.search(r"\b(\d)\s*PH(?:ASE)?\b|\b(\d)\s*Ø", up)
     if m:
