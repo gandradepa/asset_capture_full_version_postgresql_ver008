@@ -886,6 +886,12 @@ def apply_legacy_rules(data):
             changed |= _set_if_blank(data, "Voltage Rating (UoM)", nameplate["voltage_uom"])
         changed |= _set_if_blank(data, "Power Rating", nameplate["kva"])
         changed |= _set_if_blank(data, "Power Rating (UoM)", nameplate["kva_uom"])
+        # 'T1'-style names never parse through the ident grammar, so the
+        # Equipment ID/Type fills above (gated on `parsed`) skip them; the
+        # gate has already proven the class (same rule as
+        # legacy_structured_from_raw). Blank-fill only, as everything here.
+        changed |= _set_if_blank(data, "Equipment ID", tag.strip().upper() if tag else "")
+        changed |= _set_if_blank(data, "Equipment Type", "Transformer")
 
     fed = normalize_legacy_supply_from(str(data.get("Supply From") or ""))
     changed |= _set_if_blank(data, "Fed From Equipment ID", fed["fed_from_id"])

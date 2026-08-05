@@ -440,6 +440,10 @@ class TNumberTagTests(unittest.TestCase):
         self.assertTrue(changed)
         self.assertEqual(data["Power Rating"], "75")
         self.assertEqual(data["Volts"], "600-208Y/120")
+        # The ident grammar cannot parse 'T1', so the type must come from the
+        # transformer gate itself (same rule as legacy_structured_from_raw).
+        self.assertEqual(data["Equipment Type"], "Transformer")
+        self.assertEqual(data["Equipment ID"], "T1")
 
 
 class AmperageGuardTests(unittest.TestCase):
