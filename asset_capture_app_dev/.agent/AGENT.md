@@ -120,7 +120,7 @@ Sequence ranges per discipline (`-N` suffix in the filename):
 |---|---|---|
 | Mechanical (ME) | `-0` .. `-4` | Asset Plate / UBC Tag / Main Asset Photo / Technical Safety BC / **Extra Photo** (`-4`, optional) |
 | Backflow (BF) | `-0` .. `-3` | Asset Plate / Asset Plate (additional) / Main Photo / **Extra Photo** (`-3`, optional) |
-| Electrical (EL) | `-0` .. `-3` | Asset Plate (Optional) / UBC Asset Tag / Panel Schedule / **Extra Photo** (`-3`, optional) |
+| Electrical (EL) | `-0` .. `-3` | Asset Plate (Optional) / UBC Asset Tag / Full Interior Panel / **Extra Photo** (`-3`, optional) |
 
 The **Extra Photo** slot is captured/displayed but excluded from completeness, AI confidence, AI extraction (`VALID_SUFFIXES`), and the "Missed Photo" count. In review dashboards it surfaces as a `+1` chip in the Photo column.
 

@@ -58,7 +58,7 @@ The review page displays:
 - **Asset photos**: thumbnail strip per discipline:
   - ME: `-0` Asset Plate, `-1` UBC Tag, `-2` Main Picture, `-3` TSBC, `-4` **Extra Photo** (optional)
   - BF: `-0` Asset Plate, `-1` Asset Plate (Opt), `-2` Main Asset, `-3` **Extra Photo** (optional)
-  - EL: `-0` Asset Plate (Opt), `-1` UBC Asset Tag, `-2` Panel Schedule, `-3` **Extra Photo** (optional)
+  - EL: `-0` Asset Plate (Opt), `-1` UBC Asset Tag, `-2` Full Interior Panel, `-3` **Extra Photo** (optional)
   - An absent Extra Photo renders the neutral "Missing" placeholder — never a red/error state.
 - **Editable fields**: All structured data fields (varies by type â€” see AGENT.md for field matrix)
 - **Status indicators**: Approved badge, Flagged checkbox, Modified indicator, SDI status

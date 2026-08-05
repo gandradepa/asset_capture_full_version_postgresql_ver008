@@ -27,7 +27,7 @@ The capture app owns QR intake, image upload, initial metadata capture, and para
 - Sequence ranges per asset type:
   - ME: `-0` Asset Plate, `-1` UBC Tag, `-2` Main Asset Photo, `-3` Technical Safety BC, `-4` Extra Photo (optional)
   - BF: `-0` Asset Plate, `-1` Asset Plate (additional), `-2` Main Photo, `-3` Extra Photo (optional)
-  - EL: `-0` Asset Plate (optional), `-1` UBC Asset Tag, `-2` Panel Schedule, `-3` Extra Photo (optional)
+  - EL: `-0` Asset Plate (optional), `-1` UBC Asset Tag, `-2` Full Interior Panel, `-3` Extra Photo (optional)
 - Elapsed-time JSON and other capture artifacts must keep QR, type, and building aligned with the captured image group.
 - File and DB updates that change QR or building must be treated as one logical rename operation.
 

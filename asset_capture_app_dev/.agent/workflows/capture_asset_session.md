@@ -64,7 +64,7 @@ This workflow describes the complete end-to-end flow for a field technician capt
 4. Repeat for additional photos. Tile count per asset type:
    - **Mechanical**: 4 required tiles (`-0` Asset Plate, `-1` UBC Tag, `-2` Main Asset Photo, `-3` Technical Safety BC) plus optional `-4` Extra Photo
    - **Backflow**: 3 required tiles (`-0` Asset Plate, `-1` Asset Plate (additional), `-2` Main Photo) plus optional `-3` Extra Photo
-   - **Electrical**: 3 required tiles (`-0` Asset Plate, `-1` UBC Asset Tag, `-2` Panel Schedule) plus optional `-3` Extra Photo
+   - **Electrical**: 3 required tiles (`-0` Asset Plate, `-1` UBC Asset Tag, `-2` Full Interior Panel) plus optional `-3` Extra Photo
 5. The Extra Photo tile is rendered with `data-optional="true"`. `updateCompletionState()` ignores it, so the green "all required captured" toast fires once the required tiles are filled — submit is allowed without the Extra Photo.
 6. Every submission must include a newly selected `-0` or `-1` photo. Either slot satisfies the minimum; stored photos and `-2` or later uploads do not. Client-side validation highlights the first two cards, and `/submit` repeats the check before any overwrite deletion.
 

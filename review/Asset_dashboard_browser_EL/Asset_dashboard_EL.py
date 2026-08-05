@@ -2481,7 +2481,7 @@ def load_json_items(process_target: str = "0"):
             present_all = sum(1 for tag in required_show if present_map.get(tag, False))
             fraction = f"{present_all}/3"
             has_extra_photo = present_map.get('-3', False)
-            friendly_map = {'-0': 'Asset Plate', '-1': 'UBC Asset Tag', '-2': 'Panel Schedule'}
+            friendly_map = {'-0': 'Asset Plate', '-1': 'UBC Asset Tag', '-2': 'Full Interior Panel'}
             missing_list = ", ".join(
                 friendly_map[t] for t in required_show if not present_map.get(t, False)
             )
@@ -3782,7 +3782,7 @@ def asset_preview(doc_id):
     except Exception:
         return jsonify({"error": "unreadable"}), 500
     sd = loaded.get("structured_data", {}) or {}
-    label_map = {'-0': 'Asset Plate/Label', '-1': 'UBC Asset Tag', '-2': 'Panel Schedule', '-3': 'Extra Photo'}
+    label_map = {'-0': 'Asset Plate/Label', '-1': 'UBC Asset Tag', '-2': 'Full Interior Panel', '-3': 'Extra Photo'}
     images = []
     for tag in SEQ_SHOW:
         fn = find_image(qr, building, tag)
@@ -3936,7 +3936,7 @@ def review(doc_id):
             label_map = {
                 '-0': 'Asset Plate/Label',
                 '-1': 'UBC Asset Tag',
-                '-2': 'Panel Schedule',
+                '-2': 'Full Interior Panel',
                 '-3': 'Extra Photo'
             }
             

@@ -1200,7 +1200,7 @@
 
             <div class="thumbs-strip">
                 {% if images %}
-                {% for tag,label in {'-0':'Asset Plate (Opt)','-1':'UBC Asset Tag','-2':'Panel Schedule','-3':'Extra Photo'}.items() %}
+                {% for tag,label in {'-0':'Asset Plate (Opt)','-1':'UBC Asset Tag','-2':'Full Interior Panel','-3':'Extra Photo'}.items() %}
                 {% set im = images.get(tag) %}
                 <div class="thumb {% if default_tag == tag %}active{% endif %}"
                     data-url="{{ im.url if im and im.exists else '' }}">

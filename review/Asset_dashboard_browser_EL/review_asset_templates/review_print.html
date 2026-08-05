@@ -313,15 +313,15 @@
         <div class="section">
             <h2>Asset Photos</h2>
             <div class="photos">
-                {# Hero: Panel Schedule (-2) #}
+                {# Hero: Full Interior Panel (-2) #}
                 {% set hero = images.get('-2') %}
                 <div class="photo-frame hero">
                     {% if hero and hero.exists %}
-                    <img src="{{ hero.url }}" alt="Panel Schedule">
+                    <img src="{{ hero.url }}" alt="Full Interior Panel">
                     {% else %}
                     <div class="missing">Missing</div>
                     {% endif %}
-                    <div class="cap">Panel Schedule</div>
+                    <div class="cap">Full Interior Panel</div>
                 </div>
 
                 {# Thumbnails: Asset Plate (-0), UBC Asset Tag (-1), Extra Photo (-3) #}

@@ -307,7 +307,7 @@ def seq_to_label(asset_type: str, seq: str) -> str:
         return bf_map.get(i, f"Photo {i}")
 
     if t == "electrical":
-        el_map = {0: "Asset Plate (Optional)", 1: "UBC Asset Tag", 2: "Panel Schedule", 3: "Extra Photo"}
+        el_map = {0: "Asset Plate (Optional)", 1: "UBC Asset Tag", 2: "Full Interior Panel", 3: "Extra Photo"}
         return el_map.get(i, f"Photo {i}")
 
     other_map = {0: "Asset Plate", 1: "UBC Tag", 2: "Main Asset Photo", 3: "Extra Photo"}
