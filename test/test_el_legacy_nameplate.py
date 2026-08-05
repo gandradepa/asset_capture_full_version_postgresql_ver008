@@ -632,6 +632,83 @@ class TransformerIdentityTests(unittest.TestCase):
         self.assertEqual(out["Equipment Type"], "Panel")
 
 
+class PanelNameplateFallbackTests(unittest.TestCase):
+    """A panel's OWN manufacturer label supplies Volts/Ampere as fallback.
+
+    Production QR 0000186139 (PNL-VC, building 641): lamacoid prints only
+    'PANEL VC'; the Siemens EQ loadcentre label (EL-0) carries 'Amps 225' /
+    'Volts AC/CA 120/240' and was fully transcribed into nameplate_text --
+    but the transformer-only gate forbade composition from using it. The
+    user's precedence rule is general: lamacoid primary, Asset Plate
+    secondary. Power Rating remains transformer-only.
+    """
+
+    def test_panel_takes_volts_ampere_from_its_own_label(self) -> None:
+        out = legacy_flow.legacy_structured_from_raw(
+            {
+                "Label Text": "PANEL VC",
+                "Nameplate Text": SIEMENS_EQ_LABEL,
+                "UBC Asset Tag": "PANEL VC",
+            }
+        )
+        self.assertEqual(out["Volts"], "240/120")
+        self.assertEqual(out["Ampere"], "225")
+        self.assertEqual(out["Equipment ID"], "PNL-VC")
+        self.assertEqual(out["Power Rating"], "")  # transformer-only, always
+
+    def test_lamacoid_ratings_still_outrank_the_plate(self) -> None:
+        out = legacy_flow.legacy_structured_from_raw(
+            {
+                "Label Text": "PANEL VC 120/208V 100A",
+                "Nameplate Text": SIEMENS_EQ_LABEL,
+                "UBC Asset Tag": "PANEL VC",
+            }
+        )
+        self.assertEqual(out["Volts"], "208/120")
+        self.assertEqual(out["Ampere"], "100")
+
+    def test_transformer_plate_in_a_panel_slot_leaks_nothing(self) -> None:
+        # A mis-photographed ABB transformer plate as a panel's EL-0: winding
+        # currents and HV/LV strings must not become the panel's ratings, and
+        # kVA must not become a Power Rating.
+        out = legacy_flow.legacy_structured_from_raw(
+            {
+                "Label Text": "PANEL Q",
+                "Nameplate Text": ABB_PLATE,
+                "UBC Asset Tag": "PANEL Q",
+            }
+        )
+        self.assertEqual(out["Ampere"], "")
+        self.assertEqual(out["Power Rating"], "")
+
+    def test_apply_legacy_rules_heals_the_stored_panel_json(self) -> None:
+        # QR 0000186139's exact stored shape.
+        data = {
+            "UBC Asset Tag": "PNL-VC",
+            "label_text": "PANEL VC",
+            "nameplate_text": SIEMENS_EQ_LABEL,
+            "Volts": "",
+            "Ampere": "",
+        }
+        changed = legacy_flow.apply_legacy_rules(data)
+        self.assertTrue(changed)
+        self.assertEqual(data["Volts"], "240/120")
+        self.assertEqual(data["Ampere"], "225")
+        self.assertEqual(data["Amperage Rating"], "225")
+        self.assertEqual(data.get("Power Rating", ""), "")
+
+    def test_volts_manual_override_blocks_the_plate_fill(self) -> None:
+        data = {
+            "UBC Asset Tag": "PNL-VC",
+            "label_text": "PANEL VC",
+            "nameplate_text": SIEMENS_EQ_LABEL,
+            "Volts": "",
+            "volts_manual_override": "1",
+        }
+        legacy_flow.apply_legacy_rules(data)
+        self.assertEqual(data["Volts"], "")
+
+
 class ApplyLegacyRulesTests(unittest.TestCase):
     """Invariant 6: never erase a human override."""
 

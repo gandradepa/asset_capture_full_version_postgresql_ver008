@@ -794,6 +794,19 @@ def legacy_structured_from_raw(raw):
         if not ratings["voltage"] and nameplate["voltage"]:
             ratings["voltage"] = nameplate["voltage"]
             ratings["voltage_uom"] = nameplate["voltage_uom"]
+    elif nameplate_text:
+        # Non-transformer whose EL-0 is its OWN equipment label (Siemens EQ
+        # loadcentre: 'Amps 225' / 'Volts AC/CA 120/240', QR 0000186139).
+        # The panel's own plate legitimately supplies Volts/Ampere when the
+        # lamacoid printed none -- via the lamacoid scanner, whose guards
+        # (winding-current context, RMS/SYM/INTERRUPTING, tap tables) keep a
+        # mis-photographed transformer plate from leaking values. Power
+        # Rating stays transformer-only, unconditionally.
+        plate = legacy_ratings_from_label(nameplate_text)
+        if not ratings["voltage"] and plate["voltage"]:
+            ratings["voltage"], ratings["voltage_uom"] = plate["voltage"], plate["voltage_uom"]
+        if not ratings["ampere"] and plate["ampere"]:
+            ratings["ampere"], ratings["ampere_uom"] = plate["ampere"], plate["ampere_uom"]
 
     branch_panel = identity["ident"] if identity and identity["prefix"] == "PNL" else ""
     # Description = "<type word> - <Equipment ID>" (user rule, 2026-07-29):
@@ -927,6 +940,21 @@ def apply_legacy_rules(data):
         # legacy_structured_from_raw). Blank-fill only, as everything here.
         changed |= _set_if_blank(data, "Equipment ID", tag.strip().upper() if tag else "")
         changed |= _set_if_blank(data, "Equipment Type", "Transformer")
+    else:
+        # Non-transformer: the asset's own EL-0 equipment label (Siemens EQ
+        # loadcentre) supplies Volts/Ampere where the lamacoid printed none
+        # (QR 0000186139). Same scanner, same guards, blank-fill only;
+        # Power Rating is never touched here.
+        plate_text = str(data.get("nameplate_text") or "")
+        if plate_text:
+            plate = legacy_ratings_from_label(plate_text)
+            if not volts_locked:
+                changed |= _set_if_blank(data, "Volts", plate["voltage"])
+                changed |= _set_if_blank(data, "Voltage Rating", plate["voltage"])
+                changed |= _set_if_blank(data, "Voltage Rating (UoM)", plate["voltage_uom"])
+            changed |= _set_if_blank(data, "Ampere", plate["ampere"])
+            changed |= _set_if_blank(data, "Amperage Rating", plate["ampere"])
+            changed |= _set_if_blank(data, "Amperage Rating (UoM)", plate["ampere_uom"])
 
     fed = normalize_legacy_supply_from(str(data.get("Supply From") or ""))
     changed |= _set_if_blank(data, "Fed From Equipment ID", fed["fed_from_id"])
