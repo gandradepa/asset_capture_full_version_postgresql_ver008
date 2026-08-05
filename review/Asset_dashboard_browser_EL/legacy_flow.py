@@ -145,14 +145,37 @@ def legacy_ratings_from_label(text):
     out = dict(voltage="", voltage_uom="", ampere="", ampere_uom="",
                phase="", wires="", breaker=False)
 
-    m = re.search(r"\b(\d{2,3})\s*/\s*(\d{2,3})\s*V(?:OLTS?)?\b", up)
+    # Value-then-unit forms ('120/208V', '600 VOLTS'). The gap before the V
+    # unit is same-line only ([ \t], not \s): with \s* an amperage value at
+    # end-of-line followed by a 'Volts' column header on the next line
+    # ('Amps 225\nVolts AC/CA 120/240', Siemens EQ loadcentres) parsed as
+    # '225 VOLTS' -- a fabricated voltage made from the amp value.
+    m = re.search(r"\b(\d{2,3})[ \t]*/[ \t]*(\d{2,3})[ \t]*V(?:OLTS?)?\b", up)
     if m:
         hi, lo = sorted((int(m.group(1)), int(m.group(2))), reverse=True)
         out["voltage"], out["voltage_uom"] = f"{hi}/{lo}", "VLT"
     else:
-        m = re.search(r"\b(\d{3})\s*V(?:OLTS?)?\b", up)
+        m = re.search(r"\b(\d{3})[ \t]*V(?:OLTS?)?\b", up)
         if m:
             out["voltage"], out["voltage_uom"] = m.group(1), "VLT"
+    if not out["voltage"]:
+        # Unit-first column layout ('Volts AC/CA 120/240'). Same-line window
+        # only, and it admits no letters -- so a 'Pos. Volts' tap-table header
+        # followed by lettered rows ('A 570') can never match.
+        m = re.search(
+            r"\bVOLTS?\b(?:[ \t]*AC[ \t]*/[ \t]*CA)?[ \t:.]{1,6}"
+            r"(\d{2,3})[ \t]*/[ \t]*(\d{2,3})(?!\d)",
+            up,
+        )
+        if m:
+            hi, lo = sorted((int(m.group(1)), int(m.group(2))), reverse=True)
+            out["voltage"], out["voltage_uom"] = f"{hi}/{lo}", "VLT"
+        else:
+            m = re.search(
+                r"\bVOLTS?\b(?:[ \t]*AC[ \t]*/[ \t]*CA)?[ \t:.]{1,6}(\d{3})(?!\d)", up
+            )
+            if m:
+                out["voltage"], out["voltage_uom"] = m.group(1), "VLT"
 
     # Hardened ampere extraction: collect all matches, filter, prefer word-form or BRK-followed
     candidates = []
@@ -190,6 +213,18 @@ def legacy_ratings_from_label(text):
                 out["ampere"], out["ampere_uom"] = brk_followed[0], "AMP"
             else:
                 out["ampere"], out["ampere_uom"] = candidates[0][0], "AMP"
+    else:
+        # Unit-first column layout ('Amps 225', Siemens EQ loadcentres).
+        # Same-line window; `(?![,\d])` rejects thousands-separated
+        # interrupting ratings ('AMPS. 10,000' must not yield 10), and any
+        # RMS/SYM/INTERRUPTING context just before the header is a breaker
+        # sticker's fault-current rating, not the asset's amperage.
+        m = re.search(r"\bAMPS?\b[ \t:.]{1,6}(\d{2,4})(?![,\d])", up)
+        if m and not re.search(
+            r"(?:RMS|SYM|INTERRUPTING)[.\s]*(?:SYM[.\s]*)?AMPS?\b",
+            up[max(0, m.start() - 24):m.end()],
+        ):
+            out["ampere"], out["ampere_uom"] = m.group(1), "AMP"
 
     m = re.search(r"\b(\d)\s*PH(?:ASE)?\b|\b(\d)\s*Ø", up)
     if m:

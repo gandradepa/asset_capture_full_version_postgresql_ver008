@@ -470,6 +470,74 @@ class AmperageGuardTests(unittest.TestCase):
         )
 
 
+# Verbatim-style transcription of a Siemens EQ Loadcentre label (EQ42225,
+# building panel). Unit-FIRST column layout: 'Amps 225', 'Volts AC/CA 120/240'.
+SIEMENS_EQ_LABEL = """SIEMENS
+EQ Loadcentre / Centre de Consommation EQ
+EQ42225
+Amps 225
+Volts AC/CA 120/240
+3 Phase 4 Wire
+Circuits 42/84
+Siemens Canada Limited  Made in Canada
+CSA LL13069"""
+
+
+class UnitFirstLabelTests(unittest.TestCase):
+    """Unit-first label columns (Siemens EQ loadcentres).
+
+    Two defects found against the real EQ42225 label:
+    - the single-voltage regex's `\\s*` spanned the line break, so
+      '225' + newline + 'Volts AC/CA' parsed as 225 VOLTS -- a fabricated
+      voltage made from the amperage value;
+    - 'Amps 225' (no trailing A) yielded no amperage at all.
+    """
+
+    def setUp(self) -> None:
+        self.r = legacy_flow.legacy_ratings_from_label(SIEMENS_EQ_LABEL)
+
+    def test_amps_value_is_never_read_as_a_voltage(self) -> None:
+        self.assertNotEqual(self.r["voltage"], "225")
+
+    def test_unit_first_voltage_pair(self) -> None:
+        self.assertEqual(self.r["voltage"], "240/120")
+        self.assertEqual(self.r["voltage_uom"], "VLT")
+
+    def test_unit_first_amperage(self) -> None:
+        self.assertEqual(self.r["ampere"], "225")
+        self.assertEqual(self.r["ampere_uom"], "AMP")
+
+    def test_phase_and_wires_still_parse(self) -> None:
+        self.assertEqual(self.r["phase"], "3")
+        self.assertEqual(self.r["wires"], "4")
+
+    def test_breaker_interrupting_rating_is_not_an_amperage(self) -> None:
+        # The breaker sticker text, if ever transcribed alongside.
+        for text in (
+            "MAX.RMS.SYM.AMPS. 10,000 120/240 V~",
+            "INTERRUPTING RATING MAX RMS SYM AMPS 10,000",
+        ):
+            self.assertEqual(
+                legacy_flow.legacy_ratings_from_label(text)["ampere"], "", text
+            )
+
+    def test_value_then_unit_still_wins_over_header(self) -> None:
+        # Ordinary lamacoids keep their existing behavior.
+        r = legacy_flow.legacy_ratings_from_label("PANEL U 120/208V 400A 3PH")
+        self.assertEqual(r["voltage"], "208/120")
+        self.assertEqual(r["ampere"], "400")
+
+    def test_voltage_header_does_not_cross_lines_into_tap_style_rows(self) -> None:
+        # 'Pos. Volts' column headers followed by tap rows must stay unparsed.
+        r = legacy_flow.legacy_ratings_from_label("Pos. Volts\nA 570\nB 585\nC 600")
+        self.assertEqual(r["voltage"], "")
+
+    def test_single_voltage_requires_same_line_unit(self) -> None:
+        # The exact false-positive shape: amp value line, then a Volts header.
+        r = legacy_flow.legacy_ratings_from_label("225\nVolts AC/CA")
+        self.assertNotEqual(r["voltage"], "225")
+
+
 class StructuredCompositionTests(unittest.TestCase):
     """legacy_structured_from_raw() wiring, including source precedence."""
 
