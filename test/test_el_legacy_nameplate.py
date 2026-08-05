@@ -657,6 +657,91 @@ class TransformerIdentityTests(unittest.TestCase):
         self.assertEqual(out["Equipment Type"], "Panel")
 
 
+class PlausibilityTripwireTests(unittest.TestCase):
+    """Electrical plausibility rails: fabrications become flags, not data.
+
+    Every fabrication this workstream produced was electrically implausible
+    (225 V read from an amps line, 3259 A from a drawing number, 139 V from
+    240/sqrt3). A parsed value that matches no known UBC voltage system or
+    no standard amperage rating must be REJECTED (moved to a *_rejected key)
+    so composition stores blank and extraction flags the asset for review --
+    instead of the value sailing through every normalizer into Planon.
+    """
+
+    def test_known_voltage_systems_are_accepted(self) -> None:
+        for v in ("120", "600", "347", "208/120", "240/120", "600/347",
+                  "480/277", "208Y/120", "600Y/347", "12470",
+                  "12470-600Y/347", "600-208Y/120"):
+            self.assertTrue(legacy_flow.is_plausible_voltage(v), v)
+
+    def test_fabricated_voltages_are_rejected(self) -> None:
+        # 225 = the Siemens amps value; 139 = 240/sqrt3; 3075 = catalog digits.
+        for v in ("225", "139", "240/139", "600-240/139", "3075", "5", ""):
+            self.assertFalse(legacy_flow.is_plausible_voltage(v), v)
+
+    def test_standard_amperage_ratings_are_accepted(self) -> None:
+        for a in ("15", "100", "225", "400", "600", "2000", "4000"):
+            self.assertTrue(legacy_flow.is_plausible_amperage(a), a)
+
+    def test_implausible_amperages_are_rejected(self) -> None:
+        # 3259/9259 = drawing numbers; 69 = truncated tap current 69.4;
+        # 1443 = LV winding current, not a service rating.
+        for a in ("3259", "9259", "69", "1443", "17", ""):
+            self.assertFalse(legacy_flow.is_plausible_amperage(a), a)
+
+    def test_scanner_moves_implausible_voltage_to_rejected(self) -> None:
+        r = legacy_flow.legacy_ratings_from_label("PANEL X 225V")
+        self.assertEqual(r["voltage"], "")
+        self.assertEqual(r["voltage_rejected"], "225")
+
+    def test_scanner_moves_implausible_amperage_to_rejected(self) -> None:
+        # 45A is real; a hypothetical '47A' plate value is not a standard size.
+        r = legacy_flow.legacy_ratings_from_label("PANEL X 120/208V 47A")
+        self.assertEqual(r["ampere"], "")
+        self.assertEqual(r["ampere_rejected"], "47")
+        self.assertEqual(r["voltage"], "208/120")  # good value untouched
+
+    def test_composition_surfaces_flags_for_review(self) -> None:
+        out = legacy_flow.legacy_structured_from_raw(
+            {"Label Text": "PANEL X 225V 47A", "UBC Asset Tag": "PANEL X"}
+        )
+        self.assertEqual(out["Volts"], "")
+        self.assertEqual(out["Ampere"], "")
+        flags = out.get("rating_plausibility_flags") or []
+        self.assertIn("unrecognized_voltage:225", flags)
+        self.assertIn("implausible_amperage:47", flags)
+
+    def test_clean_extraction_carries_no_flags(self) -> None:
+        out = legacy_flow.legacy_structured_from_raw(
+            {"Label Text": "PANEL U 120/208V 400A", "UBC Asset Tag": "PANEL U"}
+        )
+        self.assertEqual(out.get("rating_plausibility_flags") or [], [])
+        self.assertEqual(out["Volts"], "208/120")
+        self.assertEqual(out["Ampere"], "400")
+
+    def test_all_production_values_pass_the_rails(self) -> None:
+        # The whitelist must not reject anything the fleet already stores.
+        for v in ("208/120", "240/120", "600/347", "600-208Y/120",
+                  "12470-600Y/347"):
+            self.assertTrue(legacy_flow.is_plausible_voltage(v), v)
+        for a in ("100", "225", "400"):
+            self.assertTrue(legacy_flow.is_plausible_amperage(a), a)
+
+    def test_apply_legacy_rules_never_fills_a_rejected_value(self) -> None:
+        data = {
+            "UBC Asset Tag": "PNL-X",
+            "label_text": "PANEL X",
+            "nameplate_text": "SOME LABEL\n225V\n9259A 18",
+            "Volts": "",
+            "Ampere": "",
+        }
+        legacy_flow.apply_legacy_rules(data)
+        self.assertEqual(data["Volts"], "")
+        self.assertEqual(data["Ampere"], "")
+        # Render-path pass must not inject bookkeeping keys into the JSON.
+        self.assertNotIn("rating_plausibility_flags", data)
+
+
 class PanelNameplateFallbackTests(unittest.TestCase):
     """A panel's OWN manufacturer label supplies Volts/Ampere as fallback.
 

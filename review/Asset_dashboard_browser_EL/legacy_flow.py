@@ -131,6 +131,68 @@ def parse_legacy_ident(label_text):
     return None
 
 
+# --- Electrical plausibility rails (tripwire, 2026-08-05) ------------------
+# Every fabrication this workstream produced was electrically implausible:
+# 225 V read from an amps line, 3259 A from a drawing number, 139 V from
+# 240/sqrt3. A parsed value outside these rails is moved to a *_rejected key
+# so composition stores blank and extraction flags the asset for manual
+# review, instead of a plausible-looking wrong value flowing to Planon.
+# Generous by design: rejecting a genuinely printed exotic value costs one
+# reviewer confirmation; accepting a fabricated one silently corrupts.
+_PLAUSIBLE_VOLTS_SINGLE = {
+    "120", "208", "230", "240", "277", "347", "400", "415", "416",
+    "480", "575", "600", "2400", "4160", "12470", "13800", "25000",
+}
+# Standard NEMA/CSA breaker and bus rating sizes.
+_STANDARD_AMP_RATINGS = {
+    "15", "20", "25", "30", "35", "40", "45", "50", "60", "70", "80", "90",
+    "100", "110", "125", "150", "175", "200", "225", "250", "300", "350",
+    "400", "450", "500", "600", "700", "800", "1000", "1200", "1600",
+    "2000", "2500", "3000", "4000", "5000", "6000",
+}
+
+
+def is_plausible_voltage(text):
+    """True when a composed voltage names a known UBC electrical system.
+
+    Accepts singles ('600'), line/phase pairs with optional wye marker
+    ('208Y/120'), and transformer primary-secondary pairs
+    ('12470-600Y/347'), recursively. '240/139' (a fabricated 240/sqrt3) and
+    '225' (an amperage misread as volts) match no known system.
+    """
+    v = str(text or "").strip().upper()
+    if not v:
+        return False
+    if "-" in v:
+        pri, _, sec = v.partition("-")
+        return is_plausible_voltage(pri) and is_plausible_voltage(sec)
+    m = re.fullmatch(r"(\d{2,5})(Y?)(?:/(\d{2,5}))?", v)
+    if not m:
+        return False
+    line, _, phase = m.groups()
+    if line not in _PLAUSIBLE_VOLTS_SINGLE:
+        return False
+    if phase is None:
+        return True
+    return phase in _PLAUSIBLE_VOLTS_SINGLE and int(phase) < int(line)
+
+
+def is_plausible_amperage(text):
+    """True when a value is a standard breaker/bus rating size."""
+    return str(text or "").strip() in _STANDARD_AMP_RATINGS
+
+
+def _apply_rating_rails(out):
+    """Move implausible voltage/ampere readings to *_rejected in place."""
+    if out.get("voltage") and not is_plausible_voltage(out["voltage"]):
+        out["voltage_rejected"] = out["voltage"]
+        out["voltage"], out["voltage_uom"] = "", ""
+    if out.get("ampere") and not is_plausible_amperage(out["ampere"]):
+        out["ampere_rejected"] = out["ampere"]
+        out["ampere"], out["ampere_uom"] = "", ""
+    return out
+
+
 # Context markers that identify a manufacturer-nameplate winding-current table
 # rather than a lamacoid's service amperage. '%' catches the tap rows
 # ('100% 69.4'), the H.T./B.T./H.V./L.V. alternatives catch the winding row
@@ -143,6 +205,7 @@ _NAMEPLATE_AMP_CONTEXT_RE = re.compile(
 def legacy_ratings_from_label(text):
     up = str(text or "").upper()
     out = dict(voltage="", voltage_uom="", ampere="", ampere_uom="",
+               voltage_rejected="", ampere_rejected="",
                phase="", wires="", breaker=False)
 
     # Value-then-unit forms ('120/208V', '600 VOLTS'). The gap before the V
@@ -249,7 +312,7 @@ def legacy_ratings_from_label(text):
         out["wires"] = m.group(1)
 
     out["breaker"] = bool(re.search(r"\bBRK\b", up))
-    return out
+    return _apply_rating_rails(out)
 
 
 # --- Manufacturer nameplate (EL-0 "Asset Plate (Optional)") ------------------
@@ -380,7 +443,8 @@ def legacy_nameplate_specs(text):
     """
     up = str(text or "").upper()
     out = dict(kva="", kva_uom="", primary_volts="", secondary_volts="",
-               voltage="", voltage_uom="", ampere="", ampere_uom="")
+               voltage="", voltage_uom="", ampere="", ampere_uom="",
+               voltage_rejected="", ampere_rejected="")
     if not up.strip():
         return out
 
@@ -441,7 +505,7 @@ def legacy_nameplate_specs(text):
         out["voltage"], out["voltage_uom"] = secondary, "VLT"
     elif primary:
         out["voltage"], out["voltage_uom"] = primary, "VLT"
-    return out
+    return _apply_rating_rails(out)
 
 
 def is_legacy_transformer(tag, equipment_id=""):
@@ -768,9 +832,15 @@ def legacy_structured_from_raw(raw):
     # round-1 Minor-1).
     ratings = legacy_ratings_from_label(label_text)
     if not ratings["voltage"]:
-        ratings["voltage"] = legacy_ratings_from_label(str(raw.get("Volts") or ""))["voltage"]
+        alt = legacy_ratings_from_label(str(raw.get("Volts") or ""))
+        ratings["voltage"] = alt["voltage"]
+        if not ratings["voltage_rejected"]:
+            ratings["voltage_rejected"] = alt["voltage_rejected"]
     if not ratings["ampere"]:
-        ratings["ampere"] = legacy_ratings_from_label(str(raw.get("Ampere") or ""))["ampere"]
+        alt = legacy_ratings_from_label(str(raw.get("Ampere") or ""))
+        ratings["ampere"] = alt["ampere"]
+        if not ratings["ampere_rejected"]:
+            ratings["ampere_rejected"] = alt["ampere_rejected"]
 
     fed = normalize_legacy_supply_from(raw_supply)
     supply_from = compose_legacy_supply_from(fed) or raw_supply
@@ -808,6 +878,8 @@ def legacy_structured_from_raw(raw):
         if not ratings["voltage"] and nameplate["voltage"]:
             ratings["voltage"] = nameplate["voltage"]
             ratings["voltage_uom"] = nameplate["voltage_uom"]
+        if not ratings["voltage_rejected"]:
+            ratings["voltage_rejected"] = nameplate["voltage_rejected"]
     elif nameplate_text:
         # Non-transformer whose EL-0 is its OWN equipment label (Siemens EQ
         # loadcentre: 'Amps 225' / 'Volts AC/CA 120/240', QR 0000186139).
@@ -821,6 +893,9 @@ def legacy_structured_from_raw(raw):
             ratings["voltage"], ratings["voltage_uom"] = plate["voltage"], plate["voltage_uom"]
         if not ratings["ampere"] and plate["ampere"]:
             ratings["ampere"], ratings["ampere_uom"] = plate["ampere"], plate["ampere_uom"]
+        for key in ("voltage_rejected", "ampere_rejected"):
+            if not ratings[key]:
+                ratings[key] = plate[key]
 
     branch_panel = identity["ident"] if identity and identity["prefix"] == "PNL" else ""
     # Description = "<type word> - <Equipment ID>" (user rule, 2026-07-29):
@@ -853,6 +928,17 @@ def legacy_structured_from_raw(raw):
         "Fed From Equipment ID": fed["fed_from_id"],
         "label_text": label_text,
         "nameplate_text": nameplate_text,
+        # Plausibility tripwire: parsed-but-rejected readings, surfaced so the
+        # extractor adds manual-review reason codes. A fabricated value must
+        # become a reviewer flag, never data (see _apply_rating_rails).
+        "rating_plausibility_flags": [
+            f"{label}:{value}"
+            for label, value in (
+                ("unrecognized_voltage", ratings.get("voltage_rejected", "")),
+                ("implausible_amperage", ratings.get("ampere_rejected", "")),
+            )
+            if value
+        ],
     }
 
 

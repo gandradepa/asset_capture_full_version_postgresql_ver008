@@ -2505,6 +2505,14 @@ Rules:
         reason_codes = []
         if score < Config.MANUAL_REVIEW_MIN_SCORE:
             reason_codes.append("low_completeness")
+        # Plausibility tripwire (2026-08-05): a parsed reading that matched no
+        # known voltage system / standard amperage size was rejected by
+        # legacy_flow._apply_rating_rails and stored blank -- surface it as a
+        # review reason so a fabrication becomes a flag, never silent data.
+        for flag in (final_data.get("rating_plausibility_flags") or []):
+            code = str(flag).split(":", 1)[0].strip()
+            if code and code not in reason_codes:
+                reason_codes.append(code)
         for f in scoring_fields:
             if str(final_data.get(f, "") or "").strip() and conf_scores[f] < Config.MANUAL_REVIEW_MIN_CONFIDENCE:
                 reason_codes.append("low_confidence_" + re.sub(r"[^a-z0-9]+", "_", f.lower()).strip("_"))
