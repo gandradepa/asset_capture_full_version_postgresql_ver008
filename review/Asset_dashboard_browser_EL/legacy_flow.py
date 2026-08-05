@@ -244,11 +244,32 @@ def _nameplate_kva_int(text):
     except (TypeError, ValueError):
         return ""
     return str(value) if value > 0 else ""
-# '12470 H.T. H.V. 95 KV BIL' -- the winding designator follows the value.
+# '12470 H.T. H.V. 95 KV BIL' -- the winding designator follows the value
+# (ABB bilingual layout).
 _NAMEPLATE_HV_RE = re.compile(r"\b(\d{3,6})\s*(?:H\.?\s*T\.?[\s/]*)?H\.?\s*V\.?(?![A-Z])")
 # '600Y/346.4 B.T. L.V. 10 KV BIL'
 _NAMEPLATE_LV_RE = re.compile(
     r"\b(\d{2,5}\s*Y?\s*/\s*\d{1,5}(?:\.\d+)?|\d{2,5}\s*Y?)\s*(?:B\.?\s*T\.?[\s/]*)?L\.?\s*V\.?(?![A-Z])"
+)
+# 'PRI. 600 V' / 'SEC. 208Y/120 V' -- the designator PRECEDES the value
+# (Delta/GE-style layout; TX-11 production regression). The window between the
+# marker and the digits admits no letters or digits, so the French plate label
+# 'TRANSFORMATEUR TYPE SEC' cannot reach across 'CAT. #' into the catalog
+# number, and `(?<![A-Z0-9])` keeps digits embedded in codes like 'DA3075V'
+# from ever matching.
+_NAMEPLATE_PRI_RE = re.compile(
+    r"\bPRI(?:\.|MARY)?\b[^0-9A-Z]{0,12}(?<![A-Z0-9])(\d{3,6})\s*V?\b"
+)
+_NAMEPLATE_SEC_RE = re.compile(
+    r"\bSEC(?:\.|ONDARY)?\b[^0-9A-Z]{0,12}(?<![A-Z0-9])"
+    r"(\d{2,5}\s*Y?\s*/\s*\d{1,5}(?:\.\d+)?|\d{2,5}\s*Y?)\s*V?\b"
+)
+# '75 ANN' under a kVA column header -- a number immediately followed by a
+# self-cooled cooling-class code is the base rating even when the unit is a
+# column header rather than a suffix. 'TYPE ANN' (ABB) has no digits before
+# ANN and cannot match.
+_NAMEPLATE_KVA_CLASS_RE = re.compile(
+    r"(?<![\d.])(\d{1,6}(?:\.\d+)?)\s*(?:K\.?\s*V\.?\s*A\.?\s*)?\b(?:ANN|ONAN|OA)\b"
 )
 # UBC-canonical phase-to-neutral nominals. A wye secondary prints the exact
 # line/sqrt(3) value (600/sqrt3 = 346.4) but every stored EL row uses the
@@ -342,13 +363,25 @@ def legacy_nameplate_specs(text):
                 kva = _nameplate_kva_int(min(pool, key=lambda v: float(v)))
             except (TypeError, ValueError):
                 kva = ""
+    if not kva:
+        # Unit-as-column-header layout ('kVA' header, then '75 ANN'): the
+        # number-then-class association is the only safe signal -- a bare
+        # 'KVA header then number' rule would read the ABB temp-rise rows
+        # ('KVA\n115°C 1500 2000') as a 115 kVA rating.
+        m = _NAMEPLATE_KVA_CLASS_RE.search(flat)
+        if m:
+            kva = _nameplate_kva_int(m.group(1))
     if kva:
         out["kva"], out["kva_uom"] = kva, "KVA"
 
     hv = _NAMEPLATE_HV_RE.search(flat)
+    if not hv:
+        hv = _NAMEPLATE_PRI_RE.search(flat)
     if hv:
         out["primary_volts"] = hv.group(1)
     lv = _NAMEPLATE_LV_RE.search(flat)
+    if not lv:
+        lv = _NAMEPLATE_SEC_RE.search(flat)
     if lv:
         out["secondary_volts"] = _nameplate_secondary_nominal(lv.group(1))
 

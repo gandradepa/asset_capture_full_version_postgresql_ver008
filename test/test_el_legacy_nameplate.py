@@ -257,6 +257,141 @@ class SecondaryVoltageTests(unittest.TestCase):
         self.assertEqual(specs["kva"], "112")
 
 
+# Verbatim transcription of TX-11's Delta-style dry-type plate from production
+# (Output_jason_api/0000186136_EL_641.json, building 641). Layout differs from
+# the ABB plate in every way that matters: unit-first kVA column ('kVA' header
+# then '75 ANN'), PRI./SEC. winding designators with the value AFTER the
+# marker, a catalog number containing digits+V ('DA3075V'), the French
+# 'TRANSFORMATEUR TYPE SEC' ('SEC' = dry, not secondary), and a tap table
+# ('Pos. Volts 1 630 2 615 3 600 ...').
+DELTA_PLATE = """DRY-TYPE TRANSFORMER
+TRANSFORMATEUR TYPE SEC
+CAT. #
+DA3075V
+Distinct
+Mod. #
+DA3075V
+V0002
+kVA
+75 ANN
+3
+Phase
+PRI.
+600 V
+---
+kV BIL
+SEC.
+208Y/120 V
+---
+kV BIL
+% IZ
+7.23
+at/à
+170
+°C
+60 Hz
+Temp. Rise
+Élév. Temp.
+150
+°C
+Class
+Classe
+220
+Enclosure
+Boîtier
+1
+Weight
+Poids
+422 Lbs
+Serial
+Série
+DWA-1416-208031
+Diagram
+Schéma
+DYN1-5E
+Type
+K
+Pos.
+Volts
+1
+630
+2
+615
+3
+600
+4
+585
+5
+570
+CONNECTEURS
+CU-AL
+CONNECTORS
+UL
+LISTED
+77U5
+POWER
+TRANSFORMER
+E112313
+CSA
+LR 3902"""
+
+
+class DeltaPlateTests(unittest.TestCase):
+    """The PRI./SEC. plate layout (TX-11 regression, found in production).
+
+    Under v4 the model shoved the plate's '600' straight into Volts; v5
+    correctly routes plate text to Nameplate Text -- but the parser only
+    understood the ABB layout, so TX-11 went from Volts='600' to blank.
+    """
+
+    def setUp(self) -> None:
+        self.specs = legacy_flow.legacy_nameplate_specs(DELTA_PLATE)
+
+    def test_unit_first_kva_with_ann_class(self) -> None:
+        self.assertEqual(self.specs["kva"], "75")
+        self.assertEqual(self.specs["kva_uom"], "KVA")
+
+    def test_pri_sec_voltage_pair(self) -> None:
+        self.assertEqual(self.specs["voltage"], "600-208Y/120")
+        self.assertEqual(self.specs["voltage_uom"], "VLT")
+
+    def test_catalog_number_digits_are_not_a_voltage(self) -> None:
+        # 'CAT. # DA3075V' sits right after 'TRANSFORMATEUR TYPE SEC'; the
+        # French 'SEC' (= dry) must not read 3075 out of the catalog code.
+        self.assertNotIn("3075", self.specs["voltage"])
+        self.assertNotIn("3075", self.specs["primary_volts"])
+        self.assertNotIn("3075", self.specs["secondary_volts"])
+
+    def test_tap_table_and_metadata_are_not_harvested(self) -> None:
+        # Tap voltages 630/615/585/570, %IZ 7.23, Class 220, weight 422,
+        # UL file E112313 -- none of these are the rating.
+        for bogus in ("630", "615", "585", "570", "7", "220", "422"):
+            self.assertNotEqual(self.specs["kva"], bogus)
+        self.assertNotIn("630", self.specs["voltage"])
+
+    def test_no_amperage_from_this_plate_either(self) -> None:
+        self.assertEqual(self.specs["ampere"], "")
+
+    def test_end_to_end_tx11(self) -> None:
+        out = legacy_flow.legacy_structured_from_raw(
+            {
+                "Label Text": "TX-11",
+                "Nameplate Text": DELTA_PLATE,
+                "UBC Asset Tag": "TX-11",
+            }
+        )
+        self.assertEqual(out["Power Rating"], "75")
+        self.assertEqual(out["Power Rating (UoM)"], "KVA")
+        self.assertEqual(out["Volts"], "600-208Y/120")
+        self.assertEqual(out["Ampere"], "")
+        self.assertEqual(out["Equipment ID"], "TX-11")
+
+    def test_abb_plate_still_parses_after_delta_support(self) -> None:
+        specs = legacy_flow.legacy_nameplate_specs(ABB_PLATE)
+        self.assertEqual(specs["kva"], "1500")
+        self.assertEqual(specs["voltage"], "12470-600Y/347")
+
+
 class AmperageGuardTests(unittest.TestCase):
     """The winding-current table must never become an Amperage Rating."""
 
