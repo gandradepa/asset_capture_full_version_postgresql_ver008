@@ -1473,6 +1473,12 @@ def _get_asset_group_from_tag(tag: str, asset_type: str = None) -> str:
         return "Other Service and Distribution"
     if tag.startswith("TX"):
         return "Interior Distribution Transformers"
+    # 'T1' / 'T-1' unit naming: the dictionary's 'T-|EL' prefix entry already
+    # classifies these as transformers, but its prefix match needs the hyphen
+    # ('T1' misses 'T-'). Same digit-suffix anchor as
+    # legacy_flow.is_legacy_transformer so TSBC/'T1A'/panel idents never match.
+    if re.match(r"^T[-.\s]?\d+$", tag):
+        return "Interior Distribution Transformers"
     return ASSET_GROUP_DEFAULT
 
 def _get_desc_prefix_from_asset_group(asset_group: str) -> str:

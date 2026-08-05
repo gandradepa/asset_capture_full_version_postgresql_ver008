@@ -392,6 +392,56 @@ class DeltaPlateTests(unittest.TestCase):
         self.assertEqual(specs["voltage"], "12470-600Y/347")
 
 
+class TNumberTagTests(unittest.TestCase):
+    """`T1` / `T-1` naming is a transformer (production QR 0000186131).
+
+    The dictionary's own `T-|EL` entry classifies the `T-` prefix as
+    `Interior Distribution Transformers` / `Transformer`, and building 641's
+    T-1 carries the Delta plate. The gate only knew `TX*` and the `T-X`
+    drift, so a perfectly transcribed nameplate composed to blanks.
+    """
+
+    def test_t_number_tags_are_transformers(self) -> None:
+        for tag in ("T1", "T-1", "T-2", "T.1", "T 1", "T-11"):
+            self.assertTrue(legacy_flow.is_legacy_transformer(tag), tag)
+
+    def test_non_transformer_t_words_are_not(self) -> None:
+        # TSBC-ish words, panels, and bare/odd idents must not slip through.
+        for tag in ("TSBC", "T", "PANEL T", "PNL-T", "ATS-1", "T1A", "DCC-1"):
+            self.assertFalse(legacy_flow.is_legacy_transformer(tag), tag)
+
+    def test_t1_with_delta_nameplate_composes_fully(self) -> None:
+        # QR 0000186131's exact stored state: tag 'T1', full transcription.
+        out = legacy_flow.legacy_structured_from_raw(
+            {
+                "Label Text": "T1",
+                "Nameplate Text": DELTA_PLATE.replace("DA3075V", "DT 3112"),
+                "UBC Asset Tag": "T1",
+            }
+        )
+        self.assertEqual(out["Power Rating"], "75")
+        self.assertEqual(out["Power Rating (UoM)"], "KVA")
+        self.assertEqual(out["Volts"], "600-208Y/120")
+        self.assertEqual(out["Equipment ID"], "T1")
+        self.assertEqual(out["Equipment Type"], "Transformer")
+
+    def test_apply_legacy_rules_blank_fills_t1_from_stored_nameplate(self) -> None:
+        # The review-side path for the frozen JSON: modified stays untouched,
+        # blanks fill from nameplate_text, reviewer values never overwritten.
+        data = {
+            "UBC Asset Tag": "T1",
+            "label_text": "T1",
+            "nameplate_text": DELTA_PLATE,
+            "Volts": "",
+            "Power Rating": "",
+            "Power Rating (UoM)": "",
+        }
+        changed = legacy_flow.apply_legacy_rules(data)
+        self.assertTrue(changed)
+        self.assertEqual(data["Power Rating"], "75")
+        self.assertEqual(data["Volts"], "600-208Y/120")
+
+
 class AmperageGuardTests(unittest.TestCase):
     """The winding-current table must never become an Amperage Rating."""
 

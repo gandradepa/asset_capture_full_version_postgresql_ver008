@@ -408,6 +408,13 @@ def is_legacy_transformer(tag, equipment_id=""):
             continue
         if re.match(r"^T[-.\s]?X\b", up) or re.match(r"^T[-.\s]?X[-.\s]", up):
             return True
+        # 'T1' / 'T-1' unit naming (production QR 0000186131, building 641).
+        # The dictionary's own 'T-|EL' entry classifies the T- prefix as
+        # Interior Distribution Transformers / 'Transformer'. Anchored to a
+        # pure digit suffix so TSBC-ish words, 'T1A' codes and panel idents
+        # never match.
+        if re.match(r"^T[-.\s]?\d+$", up):
+            return True
         _, etype = derive_legacy_equipment_metadata(up)
         if etype == "Transformer":
             return True
@@ -730,6 +737,10 @@ def legacy_structured_from_raw(raw):
         # rather than fabricating an identity.
         equipment_id = raw_tag.strip().upper()
     _, equipment_type = derive_legacy_equipment_metadata(equipment_id)
+    if not equipment_type and is_legacy_transformer(raw_tag, equipment_id):
+        # 'T1'-style unit names carry no map prefix ('TX') to derive from,
+        # but the transformer gate has already proven the identity class.
+        equipment_type = "Transformer"
     power_type = corroborated_power_type(identity["system_hint"], fed) if identity else ""
 
     # UBC Asset Tag = the equipment identity ('DCC-1', 'PNL-U', 'MCC2'), user
