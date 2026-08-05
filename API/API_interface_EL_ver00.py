@@ -642,7 +642,12 @@ def _el_legacy_conf_scores(structured, raw_conf, scoring_fields):
 # transformer-only Power Rating pair and a primary-secondary voltage pair;
 # lamacoid (EL-1) stays the primary source and is never overridden by it;
 # the amperage scan now rejects nameplate winding-current tables.
-EL_LEGACY_RULE_VERSION = 5
+# v6 (2026-08-05): Supply From stores ONE identifier ('T6', 'DCC', 'DCC-4'),
+# exactly like the UBC Asset Tag -- never the printed composite sentence
+# (raw fallback removed) and never the ' via ...' qualifier form; blank when
+# no feeder is identified. 'FED FROM TRANS. T6' now parses the transformer
+# as the primary feeder.
+EL_LEGACY_RULE_VERSION = 6
 
 
 class ELLegacyConfidenceScores(BaseModel):

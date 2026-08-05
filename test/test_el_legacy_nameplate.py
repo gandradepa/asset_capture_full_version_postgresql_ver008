@@ -819,6 +819,99 @@ class PanelNameplateFallbackTests(unittest.TestCase):
         self.assertEqual(data["Volts"], "")
 
 
+class LegacyFedFromSingleValueTests(unittest.TestCase):
+    """Supply From carries ONE identifier, like the UBC Asset Tag (user rule,
+    2026-08-05): `T6`, `DCC`, `DCC-4` -- never the composite printed sentence
+    and never a ' via ...' qualifier. Blank when the lamacoid prints no
+    fed-from data or the feeder cannot be identified.
+
+    Driving labels (building 641, real lamacoids):
+      PANEL FF -> FED FROM EMERGENCY DIST. CTRE. GENERATOR RM. 0047  -> DCC
+      PANEL O  -> FED FROM DIST. CTRE. #4 CARPENTRY WORKSHOP 0053    -> DCC-4
+      PANEL Q  -> FED FROM TRANS. T6 - PANEL II ELECTRICAL SHOP 0004 -> T6
+    The PANEL Q sentence previously fell through every feeder pattern and the
+    raw-sentence fallback stored the whole composite in Supply From.
+    """
+
+    def _fed(self, text):
+        return legacy_flow.normalize_legacy_supply_from(text)["fed_from_id"]
+
+    def test_transformer_as_primary_feeder(self) -> None:
+        self.assertEqual(
+            self._fed("FED FROM TRANS. T6 - PANEL II ELECTRICAL SHOP 0004"), "T6"
+        )
+        self.assertEqual(self._fed("FED FROM TRANSFORMER T12"), "T12")
+        self.assertEqual(self._fed('FED FROM TRANS. "T3"'), "T3")
+
+    def test_emergency_dist_ctre_generator_is_dcc(self) -> None:
+        self.assertEqual(
+            self._fed("FED FROM EMERGENCY DIST. CTRE. GENERATOR RM. 0047"), "DCC"
+        )
+
+    def test_numbered_dist_ctre_keeps_hyphen_form(self) -> None:
+        self.assertEqual(
+            self._fed("FED FROM DIST. CTRE. #4 CARPENTRY WORKSHOP 0053"), "DCC-4"
+        )
+
+    def test_through_trans_stays_routing_not_primary(self) -> None:
+        # DCC-1's real sentence: MDC is the feeder, T1 only the path.
+        fed = legacy_flow.normalize_legacy_supply_from(
+            'FED FROM MAIN DIST. CTRE. TRANS. RM. 0060 THROUGH TRANS. "T1" 112.5 K.V.A.'
+        )
+        self.assertEqual(fed["fed_from_id"], "MDC")
+
+    def test_specific_feeder_still_beats_ups_and_via(self) -> None:
+        self.assertEqual(self._fed("FED FROM DCC-1 VIA UPS"), "DCC-1")
+        self.assertEqual(self._fed("FED FROM U.P.S. 1"), "UPS")
+
+    def test_supply_from_stores_the_single_identifier(self) -> None:
+        out = legacy_flow.legacy_structured_from_raw(
+            {
+                "Label Text": "PANEL Q 120/208V - 3PH - 4W\n"
+                "FED FROM TRANS. T6 - PANEL II ELECTRICAL SHOP 0004",
+                "UBC Asset Tag": "PANEL Q",
+                "Supply From": "FED FROM TRANS. T6 - PANEL II ELECTRICAL SHOP 0004",
+            }
+        )
+        self.assertEqual(out["Supply From"], "T6")
+        self.assertEqual(out["Fed From Equipment ID"], "T6")
+
+    def test_supply_from_never_stores_a_via_composite(self) -> None:
+        out = legacy_flow.legacy_structured_from_raw(
+            {
+                "Label Text": "DIST. CTRE. #1",
+                "UBC Asset Tag": "DIST. CTRE. #1",
+                "Supply From": 'FED FROM MAIN DIST. CTRE. TRANS. RM. 0060 '
+                'THROUGH TRANS. "T1" 112.5 K.V.A.',
+            }
+        )
+        self.assertEqual(out["Supply From"], "MDC")
+        self.assertEqual(out["Fed From Equipment ID"], "MDC")
+
+    def test_unparseable_sentence_stores_blank_not_raw(self) -> None:
+        out = legacy_flow.legacy_structured_from_raw(
+            {
+                "Label Text": "PANEL Z",
+                "UBC Asset Tag": "PANEL Z",
+                "Supply From": "FED FROM SOMEWHERE ILLEGIBLE",
+            }
+        )
+        self.assertEqual(out["Supply From"], "")
+        self.assertEqual(out["Fed From Equipment ID"], "")
+
+    def test_no_fed_from_printed_stays_blank(self) -> None:
+        out = legacy_flow.legacy_structured_from_raw(
+            {"Label Text": "PANEL VC", "UBC Asset Tag": "PANEL VC"}
+        )
+        self.assertEqual(out["Supply From"], "")
+
+    def test_via_still_parsed_internally_for_power_type(self) -> None:
+        # The dict's `via` feeds corroborated_power_type; only STORAGE changes.
+        fed = legacy_flow.normalize_legacy_supply_from("FED FROM SD-E4 VIA ATS")
+        self.assertEqual(fed["via"], "ATS")
+        self.assertEqual(legacy_flow.corroborated_power_type("E", fed), "E")
+
+
 class ApplyLegacyRulesTests(unittest.TestCase):
     """Invariant 6: never erase a human override."""
 

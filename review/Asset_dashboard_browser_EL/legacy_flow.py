@@ -642,6 +642,21 @@ def normalize_legacy_supply_from(text):
         if m:
             out["fed_from_id"] = m.group(1) + (f"-{m.group(2)}" if m.group(2) else "")
             return out
+        # Transformer named DIRECTLY as the feeder ('FED FROM TRANS. T6 -
+        # PANEL II ...', PANEL Q real label, 2026-08-05): there is no
+        # THROUGH/VIA keyword, so _VIA_TX_RE left `via` empty and the
+        # transformer IS the immediate feeder. Normalized bare ('T6'),
+        # matching the tag convention -- is_legacy_transformer recognizes it,
+        # so SLD cross-references connect. Skipped when a THROUGH/VIA
+        # qualifier already claimed the transformer as routing (DCC-1's
+        # 'FED FROM MAIN DIST. CTRE. THROUGH TRANS. "T1"' keeps MDC).
+        if not out["via"].startswith("TX"):
+            m = re.search(
+                r"\b(?:TRANS(?:FORMER)?\.?|TX)\s*[\"']?\s*T[-.\s]?(\d+)\b", up
+            )
+            if m:
+                out["fed_from_id"] = f"T{m.group(1)}"
+                return out
         m = re.search(r"\b([A-Z]{2,4}-[A-Z0-9]+)\b", up)
         if m:
             out["fed_from_id"] = m.group(1)
@@ -665,11 +680,11 @@ def normalize_legacy_supply_from(text):
 
 
 def compose_legacy_supply_from(fed):
-    """Human-readable Supply From per the photo-table convention: 'MDC via ATS',
-    'MDC via TX T1', 'DCC-1', 'GENERATOR', or ''. Supply From and Fed From
-    Equipment ID carry the same feeder identifier in the same hyphenated form
-    (user rule, 2026-07-29); Supply From may additionally carry a ' via ...'
-    qualifier when the plate prints one."""
+    """Human-readable 'MDC via TX T1' display form. SUPERSEDED for storage
+    (user rule, 2026-08-05): Supply From now stores the bare fed_from_id only
+    -- one identifier, no ' via ...' qualifier -- so this composer no longer
+    has a storage caller. Kept for display/decode use per the do-not-delete-
+    dormant-pieces convention (see the `breaker` flag precedent)."""
     fid = str((fed or {}).get("fed_from_id", "")).strip()
     via = str((fed or {}).get("via", "")).strip()
     if not fid:
@@ -843,7 +858,14 @@ def legacy_structured_from_raw(raw):
             ratings["ampere_rejected"] = alt["ampere_rejected"]
 
     fed = normalize_legacy_supply_from(raw_supply)
-    supply_from = compose_legacy_supply_from(fed) or raw_supply
+    # Supply From carries ONE identifier, exactly like the UBC Asset Tag
+    # (user rule, 2026-08-05): 'T6', 'DCC', 'DCC-4' -- never the printed
+    # composite sentence (the old raw_supply fallback) and never the
+    # ' via ...' qualifier form (the old compose_legacy_supply_from output).
+    # Blank when no feeder is identified; the verbatim sentence remains
+    # recoverable in label_text, and `via` still feeds power-type
+    # corroboration internally.
+    supply_from = fed["fed_from_id"]
 
     equipment_id = identity["equipment_id"] if identity else ""
     if not equipment_id and is_legacy_transformer(raw_tag):
