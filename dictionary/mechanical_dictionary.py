@@ -855,6 +855,14 @@ ASSET_DICTIONARY = {
         "asset_type": "EL",
         "type": "EL"
     },
+    "TX-MAIN|EL": {
+        "attribute_set": "Electrical",
+        "asset_group": "Main Transformers",
+        "main_asset": "Electrical Service and Distribution",
+        "description": "Main Transformer",
+        "asset_type": "EL",
+        "type": "EL"
+    },
     "VAV|ME": {
         "attribute_set": "Mechanical",
         "asset_group": "Fan Coil Units",

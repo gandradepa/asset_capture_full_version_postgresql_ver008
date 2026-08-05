@@ -131,6 +131,15 @@ def parse_legacy_ident(label_text):
     return None
 
 
+# Context markers that identify a manufacturer-nameplate winding-current table
+# rather than a lamacoid's service amperage. '%' catches the tap rows
+# ('100% 69.4'), the H.T./B.T./H.V./L.V. alternatives catch the winding row
+# labels, and COURANT/CURRENT catches the column header itself.
+_NAMEPLATE_AMP_CONTEXT_RE = re.compile(
+    r"(?:COURANT|CURRENT|%|\bH\.?T\.?\b|\bB\.?T\.?\b|\bH\.?V\.?\b|\bL\.?V\.?\b)"
+)
+
+
 def legacy_ratings_from_label(text):
     up = str(text or "").upper()
     out = dict(voltage="", voltage_uom="", ampere="", ampere_uom="",
@@ -156,6 +165,14 @@ def legacy_ratings_from_label(text):
         start = m.start()
         context = up[max(0, start - 10):start].rstrip()
         if re.search(r"(?:\b(?:RM\.?|ROOM|PANEL|PNL)|#)$", context):
+            continue
+        # Reject manufacturer-nameplate winding-current context. A transformer
+        # plate prints its current table under a 'COURANT CURRENT (A)' header
+        # with '%'-tap rows and H.T./B.T. row labels; those amps are per-tap
+        # per-winding values, not the asset's Amperage Rating (see
+        # legacy_nameplate_specs). Needs a wider window than the 10-char
+        # lamacoid check because the row label precedes the tap percentage.
+        if _NAMEPLATE_AMP_CONTEXT_RE.search(up[max(0, start - 28):start]):
             continue
         # Track: (digit_run, has_word_form, is_brk_followed)
         is_word_form = unit in ("AMP", "AMPS")
@@ -184,6 +201,184 @@ def legacy_ratings_from_label(text):
 
     out["breaker"] = bool(re.search(r"\bBRK\b", up))
     return out
+
+
+# --- Manufacturer nameplate (EL-0 "Asset Plate (Optional)") ------------------
+# Source precedence (user rule, 2026-08-04): the EL-1 lamacoid is the PRIMARY
+# source and the EL-0 manufacturer nameplate is SECONDARY. The two are parsed
+# by separate functions reading separate fields ('label_text' vs
+# 'nameplate_text') so a nameplate reading can never silently outrank a
+# lamacoid one, and so a panel whose lamacoid quotes its upstream feeder
+# ('THROUGH TRANS. "T1" 112.5 K.V.A.') never inherits that rating.
+
+# Self-cooled / forced-air cooling-class codes. A dual-rated transformer prints
+# the forced-air rating alongside the base one; only the base self-cooled
+# rating at the lowest temperature rise is the asset's Power Rating.
+_NAMEPLATE_FORCED_AIR_RE = re.compile(r"\b(?:AFN|FA|ONAF|OFAF|ODAF)\b")
+# The impedance base line ('SUR/ON 1500 KVA') is the plate's own declaration of
+# which rating everything else is referenced to -- the most reliable signal.
+# The `(?<![\d.])` lookbehind and the optional decimal group are BOTH required.
+# Without them `\b(\d{1,6})` word-boundaries onto the fraction of a decimal
+# rating -- '112.5 KVA' matches at the boundary between '.' and '5' and yields
+# 5, which is a *valid* pair that normalize_power_rating_pair passes through
+# unchanged, so a 112.5 kVA transformer would reach Planon as 5 kVA. 37.5 /
+# 75.0 / 112.5 / 167.5 are standard dry-type sizes, so this is the common case,
+# not an edge case. Mirrors validators_shared._POWER_RATING_NUM_FIRST_RE.
+_NAMEPLATE_BASE_KVA_RE = re.compile(
+    r"\b(?:SUR\s*/?\s*ON|BASE|BASED\s+ON)\b[^\d\n]{0,20}(?<![\d.])(\d{1,6}(?:\.\d+)?)\s*K\.?\s*V\.?\s*A\.?\b"
+)
+_NAMEPLATE_ANY_KVA_RE = re.compile(r"(?<![\d.])(\d{1,6}(?:\.\d+)?)\s*K\.?\s*V\.?\s*A\.?\b")
+
+
+def _nameplate_kva_int(text):
+    """Truncate a printed kVA figure toward zero, or '' if unusable.
+
+    ``normalize_power_rating_pair`` rejects decimals outright, so a fractional
+    plate size must become an integer here or the value is silently dropped
+    downstream. Truncation (not rounding) matches the stored precedent:
+    ``sdi_dataset_EL`` holds ``112`` for a 112.5 kVA unit, while
+    ``electrical_building_schema`` keeps the exact ``112.5``.
+    """
+    try:
+        value = int(float(str(text).strip()))
+    except (TypeError, ValueError):
+        return ""
+    return str(value) if value > 0 else ""
+# '12470 H.T. H.V. 95 KV BIL' -- the winding designator follows the value.
+_NAMEPLATE_HV_RE = re.compile(r"\b(\d{3,6})\s*(?:H\.?\s*T\.?[\s/]*)?H\.?\s*V\.?(?![A-Z])")
+# '600Y/346.4 B.T. L.V. 10 KV BIL'
+_NAMEPLATE_LV_RE = re.compile(
+    r"\b(\d{2,5}\s*Y?\s*/\s*\d{1,5}(?:\.\d+)?|\d{2,5}\s*Y?)\s*(?:B\.?\s*T\.?[\s/]*)?L\.?\s*V\.?(?![A-Z])"
+)
+# UBC-canonical phase-to-neutral nominals. A wye secondary prints the exact
+# line/sqrt(3) value (600/sqrt3 = 346.4) but every stored EL row uses the
+# integer nominal, so plain rounding (which would give 346) is wrong.
+_WYE_PHASE_NOMINAL = {
+    "600": "347", "208": "120", "480": "277",
+    "240": "139", "415": "240", "400": "231", "380": "220",
+}
+
+
+def _nameplate_secondary_nominal(text):
+    """Normalize a printed secondary voltage to its UBC-canonical nominal."""
+    raw = re.sub(r"\s+", "", str(text or "").upper())
+    m = re.match(r"^(\d{2,5})(Y?)(?:/(\d{1,5}(?:\.\d+)?))?$", raw)
+    if not m:
+        return ""
+    line, wye, phase = m.group(1), m.group(2), m.group(3)
+    if phase is None:
+        return line
+    # A printed INTEGER phase voltage is authoritative -- never substitute a
+    # wye nominal for it. Doing so rewrites correctly-printed non-wye
+    # secondaries: split-phase '240/120' would become '240/139' (240/sqrt(3)),
+    # a value printed on no plate and rejected wholesale downstream
+    # (normalize_volts('600-240/139') -> ''), losing a usable reading.
+    if "." not in phase:
+        return f"{line}{wye}/{phase}"
+    # Decimal phase: the plate is printing line/sqrt(3) exactly (600/sqrt(3) =
+    # 346.4). Map it to the UBC-canonical integer nominal, since every stored
+    # EL row uses the nominal and the shared normalizers reject decimals.
+    nominal = _WYE_PHASE_NOMINAL.get(line)
+    if nominal is None:
+        try:
+            nominal = str(int(round(float(phase))))
+        except (TypeError, ValueError):
+            return line
+    return f"{line}{wye}/{nominal}"
+
+
+def legacy_nameplate_specs(text):
+    """Read technical specs from a manufacturer nameplate transcription.
+
+    Returns ``kva``/``kva_uom`` (base self-cooled rating only) and a composed
+    ``voltage``/``voltage_uom`` primary-secondary pair such as
+    ``12470-600Y/347``, matching the pair shape already stored for
+    transformers in ``sdi_dataset_EL`` (e.g. ``600-208Y/120``).
+
+    Deliberately emits NO amperage: a transformer plate prints per-tap,
+    per-winding currents (five HV taps plus one LV value here) that the
+    single-column ``Amperage Rating`` cannot represent, and 24 of 26
+    transformer rows in ``sdi_dataset_EL`` are blank. See the amperage
+    rejection in ``legacy_ratings_from_label``.
+
+    NOTE (unconfirmed with Planon): a medium-voltage primary such as ``12470``
+    is a value class this system has never stored -- no row >= 1000 V exists in
+    ``sdi_dataset_EL`` or ``electrical_building_schema``. The legacy path can
+    hold it because it bypasses ``normalize_volts`` (whose whitelist tops out
+    at 600), but the standard flow would strip it. To store the secondary only,
+    return ``secondary`` instead of the composed pair below.
+    """
+    up = str(text or "").upper()
+    out = dict(kva="", kva_uom="", primary_volts="", secondary_volts="",
+               voltage="", voltage_uom="", ampere="", ampere_uom="")
+    if not up.strip():
+        return out
+
+    # Strip thousands separators first: normalize_power_rating_pair silently
+    # truncates '1,500' to '500'.
+    flat = re.sub(r"(?<=\d),(?=\d{3}\b)", "", up)
+
+    m = _NAMEPLATE_BASE_KVA_RE.search(flat)
+    kva = _nameplate_kva_int(m.group(1)) if m else ""
+    if not kva:
+        # No declared base: take the smallest explicit kVA from lines that do
+        # not name a forced-air class. Forced-air and higher temperature-rise
+        # ratings are always larger than the base self-cooled rating, so the
+        # minimum is the base. Forced-air-only lines are a last resort rather
+        # than a hard exclusion, so a plate that names nothing else still
+        # yields a rating.
+        self_cooled, forced_air = [], []
+        for line in flat.splitlines():
+            values = [km.group(1) for km in _NAMEPLATE_ANY_KVA_RE.finditer(line)]
+            if not values:
+                continue
+            if _NAMEPLATE_FORCED_AIR_RE.search(line):
+                forced_air.extend(values)
+            else:
+                self_cooled.extend(values)
+        pool = self_cooled or forced_air
+        if pool:
+            try:
+                kva = _nameplate_kva_int(min(pool, key=lambda v: float(v)))
+            except (TypeError, ValueError):
+                kva = ""
+    if kva:
+        out["kva"], out["kva_uom"] = kva, "KVA"
+
+    hv = _NAMEPLATE_HV_RE.search(flat)
+    if hv:
+        out["primary_volts"] = hv.group(1)
+    lv = _NAMEPLATE_LV_RE.search(flat)
+    if lv:
+        out["secondary_volts"] = _nameplate_secondary_nominal(lv.group(1))
+
+    primary, secondary = out["primary_volts"], out["secondary_volts"]
+    if primary and secondary:
+        out["voltage"], out["voltage_uom"] = f"{primary}-{secondary}", "VLT"
+    elif secondary:
+        out["voltage"], out["voltage_uom"] = secondary, "VLT"
+    elif primary:
+        out["voltage"], out["voltage_uom"] = primary, "VLT"
+    return out
+
+
+def is_legacy_transformer(tag, equipment_id=""):
+    """True when the legacy identity denotes a transformer.
+
+    Power Rating is a transformer-only field, so this gates every nameplate
+    contribution. Accepts the drifted ``T-X-MAIN`` spelling alongside
+    ``TX-MAIN`` because that variant exists in production JSON today.
+    """
+    for value in (equipment_id, tag):
+        up = str(value or "").strip().upper()
+        if not up:
+            continue
+        if re.match(r"^T[-.\s]?X\b", up) or re.match(r"^T[-.\s]?X[-.\s]", up):
+            return True
+        _, etype = derive_legacy_equipment_metadata(up)
+        if etype == "Transformer":
+            return True
+    return False
 
 
 # Shared by normalize_legacy_supply_from and parse_legacy_identity_text so the
@@ -458,14 +653,19 @@ def legacy_structured_from_raw(raw):
     """Compose review-ready structured_data from RAW legacy model output.
 
     `raw` keys (all optional, unnormalized strings): 'Label Text',
-    'UBC Asset Tag', 'Supply From', 'Volts', 'Ampere'. Never fabricates a
-    PNL- prefix; unparseable identities stay verbatim. Location and the
-    Power Rating pair are always blank (field-gap rules 6 / transformer-only).
+    'Nameplate Text', 'UBC Asset Tag', 'Supply From', 'Volts', 'Ampere'.
+    Never fabricates a PNL- prefix; unparseable identities stay verbatim.
+    Location is always blank (field-gap rule 6). The Power Rating pair is
+    transformer-only: blank unless is_legacy_transformer() matches AND the
+    EL-0 nameplate transcription in 'Nameplate Text' carries a rating.
     A non-dict `raw` is treated as empty (review round-1 Minor-3).
     """
     if not isinstance(raw, dict):
         raw = {}
     label_text = str(raw.get("Label Text") or "").strip()
+    # EL-0 manufacturer plate, kept in its own field so the lamacoid parse
+    # above can never be contaminated by nameplate text (and vice versa).
+    nameplate_text = str(raw.get("Nameplate Text") or "").strip()
     raw_tag = str(raw.get("UBC Asset Tag") or "").strip()
     raw_supply = str(raw.get("Supply From") or "").strip()
 
@@ -487,6 +687,15 @@ def legacy_structured_from_raw(raw):
     supply_from = compose_legacy_supply_from(fed) or raw_supply
 
     equipment_id = identity["equipment_id"] if identity else ""
+    if not equipment_id and is_legacy_transformer(raw_tag):
+        # The legacy ident grammar models PANEL identities, so a transformer
+        # tag such as 'TX-MAIN' does not parse -- but it plainly is the
+        # equipment's identity. Leaving it blank let a JSON->DB sync overwrite
+        # a correct stored Equipment ID with '', and Equipment ID / Equipment
+        # Type are both in the required field set for the transformer asset
+        # groups. Non-transformer plates that fail to parse still stay blank
+        # rather than fabricating an identity.
+        equipment_id = raw_tag.strip().upper()
     _, equipment_type = derive_legacy_equipment_metadata(equipment_id)
     power_type = corroborated_power_type(identity["system_hint"], fed) if identity else ""
 
@@ -496,6 +705,16 @@ def legacy_structured_from_raw(raw):
     # voltage/system/type segment codes still map through the standard
     # label_schema — but it is never stored as the tag.
     tag = identity["equipment_id"] if identity else raw_tag
+
+    # Nameplate contribution: transformer-only, and strictly SECONDARY to the
+    # lamacoid. Voltage is filled only where the lamacoid produced nothing.
+    nameplate = legacy_nameplate_specs(nameplate_text)
+    power_rating = power_rating_uom = ""
+    if is_legacy_transformer(tag, equipment_id):
+        power_rating, power_rating_uom = nameplate["kva"], nameplate["kva_uom"]
+        if not ratings["voltage"] and nameplate["voltage"]:
+            ratings["voltage"] = nameplate["voltage"]
+            ratings["voltage_uom"] = nameplate["voltage_uom"]
 
     branch_panel = identity["ident"] if identity and identity["prefix"] == "PNL" else ""
     # Description = "<type word> - <Equipment ID>" (user rule, 2026-07-29):
@@ -516,8 +735,8 @@ def legacy_structured_from_raw(raw):
         "UBC Asset Tag": tag,
         "Branch Panel": branch_panel,
         "Ampere": ratings["ampere"],
-        "Power Rating": "",
-        "Power Rating (UoM)": "",
+        "Power Rating": power_rating,
+        "Power Rating (UoM)": power_rating_uom,
         "Supply From": supply_from,
         "Volts": ratings["voltage"],
         "Location": "",
@@ -527,6 +746,7 @@ def legacy_structured_from_raw(raw):
         "Power Type": power_type,
         "Fed From Equipment ID": fed["fed_from_id"],
         "label_text": label_text,
+        "nameplate_text": nameplate_text,
     }
 
 
@@ -592,12 +812,11 @@ def apply_legacy_rules(data):
         _, etype = derive_legacy_equipment_metadata(parsed["equipment_id"])
         changed |= _set_if_blank(data, "Equipment Type", etype)
 
-    # "label_text" is supplied by the future legacy-extraction step (not yet built);
-    # 0 of 182 production EL JSONs carry it today. Until that extraction step lands,
-    # this falls back to `tag` (the UBC Asset Tag), so the ratings fills below
-    # (Volts/Ampere/Voltage Rating/Amperage Rating) only activate for callers that
-    # already provide a populated "label_text" — they are wired but dormant in
-    # production until then. See "EL Legacy Flow Rules" in
+    # "label_text" is the EL-1 lamacoid transcription written by the legacy
+    # extraction step; every production legacy JSON carries it. It falls back
+    # to `tag` (the UBC Asset Tag) for callers that supply neither, which keeps
+    # the ratings fills below (Volts/Ampere/Voltage Rating/Amperage Rating)
+    # harmless on pre-legacy payloads. See "EL Legacy Flow Rules" in
     # Markdowns_documentation/rules/review_apps.rules.md.
     ratings = legacy_ratings_from_label(str(data.get("label_text") or tag))
     volts_locked = str(data.get("volts_manual_override") or "").strip() == "1"
@@ -608,6 +827,21 @@ def apply_legacy_rules(data):
     changed |= _set_if_blank(data, "Ampere", ratings["ampere"])
     changed |= _set_if_blank(data, "Amperage Rating", ratings["ampere"])
     changed |= _set_if_blank(data, "Amperage Rating (UoM)", ratings["ampere_uom"])
+
+    # EL-0 manufacturer nameplate: transformer-only, and strictly secondary to
+    # the lamacoid above -- _set_if_blank means anything the lamacoid or a
+    # reviewer already supplied wins (invariant 6). Read from its own
+    # "nameplate_text" key rather than "label_text", so a panel whose lamacoid
+    # quotes its upstream feeder ('THROUGH TRANS. "T1" 112.5 K.V.A.') cannot
+    # inherit that transformer's rating. No amperage is contributed.
+    if is_legacy_transformer(tag, (parsed or {}).get("equipment_id", "")):
+        nameplate = legacy_nameplate_specs(str(data.get("nameplate_text") or ""))
+        if not volts_locked:
+            changed |= _set_if_blank(data, "Volts", nameplate["voltage"])
+            changed |= _set_if_blank(data, "Voltage Rating", nameplate["voltage"])
+            changed |= _set_if_blank(data, "Voltage Rating (UoM)", nameplate["voltage_uom"])
+        changed |= _set_if_blank(data, "Power Rating", nameplate["kva"])
+        changed |= _set_if_blank(data, "Power Rating (UoM)", nameplate["kva_uom"])
 
     fed = normalize_legacy_supply_from(str(data.get("Supply From") or ""))
     changed |= _set_if_blank(data, "Fed From Equipment ID", fed["fed_from_id"])

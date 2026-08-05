@@ -543,8 +543,11 @@ Rules:
 - UBC Asset Tag: never use the QR code, never use the long numeric value from an `Asset Identification` sticker, and never echo the file QR identifier.
 - Supply From: the complete fed-from sentence verbatim (e.g., `FED FROM MAIN DIST. CTRE. TRANS. RM. 0060 THROUGH TRANS. "T1" 112.5 K.V.A.`). Do NOT shorten it to an identifier — copy the full printed phrase.
 - Volts: the voltage text exactly as printed, including pairs (e.g., `120/208V`, `600/347V`). Leave blank if not printed.
-- Ampere: the amperage text exactly as printed including the unit (e.g., `400A`, `100 AMPS`). Only when explicitly printed; never infer from KVA/KW or transformer specs.
-- Use EL-1 as the primary source for the identity plate; EL-0 for technical specs. Never use the blue QR sticker text for any field.
+- Ampere: the amperage text exactly as printed including the unit (e.g., `400A`, `100 AMPS`). Only when explicitly printed on the LAMACOID; never infer from KVA/KW or transformer specs.
+- Ampere: NEVER take a value from a manufacturer nameplate's winding-current table (the column headed `COURANT CURRENT (A)`, or any `%`-tap row such as `100% 69.4`, or an `H.T.`/`B.T.`/`H.V.`/`L.V.` winding row). Those are per-tap per-winding currents, not the asset's amperage. Leave Ampere blank in that case.
+- Nameplate Text: if EL-0 shows a MANUFACTURER nameplate (an engraved or stamped metal data plate, e.g. ABB / Westinghouse / Square D, carrying KVA, H.V./L.V. voltages, serial number), transcribe ALL of it verbatim, table cells row by row, preserving line breaks as \\n. Leave blank when EL-0 is not a manufacturer nameplate.
+- Nameplate Text vs Label Text: keep them strictly separate. `Label Text` is the BLACK LAMACOID plate(s) only; manufacturer-nameplate text must NEVER be merged into it. Do not copy nameplate figures into Volts or Ampere -- transcribe them into Nameplate Text and let post-processing decide.
+- Source precedence: EL-1 (lamacoid) is the PRIMARY source for identity and for any printed Volts/Ampere; EL-0 (Asset Plate, optional) is SECONDARY and supplies manufacturer-nameplate technical specs only. Never use the blue QR sticker text for any field.
 """
 
 # Fields scored for legacy completeness / manual-review thresholds. Separate
@@ -552,6 +555,72 @@ Rules:
 # post-processed dicts from el_legacy_flow.legacy_structured_from_raw, not raw
 # model output — Branch Panel/Equipment ID/etc. are derived, not scored inputs.
 EL_LEGACY_SCORING_FIELDS = ("UBC Asset Tag", "Volts", "Ampere", "Supply From")
+# Transformer variant, mirroring the standard flow's split at Config
+# EL_TRANSFORMER_SCORING_FIELDS / EL_NON_TRANSFORMER_SCORING_FIELDS (:317-319).
+# A transformer contributes no Ampere (its nameplate prints per-tap winding
+# currents, not a service rating) and frequently prints no fed-from clause, so
+# scoring it against the flat set above capped assets like TX-MAIN at 50% and
+# left them permanently flagged 'low_completeness' no matter how good the
+# extraction was.
+EL_LEGACY_BASE_SCORING_FIELDS = ("UBC Asset Tag", "Volts")
+EL_LEGACY_TRANSFORMER_SCORING_FIELDS = EL_LEGACY_BASE_SCORING_FIELDS + (
+    "Power Rating", "Power Rating (UoM)",
+)
+
+
+def _el_legacy_scoring_fields(structured):
+    """Pick the legacy scoring set for one asset (transformer-aware).
+
+    Falls back to the flat legacy set whenever the legacy_flow module is
+    unavailable or version-skewed, so scoring never hard-fails on deploy skew.
+    """
+    if el_legacy_flow is not None and hasattr(el_legacy_flow, "is_legacy_transformer"):
+        data = structured if isinstance(structured, dict) else {}
+        if el_legacy_flow.is_legacy_transformer(
+            str(data.get("UBC Asset Tag") or "").strip(),
+            str(data.get("Equipment ID") or "").strip(),
+        ):
+            return EL_LEGACY_TRANSFORMER_SCORING_FIELDS
+    return EL_LEGACY_SCORING_FIELDS
+
+
+def _el_legacy_conf_scores(structured, raw_conf, scoring_fields):
+    """Per-field confidence for one legacy asset, aware of value provenance.
+
+    The model scores `Volts` / `Ampere` against the LAMACOID. On a transformer
+    it correctly finds no volts there, reports a low score for its own blank
+    read, and the stored value is derived from the EL-0 nameplate instead --
+    so that field must carry the nameplate transcription's confidence, not the
+    lamacoid's. Without this, QR 0000186132 extracts perfectly (100%
+    completeness) yet still raises `low_confidence_volts`, and every
+    correctly-read transformer would be flagged for manual review.
+
+    `Power Rating` / `(UoM)` are never scored by the model at all -- they are
+    composed by legacy_structured_from_raw -- so they inherit the same source.
+    Fields the lamacoid genuinely supplied keep the model's own score.
+    """
+    data = structured if isinstance(structured, dict) else {}
+    conf = raw_conf if isinstance(raw_conf, dict) else {}
+    nameplate_conf = int(conf.get("Nameplate Text", 0) or 0)
+
+    derived = set()
+    if el_legacy_flow is not None and hasattr(el_legacy_flow, "legacy_nameplate_specs"):
+        specs = el_legacy_flow.legacy_nameplate_specs(data.get("nameplate_text", "") or "")
+        if specs.get("voltage") and str(data.get("Volts") or "").strip() == specs["voltage"]:
+            derived.add("Volts")
+        if specs.get("kva"):
+            derived.update(("Power Rating", "Power Rating (UoM)"))
+
+    scores = {}
+    for field in scoring_fields:
+        if not str(data.get(field, "") or "").strip():
+            scores[field] = 0
+            continue
+        direct = int(conf.get(field, 0) or 0)
+        if field in derived or not direct:
+            direct = nameplate_conf or direct
+        scores[field] = max(0, min(100, direct))
+    return scores
 
 # Legacy JSON schema/rule version, independent of Config.EXTRACTION_RULE_VERSION
 # (the standard flow's rule version, which legacy payloads also stamp unchanged
@@ -568,7 +637,12 @@ EL_LEGACY_SCORING_FIELDS = ("UBC Asset Tag", "Volts", "Ampere", "Supply From")
 # v4 (2026-07-30): schema-driven ident normalization (dotted abbreviations
 # 'U.P.S.1' -> 'UPS1'; plate-typo equivalence 'USP' -> 'UPS') and UPS as a
 # recognized fed-from feeder ('FED FROM U.P.S. ...' -> 'UPS').
-EL_LEGACY_RULE_VERSION = 4
+# v5 (2026-08-04): manufacturer-nameplate support. New 'Nameplate Text' raw
+# field (EL-0 Asset Plate) parsed by legacy_nameplate_specs() into a
+# transformer-only Power Rating pair and a primary-secondary voltage pair;
+# lamacoid (EL-1) stays the primary source and is never overridden by it;
+# the amperage scan now rejects nameplate winding-current tables.
+EL_LEGACY_RULE_VERSION = 5
 
 
 class ELLegacyConfidenceScores(BaseModel):
@@ -579,6 +653,7 @@ class ELLegacyConfidenceScores(BaseModel):
     supply_from: int = Field(default=0, alias="Supply From")
     volts: int = Field(default=0, alias="Volts")
     ampere: int = Field(default=0, alias="Ampere")
+    nameplate_text: int = Field(default=0, alias="Nameplate Text")
 
 
 class ELLegacyStructuredExtraction(BaseModel):
@@ -597,13 +672,16 @@ class ELLegacyStructuredExtraction(BaseModel):
     supply_from: str = Field(default="", alias="Supply From")
     volts: str = Field(default="", alias="Volts")
     ampere: str = Field(default="", alias="Ampere")
+    # EL-0 manufacturer nameplate, kept out of label_text so the lamacoid
+    # parse stays uncontaminated (see legacy_flow.legacy_nameplate_specs).
+    nameplate_text: str = Field(default="", alias="Nameplate Text")
     confidence_scores: ELLegacyConfidenceScores = Field(
         default_factory=ELLegacyConfidenceScores,
         alias="Confidence Scores",
         description="Per-field confidence 0-100.",
     )
 
-    @field_validator("label_text", "ubc_asset_tag", "supply_from", "volts", "ampere", mode="before")
+    @field_validator("label_text", "ubc_asset_tag", "supply_from", "volts", "ampere", "nameplate_text", mode="before")
     @classmethod
     def _coerce_to_string(cls, value: Any) -> str:
         if value is None:
@@ -2322,6 +2400,13 @@ Rules:
                 existing_structured = {}
             is_human_protected = (
                 existing_payload.get("modified") is True
+                # An APPROVED legacy JSON is reviewer-owned even when nothing
+                # was edited afterwards. The review app already refuses to
+                # reprocess it (_reprocess_json_protected, Asset_dashboard_EL.py
+                # :4622), but the extractor did not -- so a command-line rerun
+                # with EL_OVERWRITE_EXISTING_JSON=true could overwrite approved
+                # work. Same predicate as the review app, deliberately.
+                or str(existing_structured.get("Approved") or "").strip() == "True"
                 or str(existing_structured.get("supply_from_manual_override") or "").strip() == "1"
                 or str(existing_structured.get("volts_manual_override") or "").strip() == "1"
             )
@@ -2387,7 +2472,7 @@ Rules:
                 raw_payload = parsed.model_dump(by_alias=True)
                 conf = raw_payload.pop("Confidence Scores", {}) or {}
                 candidate = el_legacy_flow.legacy_structured_from_raw(raw_payload)
-                score = completeness_score(candidate, list(EL_LEGACY_SCORING_FIELDS))
+                score = completeness_score(candidate, list(_el_legacy_scoring_fields(candidate)))
                 logging.info(
                     "[%s] Legacy extraction completed: completeness=%.0f%% (model=%s, role=%s).",
                     qr, score, model_name, role,
@@ -2412,19 +2497,15 @@ Rules:
             return f"- QR: {qr} | EL | ERROR (Legacy extraction failed) | Building: {building}"
 
         final_data = best_raw
-        conf_scores = {
-            f: int(best_conf.get(f, 0) or 0) for f in EL_LEGACY_SCORING_FIELDS
-        }
-        for f in EL_LEGACY_SCORING_FIELDS:
-            if not str(final_data.get(f, "") or "").strip():
-                conf_scores[f] = 0
-        score = completeness_score(final_data, list(EL_LEGACY_SCORING_FIELDS))
+        scoring_fields = _el_legacy_scoring_fields(final_data)
+        conf_scores = _el_legacy_conf_scores(final_data, best_conf, scoring_fields)
+        score = completeness_score(final_data, list(scoring_fields))
         avg_conf = _avg_ai_conf_from_scores(conf_scores)
 
         reason_codes = []
         if score < Config.MANUAL_REVIEW_MIN_SCORE:
             reason_codes.append("low_completeness")
-        for f in EL_LEGACY_SCORING_FIELDS:
+        for f in scoring_fields:
             if str(final_data.get(f, "") or "").strip() and conf_scores[f] < Config.MANUAL_REVIEW_MIN_CONFIDENCE:
                 reason_codes.append("low_confidence_" + re.sub(r"[^a-z0-9]+", "_", f.lower()).strip("_"))
         flagged_for_review = bool(reason_codes)
@@ -2450,7 +2531,7 @@ Rules:
                 image_paths=[img["path"] for img in images],
                 failure_reason=",".join(reason_codes) or "low_quality_extraction",
                 missing_fields=[
-                    f for f in EL_LEGACY_SCORING_FIELDS
+                    f for f in scoring_fields
                     if not str(final_data.get(f, "") or "").strip()
                 ],
                 attempted_models=attempted_models,

@@ -455,6 +455,19 @@ EL_REQUIRED_GROUP_FIELDS = {
         "Voltage Rating (UoM)",
     ),
 }
+# 'Main Transformers' (Asset_Group EL.21.306.4057, elec_dist_setup='Y') is a
+# distinct classification from 'Interior Distribution Transformers'
+# (EL.21.306.4050) but carries exactly the same Planon-facing field set.
+# Without this alias _build_el_required_fields_payload falls through to the
+# common set and reports a green 'Complete' traffic light for a transformer
+# whose ratings are all blank. Aliased rather than duplicated so the two can
+# never drift apart.
+EL_REQUIRED_GROUP_FIELDS["Main Transformers"] = EL_REQUIRED_GROUP_FIELDS[
+    "Interior Distribution Transformers"
+]
+# Asset groups scored against the transformer field set (Power Rating instead
+# of Amperage Rating).
+EL_TRANSFORMER_ASSET_GROUPS = ("Interior Distribution Transformers", "Main Transformers")
 EL_SLD_DEPENDENT_FIELDS = ("Fed From Amperage Rating", "Fed From Amperage Rating (UoM)")
 EL_REQUIRED_ALL_COLUMNS = tuple(
     dict.fromkeys(
@@ -1596,7 +1609,10 @@ EL_REVIEW_TRANSFORMER_SCORING_FIELDS = EL_REVIEW_BASE_SCORING_FIELDS + ("Power R
 def _el_review_scoring_fields(sd: dict) -> tuple[str, ...]:
     tag = str((sd or {}).get("UBC Asset Tag") or (sd or {}).get("Branch Panel") or "").strip()
     asset_group = _get_asset_group_from_tag(tag, (sd or {}).get("asset_type"))
-    if asset_group == "Interior Distribution Transformers":
+    # A row may carry its dictionary-assigned group ('Main Transformers') even
+    # when the tag heuristic above lands on the interior-distribution default.
+    stored_group = str((sd or {}).get("Asset Group") or "").strip()
+    if asset_group in EL_TRANSFORMER_ASSET_GROUPS or stored_group in EL_TRANSFORMER_ASSET_GROUPS:
         return EL_REVIEW_TRANSFORMER_SCORING_FIELDS
     return EL_REVIEW_NON_TRANSFORMER_SCORING_FIELDS
 
