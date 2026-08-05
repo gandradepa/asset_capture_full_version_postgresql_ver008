@@ -815,14 +815,6 @@ ASSET_DICTIONARY = {
         "asset_type": "ME",
         "type": "ME"
     },
-    "T-|EL": {
-        "attribute_set": "Electrical",
-        "asset_group": "Interior Distribution Transformers",
-        "main_asset": "Emergency Lighting and Power Systems",
-        "description": "Transformer",
-        "asset_type": "EL",
-        "type": "EL"
-    },
     "T-|ME": {
         "attribute_set": "Receiver",
         "asset_group": "Lab Air Compressor Receiver",
@@ -847,6 +839,14 @@ ASSET_DICTIONARY = {
         "asset_type": "ME",
         "type": "ME"
     },
+    "TX-MAIN|EL": {
+        "attribute_set": "Electrical",
+        "asset_group": "Main Transformers",
+        "main_asset": "Electrical Service and Distribution",
+        "description": "Main Transformer",
+        "asset_type": "EL",
+        "type": "EL"
+    },
     "TX|EL": {
         "attribute_set": "Electrical",
         "asset_group": "Interior Distribution Transformers",
@@ -855,11 +855,11 @@ ASSET_DICTIONARY = {
         "asset_type": "EL",
         "type": "EL"
     },
-    "TX-MAIN|EL": {
+    "T|EL": {
         "attribute_set": "Electrical",
-        "asset_group": "Main Transformers",
-        "main_asset": "Electrical Service and Distribution",
-        "description": "Main Transformer",
+        "asset_group": "Interior Distribution Transformers",
+        "main_asset": "Emergency Lighting and Power Systems",
+        "description": "Transformer",
         "asset_type": "EL",
         "type": "EL"
     },
