@@ -369,6 +369,85 @@ def _qr_prefix_expr() -> str:
     return ("split_part(code_assets, ' ', 1)" if qrdb.is_postgres()
             else "SUBSTR(code_assets, 1, INSTR(code_assets || ' ', ' ') - 1)")
 
+# Curated-write outcomes. Callers that gate follow-up state (the JSON sync marking
+# a file processed) must distinguish these three: only OK means a row exists now,
+# FAILED is transient and must be retried, CONFLICT is permanent and must NOT be
+# retried forever (the sync runs from before_request on every request).
+SDI_WRITE_OK = "written"
+SDI_WRITE_CONFLICT = "conflict"
+SDI_WRITE_FAILED = "failed"
+
+# Columns backed by a foreign key, where the empty string is NOT a valid reference:
+# sdi_dataset has fk_sdi_mainasset -> main_asset_description(main_asset), and
+# main_asset_description holds no empty-string row, so writing '' makes PostgreSQL
+# reject the whole INSERT ("Key (Main Asset)=() is not present"). NULL is accepted.
+# Every Mechanical asset without a dictionary match has a blank Main Asset, so
+# coercing blanks to '' silently dropped those records (2026-07-29 incident).
+NULL_WHEN_BLANK_COLUMNS = {"Main Asset"}
+
+
+def _column_value_for_write(column: str, value):
+    """Blank FK-backed columns must be NULL; every other blank stays ''."""
+    if column in NULL_WHEN_BLANK_COLUMNS:
+        return value if str(value if value is not None else "").strip() else None
+    return "" if value is None else value
+
+
+# ---- Sync outcome persistence (2026-08-06) -------------------------------
+# A FAILED / CONFLICT / sparse outcome used to produce only a print() to the
+# gunicorn journal, so the 22-QR loss of 2026-07-29 left nothing an operator
+# could query. Each outcome now also writes an audit_trail row, which the
+# Dashboard's User Activity view surfaces when filtered on source=system.
+#
+# audit_trail.op_type carries CHECK (op_type IN ('INSERT','UPDATE','DELETE')),
+# so these rows reuse 'UPDATE' and carry the real signal in a synthetic
+# "sync_status" field rather than requiring a schema change.
+_SYNC_WARNED: dict = {}
+_SYNC_WARN_FIELD = "sync_status"
+
+
+def _record_sync_warning(qr: str, building: str, filename: str, status: str, detail: str) -> None:
+    """Persist one JSON-sync warning. Best-effort: never raises, never blocks a sync.
+
+    Deduped per process by (filename, status): SDI_WRITE_FAILED is retried on
+    every request pass, and one audit row per request would bury the trail it
+    is meant to provide. _clear_sync_warning() drops the entry after a later
+    success so a regression alerts again.
+    """
+    if _audit_log_change is None:
+        return
+    key = f"{filename}|{status}"
+    if _SYNC_WARNED.get(key):
+        return
+    try:
+        # A FRESH connection: the caller may be holding one whose transaction
+        # the constraint error already aborted, where any write is discarded.
+        with qrdb.get_connection(sqlite_path=DB_PATH) as conn:
+            _audit_log_change(
+                conn,
+                qr_code=qr,
+                app_name="reviewer_me",
+                table_name=SDI_TABLE,
+                record_pk=f"{qr}|{building}",
+                op_type="UPDATE",
+                field_changes={_SYNC_WARN_FIELD: ("", f"{status}: {detail}")},
+                modified_by="system:json-sync",
+                source="system",
+                description=f"JSON sync {status} ({filename})",
+            )
+            conn.commit()
+        _SYNC_WARNED[key] = status
+    except Exception as exc:
+        # Losing the warning row must never cost us the sync itself.
+        print(f"JSON Sync Warning {filename}: could not record {status} to audit_trail: {exc}")
+
+
+def _clear_sync_warning(filename: str) -> None:
+    """Forget a file's warnings after a successful write, so a later failure re-alerts."""
+    for key in [k for k in _SYNC_WARNED if k.startswith(f"{filename}|")]:
+        _SYNC_WARNED.pop(key, None)
+
+
 def _db_ensure_columns(conn, table: str, column_defs: dict[str, str]):
     existing_cols = _db_get_columns(conn, table)
     if not existing_cols:
@@ -379,19 +458,20 @@ def _db_ensure_columns(conn, table: str, column_defs: dict[str, str]):
         if col_name not in existing_cols:
             cur.execute(f'ALTER TABLE {_quote(table)} ADD COLUMN {_quote(col_name)} {col_type}')
 
-def _db_upsert_row(conn, table: str, key_cols: list[str], row: dict):
+def _db_upsert_row(conn, table: str, key_cols: list[str], row: dict) -> str:
+    """Write one row; returns an SDI_WRITE_* status (never raises for constraints)."""
     existing_cols = _db_get_columns(conn, table)
-    if not existing_cols: return
-    
-    filtered = {k: ("" if row.get(k) is None else row.get(k)) for k in row.keys() if k in existing_cols}
-    
+    if not existing_cols: return SDI_WRITE_FAILED
+
+    filtered = {k: _column_value_for_write(k, row.get(k)) for k in row.keys() if k in existing_cols}
+
     # Ensure keys exist
     for key in key_cols:
         if key not in filtered: filtered[key] = ""
 
     set_cols = [c for c in filtered.keys() if c not in key_cols]
     cur = conn.cursor()
-    
+
     if set_cols:
         set_clause = ", ".join(f'{_quote(c)} = ?' for c in set_cols)
         where_clause = " AND ".join(f'{_quote(k)} = ?' for k in key_cols)
@@ -399,23 +479,35 @@ def _db_upsert_row(conn, table: str, key_cols: list[str], row: dict):
         params_upd = [filtered[c] for c in set_cols] + [filtered[k] for k in key_cols]
         cur.execute(sql_upd, params_upd)
         if cur.rowcount == 0:
-            _db_insert_row_helper(cur, table, filtered)
-    else:
-        _db_insert_row_helper(cur, table, filtered)
+            return _db_insert_row_helper(cur, table, filtered)
+        return SDI_WRITE_OK
+    return _db_insert_row_helper(cur, table, filtered)
 
-def _db_insert_row_helper(cur, table, filtered):
+def _db_insert_row_helper(cur, table, filtered) -> str:
     cols = list(filtered.keys())
     placeholders = ", ".join("?" for _ in cols)
     sql_ins = f'INSERT INTO {_quote(table)} ({", ".join(_quote(c) for c in cols)}) VALUES ({placeholders})'
     params_ins = [filtered[c] for c in cols]
+    # PostgreSQL aborts the whole transaction on a constraint error, which would
+    # silently turn the caller's COMMIT into a ROLLBACK. A SAVEPOINT keeps the
+    # transaction usable so the swallow below stays a local no-op.
+    savepoint = qrdb.is_postgres()
+    if savepoint:
+        cur.execute("SAVEPOINT sdi_row_insert")
     try:
         cur.execute(sql_ins, params_ins)
+        if savepoint:
+            cur.execute("RELEASE SAVEPOINT sdi_row_insert")
+        return SDI_WRITE_OK
     except qrdb.IntegrityError:
         # Cross-backend (SQLite IntegrityError + psycopg2 IntegrityError). The PG schema
-        # now enforces a PK on sdi_dataset("QR Code"); a cross-building INSERT for an
-        # already-curated QR raises UniqueViolation here. Preserve the existing
-        # silent-fallthrough semantics so the review UI doesn't 500 mid-edit.
-        pass
+        # enforces a PK on sdi_dataset("QR Code") plus FKs; a cross-building INSERT for
+        # an already-curated QR raises UniqueViolation here. Do not raise (the review UI
+        # must not 500 mid-edit) but report the conflict so callers never mistake it for
+        # a successful write -- that confusion stranded 22 QRs on 2026-07-29.
+        if savepoint:
+            cur.execute("ROLLBACK TO SAVEPOINT sdi_row_insert")
+        return SDI_WRITE_CONFLICT
 
 def _db_upsert_sdi_dataset(
     qr: str,
@@ -428,8 +520,13 @@ def _db_upsert_sdi_dataset(
     audit_description: str = "",
     audit_source_map: dict | None = None,
     audit_modified_by: str | None = None,
-):
-    if not _connectable(): return
+) -> str:
+    """Returns an SDI_WRITE_* status describing what actually happened.
+
+    Callers that gate follow-up state on the write (the JSON sync marking files
+    processed) must check it: only SDI_WRITE_OK means the curated row exists.
+    """
+    if not _connectable(): return SDI_WRITE_FAILED
 
     _coerce_packaged_approval(qr, structured)
     approved_flag = "1" if (structured.get("Approved", "") == "True") else "0"
@@ -484,10 +581,36 @@ def _db_upsert_sdi_dataset(
                 except Exception as snap_exc:
                     print(f"[audit] ME snapshot-before failed: {snap_exc}")
 
-            _db_upsert_row(conn, SDI_TABLE, key_cols=["QR Code", "Building"], row=row)
+            write_status = _db_upsert_row(conn, SDI_TABLE, key_cols=["QR Code", "Building"], row=row)
+            if write_status == SDI_WRITE_CONFLICT:
+                # A constraint rejected the write. Whether that is benign depends on
+                # whether the QR ended up curated at all: a PK clash means a row
+                # already exists (the asset is accounted for), while an FK/CHECK
+                # rejection leaves NOTHING -- and silently accepting that is exactly
+                # how records go missing. Only the former may be marked processed.
+                curated = None
+                try:
+                    curated = conn.execute(
+                        f'SELECT 1 FROM {_quote(SDI_TABLE)} WHERE "QR Code"=?', (qr or "",)
+                    ).fetchone()
+                except Exception as probe_exc:
+                    print(f"[sdi] could not verify curated row for {qr}: {probe_exc}")
+                if curated:
+                    print(
+                        f"[sdi] CONFLICT: {SDI_TABLE} already holds QR {qr} under a different "
+                        f"Building (attempted '{building}'); curated row left unchanged. "
+                        "Needs human review -- not retried."
+                    )
+                else:
+                    print(
+                        f"[sdi] REJECTED: no curated row exists for QR {qr} (building "
+                        f"'{building}') after a constraint error. Will retry -- fix the "
+                        "underlying data so this asset is not lost."
+                    )
+                    write_status = SDI_WRITE_FAILED
 
             # Audit: per-field diff against the freshly written state
-            if _audit_log_change and _audit_diff_dicts:
+            if write_status == SDI_WRITE_OK and _audit_log_change and _audit_diff_dicts:
                 try:
                     cur = conn.execute(
                         f'SELECT * FROM {_quote(SDI_TABLE)} WHERE "QR Code"=? AND "Building"=?',
@@ -525,8 +648,10 @@ def _db_upsert_sdi_dataset(
                     print(f"[audit] ME upsert audit failed: {audit_exc}")
 
             conn.commit()
+        return write_status
     except Exception as e:
         print(f"DB Upsert Error: {e}")
+        return SDI_WRITE_FAILED
 
 def _db_table_has_column(table: str, column: str) -> bool:
     if not _connectable():
@@ -660,6 +785,14 @@ def sync_json_directory_to_db():
             if force_resync or fn not in processed or mtime > processed[fn]:
                 to_proc[fn] = mtime
         
+        # Retry guard (2026-08-05, post 2026-07-29 incident): if the DB is not
+        # reachable, skip the whole pass WITHOUT marking anything processed so
+        # the next pass retries. 22 ME QRs were silently lost to the previous
+        # mark-anyway behavior.
+        if to_proc and not _connectable():
+            print("JSON Sync Warning (ME): DB not connectable; skipping this sync pass.")
+            return
+
         processed_updates = {}
         for fn, mtime in to_proc.items():
             m = JSON_NAME_RE.match(fn)
@@ -677,18 +810,41 @@ def sync_json_directory_to_db():
                             json.dump(content, f, ensure_ascii=False, indent=4)
                         mtime = os.path.getmtime(fp)
                     structured = apply_dictionary_rules(structured, asset_type=discipline)
-                    _db_upsert_sdi_dataset(
+                    write_status = _db_upsert_sdi_dataset(
                         qr, bld, structured,
                         avg_ai_conf=_extract_avg_ai_conf(content),
                         audit_source="ai:gpt-5.5",
                         audit_description=f"JSON sync ({fn})",
                         audit_modified_by="ai-pipeline",
                     )
+                    if write_status == SDI_WRITE_FAILED:
+                        # Transient (DB unreachable / commit failed): leave the file
+                        # unmarked so the next pass retries it. Marking it here is what
+                        # stranded 22 QRs on 2026-07-29.
+                        print(f"JSON Sync Warning {fn}: curated write failed; will retry next pass.")
+                        _record_sync_warning(qr, bld, fn, "SDI_WRITE_FAILED",
+                                             "curated write failed; retrying on the next sync pass")
+                        continue
+                    if write_status == SDI_WRITE_CONFLICT:
+                        # Permanent (constraint conflict). Mark processed so this does not
+                        # re-attempt on every request; the CONFLICT line above names it.
+                        print(f"JSON Sync Warning {fn}: curated row conflicts with existing data; needs human review.")
+                        _record_sync_warning(qr, bld, fn, "SDI_WRITE_CONFLICT",
+                                             "curated row conflicts with existing data; needs human review")
+                    else:
+                        _clear_sync_warning(fn)
                     _auto_register_qr_code(qr, "0")
                     processed[fn] = mtime
                     processed_updates[fn] = mtime
                 else:
+                    # Marked processed on purpose: re-reading placeholder JSONs on
+                    # every request is the retry storm the CONFLICT path avoids.
+                    # The distinct status is what makes the skip auditable, and
+                    # audit_capture_vs_curated.py catches any skip that actually
+                    # strands a captured QR.
                     print(f"JSON Sync Warning {fn}: sparse structured_data skipped; marked processed.")
+                    _record_sync_warning(qr, bld, fn, "SPARSE_SKIPPED",
+                                         "sparse structured_data; marked processed with NO curated row")
                     processed[fn] = mtime
                     processed_updates[fn] = mtime
             except Exception as e:

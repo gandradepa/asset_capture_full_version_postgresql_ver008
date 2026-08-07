@@ -152,10 +152,63 @@ The Dashboard hosts ME, BF, EL, and SDI as embedded iframe panels. Treat each ta
 
 - The Dashboard listens for `message` events whose `data.action === 'go-to-main'` and validates `event.origin` against an explicit `allowedOrigins` array of every embedded sub-app subdomain. Always extend this array when adding a new embedded app.
 
-### Launch-App card behavior
+### Key Performance Indicators section (Overview)
 
-- The `apps` loop must route the `Launch App` button for embedded keys (`review_me`, `review_bf`, `review_el`, `sdi_process`) to the in-page hash view rather than `target="_blank"`.
-- Non-embedded apps (e.g. `capture`) keep `target="_blank"` to the external domain.
+- The Overview's first section header reads `Key Performance Indicators` (renamed from `Applications`, 2026-08-05). The four app launch cards were removed; sub-apps are launched from the shared shell sidebar (`static/shell/shell.js`).
+- The section renders three **Chart.js 4** canvases (2026-08-05 redesign) inside `.overview-kpi-grid` (three columns at >=992px, single column below), in this order: `QR Codes by Asset Type` (`#kpi-qr-types`), `Performance Control KPI` (`#kpi-gauge`), `Overall Approval` (`#kpi-donut`). Each `.analytics-card` has an HTML title row (`.overview-kpi-head`); only the QR-types card has an `.overview-kpi-chip` context chip. Titles are **Title Case** (never uppercase-transformed) and use the `SDI Live Pipeline` heading style: Arial bold 18px in `var(--primary-accent)` `#0055b7` (the `font-family` needs `!important` because the global h1-h6 rule forces Inter with `!important`). The gauge title alone is centered by `.overview-kpi-head--gauge` to match its approved reference. Chart.js is pinned from CDN (`chart.js@4.4.9` UMD on cdn.jsdelivr.net, same host as Bootstrap).
+- Data comes from `GET /api/overview/kpis` (`@login_required`, `building`/`user` query params, `Cache-Control: no-store`), backed by `overview_kpi_payload()` in `Dashboard/charts/approval.py` — shape `{"qr_types": {"ME","EL","BF"}, "approval": {"approved","not_approved"}, "manual_excluded": n}`, plain ints only (numpy ints break `jsonify`). Its error body is the generic `{"error": "data unavailable"}` — do not echo exception text.
+- **Universe split (2026-08-06, user decision):** the bar chart and donut cover the **full capture universe** (curated + Manual Entry, matching the pipeline Total QR); the gauge covers **reviewable assets only** (curated tables), because Manual Entry is never approved through this pipeline and would otherwise make the 90% target unreachable. Concretely: payload `qr_types` = curated counts + `_manual_excluded_by_type()` per discipline (the matplotlib `qr_types` fallback adds the same); the donut gains a third slice `Manual Entry` (`MANUAL_TONE #8fa3b8`, only when nonzero) with center total = grand total and percentages over the grand total; the gauge and `approval` payload stay curated-only.
+- The bar-chart chip reads `"1,577 QR codes · 15 manual"` with a tooltip noting the gauge tracks reviewable assets only. `manual_excluded` = distinct QRs whose max `Col_process` is 2 with no curated row (`_manual_excluded_by_type()` / `_count_manual_excluded()`); it respects the `building`/`user` filters and the chip suffix/donut slice hide when zero.
+- `QR Codes by Asset Type` is a vertical bar chart of **distinct QR codes per discipline**: `_prepare_qr_type_counts()` counts `sdi_dataset` rows as BF when `Asset Group` contains `backflow` (case-insensitive) else ME — the same inference as the reviewer-analysis hover CTE — and all `sdi_dataset_EL` rows as EL. Do not change the inference in one place without the other.
+- **Legend mapping is fixed**: ME = `Mechanical`, EL = `Electrical`, BF = `Backflow` (`TYPE_NAMES` in the dashboard.html init script); axis ticks stay ME/EL/BF. Y-axis ticks use one uniform pattern — `0.00, 0.50K, 1.00K, 1.50K, ...` when the axis max reaches 1,000, plain integers below that — never a mixed `500 / 1k / 1.5k` scale. Tones are the validated navy family `{ME: #002145, EL: #0055b7, BF: #5b9bd5}` — re-stepped 2026-08-05 after the dataviz palette validator flagged the old EL/BF pair (dE 11.5 < 15); adjacent pairs now pass at dE >= 21. `QR_TYPE_COLORS` (approval.py) and `TONES` (dashboard.html) must stay identical.
+- Charts animate on load (900ms ease-out) and honor `prefers-reduced-motion` (animation disabled). Value labels and gauge/donut overlays are inline Chart.js plugins in dashboard.html.
+- The gauge mirrors the approved reference via `gaugeReferenceOverlay`: a thin blue outer semicircle; `0`, midpoint and total scale labels; navy/light approval arc; black needle and hub; external blue triangle plus `Target: 90%`; and bold `approved / total` with `Approved Assets` beneath the arc. The large center percentage and header target chip are intentionally absent. A gauge-specific 280px canvas reserves vertical space for its bottom legend, and the value/caption are anchored above the measured legend edge. Compact 10px legend labels with `labels.padding: 12` keep both entries readable; 84px of right layout padding reserves room for the target label, which starts after the triangle's rightmost vertex and remains width-clamped inside the canvas. The donut legend shows counted entries (`Approved · n` / `Not Approved · n`). Light track swatches get a `#d4dde7` 1px border so they read on the white card.
+- The donut card has **no context chip** — the total lives only in the ring center — and percent labels are drawn on the segments by the `donutCenterAndPercents` inline plugin (white on navy, ink on track; slivers under ~8.6 degrees are skipped).
+- **Fallback rule:** each canvas carries `data-fallback-src` pointing at the matplotlib image (`/chart/approval.png?chart_type=qr_types|gauge|pie&fmt=svg`). If `window.Chart` is undefined or the API call fails, the init script swaps every canvas for its `<img>` fallback. The matplotlib `qr_types` renderer and the route's `fmt=png|svg` support must therefore not be removed.
+- The analytics page (`#analytics-view`) must stay on server-rendered PNG: its bar-chart hover hitboxes are pixel-based against the PNG raster.
+- The section must stay gated by `{% if chart_enabled %}` with the same `Chart unavailable` alert fallback used by `#analytics-view`.
+- The Reviewer KPIs page (`#analytics-view`) keeps its own copies of gauge and donut with the User Name / Building filters; the Overview charts are unfiltered (`building=selected_building`, no `user` param).
+- `APPS` / `apps=` remains in `Asset_portal_dashboard.py`'s render context but is no longer consumed by the live template.
+- Tests: `test/test_overview_qr_type_chart.py` (counting, BF inference, building/user filters, SVG/PNG formats, `overview_kpi_payload` shape/ints/filters) and `test/test_dashboard_kpi_gauge_template.py` (live reference geometry, centered title, zero-safe ratio, bottom legend).
+
+### KPI totals vs SDI Live Pipeline totals (expected to differ)
+
+The two Overview sections count **different universes**, and the difference is not a bug:
+
+| Section | Source | Counts |
+|---|---|---|
+| `Key Performance Indicators` | `sdi_dataset` ∪ `sdi_dataset_EL` | QRs curated into the review datasets |
+| `SDI Live Pipeline` (`Total QR`) | `QR_code_assets.Col_process` | every captured QR, any state |
+
+- **Since 2026-08-06 the bar chart and donut include Manual Entry** (as added counts / an own slice), so their totals equal the pipeline Total QR. The **gauge remains curated-only**: Manual Entry QRs never enter `sdi_dataset` (`Col_process = 2` + `QR_codes.sdi = 1`, per the Manual Entry / SDI invariant) and are never approved through this pipeline.
+- A bar-chart total that differs from the pipeline Total QR now means curated rows are genuinely missing (Manual Entry no longer explains any gap). Diagnose by set-differencing the two universes on distinct QR (the 2026-07-29 sync incident showed up exactly this way — see the JSON Sync Retry Guard rules in `review_apps.rules.md`). **The `integrity` block below names every legitimate reason for a gap; anything left over is a defect.**
+
+### Integrity guardrails (2026-08-06)
+
+Detection of the 2026-07-29 silent-loss class already existed and already fired — `audit_sdi_vs_json.py` ran hourly and logged 8,259 `row_missing` anomalies that nobody read, because its log was not listed in the Dashboard UI, cron has no `MAILTO`, and `--quiet` suppressed healthy-run output so a stale log looked identical to a passing one. **The gap was signal delivery, not detection.** These rules close it.
+
+**The accounting identity (the invariant).** `pipeline Total QR − sum(KPI bars)` is fully explained by four named channels:
+
+```
+pipeline − bars == orphan_total + manual_unknown − reverse_total − curated_double_counted
+```
+
+Pinned by `test/test_pipeline_kpi_equivalence.py`, which imports `flow_quantity_chart` and `approval` against one fixture. **No divergence may hide in an unnamed remainder** — if a new divergence channel appears, that test must gain a term rather than be loosened. Verified live on 2026-08-06: pipeline 1585 − bars 1581 = 4 = the 4 in-flight pending captures.
+
+**`payload["integrity"]`** — built by `approval.integrity_snapshot()`, appended to `/api/overview/kpis` inside a `try/except` so a failure degrades to `{"error": ...}` and never breaks the charts. Scope is deliberately **global** (no building/user filter) because the invariant is system-wide; the chip tooltip says so, since the chip's own totals *are* filtered. Keys: `orphans` (per discipline + `unknown`), `orphan_total` / `orphan_stranded` / `orphan_pending`, `manual_unknown`, `reverse_total`, `curated_double_counted`, `unclassified`, `grace_hours`, sample lists (sorted, capped), `scope`.
+
+**Grace period — do not remove.** A capture gains its curated row only when a reviewer app next serves a request (the JSON sync runs from `before_request`), so a recent capture is *legitimately* curated-less. Production check on 2026-08-06 found 4 such QRs, all under 6 hours old, all of which resolved on the next reviewer request. Only captures older than `ORPHAN_GRACE_HOURS` (96h — clears a long weekend with no reviewer traffic) count as **stranded**; the rest are **pending** and must not raise an alarm. A capture with no `QR_codes.date_set` is never excused as recent, since a missing row is itself a defect. `orphan_total` stays the full set because it is the identity term; the **chip warns on `orphan_stranded`**, not `orphan_total`. Rationale: alarming on normal in-flight work is precisely how the 8,259 findings came to be ignored.
+
+**Chip warn state.** `.overview-kpi-chip--warn` (amber `#fff3cd`, never red — the displayed numbers are correct, just incomplete) plus a `⚠ N unsynced` suffix, when `orphan_stranded + reverse_total + manual_unknown + curated_double_counted > 0`. The tooltip lists per-discipline counts, sample QRs, the pending count as informational, and points at System Logs. Keep the existing Manual Entry tooltip appended, not overwritten.
+
+**Scheduled auditors and the `[AUDIT]` marker grammar.** Three read-only auditors run hourly from the `developer` crontab, staggered (`:00` `audit_sdi_vs_json.py`, `:15` `audit_capture_vs_curated.py`, `:30` `audit_sdi_flow_integrity.py`). Severity is uniform: exit `0` clean / `1` DRIFT (or anything under `--strict`) / `2` setup error.
+
+- **Never run these with `--quiet` in cron.** A clean run must still write its `[AUDIT] OK` + `RUN_AT` line, or the log tail cannot distinguish "fixed" from "still failing" from "job stopped". This is the single change that makes the signal deliverable; the `--quiet` flag remains only for interactive use.
+- Trailer grammars differ per auditor and the parser handles all three: `RUN_AT=<iso> SCANNED=n FINDINGS=n FAILING=n`, `RUN_AT=<iso> FINDINGS=n FAILING=n`, and `RUN_AT=<iso> ANOMALIES=n`. `SCANNED` is a scope, never a count. (A 2026-08-06 regression read `ANOMALIES=14` as OK because only `FINDINGS=` was parsed; covered by `test/test_audit_log_status.py`.)
+
+**System Logs page.** `AUDIT_LOG_PATHS` (env-overridable) lists the three audit logs beside `ai_check.log`; `_system_log_paths()` filters absent files rather than failing (dev machines have none), and `_safe_log_path()` allowlists them by name before the `LOG_DIR` containment fallback. `_audit_log_status()` reads only the last 8 KB (`sdi_audit.log` is ~1.7 MB), takes the **last** marker so a clean run supersedes an earlier bad one, caches on `(path, mtime_ns, size)`, and reports `stale` when the file has not been written for over `AUDIT_STALE_AFTER_SECONDS` (2h) — a silent auditor is itself a finding. Badges reuse the existing Bootstrap classes: `bg-success` OK / `bg-warning text-dark` findings / `bg-secondary` stale.
+
+**Read-only.** Every integrity path reads; none of it writes to the operational tables. The Dashboard remains read-only per global rule 9.
 
 ### Cookie + CSP coupling
 

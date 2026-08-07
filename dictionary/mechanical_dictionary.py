@@ -863,6 +863,14 @@ ASSET_DICTIONARY = {
         "asset_type": "EL",
         "type": "EL"
     },
+    "UN-|EL": {
+        "attribute_set": "FireAlarmPanel",
+        "asset_group": "Fire Alarm Annunciator Panels",
+        "main_asset": "Fire Alarm and Detection Systems",
+        "description": "SIMPLEX",
+        "asset_type": "EL",
+        "type": "EL"
+    },
     "VAV|ME": {
         "attribute_set": "Mechanical",
         "asset_group": "Fan Coil Units",
