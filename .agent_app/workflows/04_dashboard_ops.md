@@ -75,14 +75,16 @@ The Dashboard now hosts ME, BF, EL, and SDI as in-page iframe tabs rather than l
 
 ### Steps
 
-1. Click `Launch App` on any of the four sub-app cards (Asset Reviewer Mechanical / Backflow / Electrical, or SDI Process). The Dashboard switches to a hash-routed view (`#review-me-view`, `#review-bf-view`, `#review-el-view`, `#sdi-view`) and the iframe loads `https://<sub-app>/?embedded=true` lazily on first activation.
+1. Open a sub-app view via its hash URL (`#review-me-view`, `#review-bf-view`, `#review-el-view`, `#sdi-view`) — e.g. from an SLD-run link or a bookmarked hash. (The Overview's `Applications` launch cards were replaced by the `Key Performance Indicators` chart section on 2026-08-05; day-to-day app launching happens from the shared shell sidebar, which opens the standalone sub-app domains.) The Dashboard switches to the hash-routed view and the iframe loads `https://<sub-app>/?embedded=true` lazily on first activation.
 2. Inside the embedded view, the sub-app's own top navbar / brand header / user dropdown is suppressed; functional controls (building selector, archive toggle, filters, meta-pills, approve toggle, sub-app's own back-to-list button) remain visible.
 3. Use the `Dashboard` button in the central process-view-header (top of the embedded view) to return to the central main view. Use `Open full page` to open the sub-app standalone in a new browser tab.
 4. Internal navigation inside the iframe (DataTable pagination, asset review drill-in, tab switching) preserves `?embedded=true` automatically.
 
 ### Verification
 
-- confirm `Launch App` for `review_me`, `review_bf`, `review_el`, and `sdi_process` does not open a new browser tab.
+- confirm the Overview opens with the `Key Performance Indicators` section showing three animated Chart.js charts in order — `QR Codes by Asset Type` (ME/EL/BF bars with the Mechanical/Electrical/Backflow legend), `Performance Control KPI` gauge (center % + 90% target tick + `Approved` / `Remaining to target` legend), `Overall Approval` ring (center total + counted legend + percent labels on both segments, no top chip) — with no `Applications` launch cards, and that card titles render Title Case in the SDI-pipeline heading style (Arial bold, UBC blue).
+- confirm hover tooltips show counts and percentages on all three charts, the charts stay sharp when browser zoom changes, and `GET /api/overview/kpis` returns JSON (login required).
+- confirm the fallback: blocking the Chart.js CDN (DevTools network block) swaps all three canvases for the static SVG images.
 - confirm the iframe loads only on first activation and does not reload when the user revisits the tab during the same session.
 - confirm cookies on the sub-app domain show `SameSite=None; Secure; HttpOnly` (DevTools → Application → Cookies).
 - confirm the sub-app's own login is not requested inside the iframe when the user is already logged into the Dashboard.

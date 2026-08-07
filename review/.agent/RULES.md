@@ -163,7 +163,7 @@ When modifying any review app:
 4. **Keep image sequence tags consistent across apps**:
    - **ME** required `-0..-3` (Asset Plate / UBC Tag / Main Asset Photo / Technical Safety BC) + optional `-4` Extra Photo
    - **BF** required `-0..-2` (Asset Plate / Asset Plate (additional) / Main Photo) + optional `-3` Extra Photo
-   - **EL** required `-0..-2` (Asset Plate / UBC Asset Tag / Panel Schedule) + optional `-3` Extra Photo
+   - **EL** required `-0..-2` (Asset Plate / UBC Asset Tag / Full Interior Panel) + optional `-3` Extra Photo
    - The Extra Photo seq is always present in `SEQ_SHOW` / `ALL_SHOW` (so it renders in thumbnail strips and pagination) but absent from `SEQ_CHECK` / `REQUIRED` (so it never affects "Missed Photo" or completeness). The item dict carries an `Extra Photo` boolean for the `+1` chip in the Photo column.
 5. **Never add features to one app without considering the other two**
 

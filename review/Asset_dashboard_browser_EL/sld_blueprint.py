@@ -120,17 +120,42 @@ def _schema_display_uom(value):
     uom = str(value or "").strip()
     return _SCHEMA_DISPLAY_UOM.get(uom.upper(), uom)
 
-# Mirror of DISTRIBUTION_ASSET_GROUPS in Asset_dashboard_EL.py. Kept as a
-# tuple here to avoid a cross-module import (the dashboards are independent
-# blueprints). Keep this in sync if the canonical set changes.
+# Since 2026-08-04 the live distribution criteria come from
+# Asset_Group.elec_dist_setup = 'Y' (see _distribution_asset_groups below).
+# This tuple is only the fallback for DB copies without that column (e.g. the
+# frozen local SQLite file). Mirror of excel_export.EL_DISTRIBUTION_ASSET_GROUPS,
+# kept as a tuple here to avoid a cross-module import (the dashboards are
+# independent blueprints). Keep the fallback in sync if the static set changes.
 DISTRIBUTION_ASSET_GROUPS = (
     "Panels",
     "Other Service and Distribution",
     "Interior Distribution Transformers",
+    "Main Transformers",
     "Motor Control Centers",
     "Enclosed Circuit Breakers",
     "Automatic Transfer Switches",
 )
+
+
+def _distribution_asset_groups(conn):
+    """Distribution Asset Groups where Asset_Group.elec_dist_setup = 'Y',
+    falling back to the static DISTRIBUTION_ASSET_GROUPS tuple when the
+    lookup fails (missing column) or returns no rows."""
+    try:
+        rows = conn.execute(
+            'SELECT DISTINCT "Name" FROM "Asset_Group" '
+            "WHERE UPPER(TRIM(COALESCE(elec_dist_setup, ''))) = 'Y'"
+        ).fetchall()
+        names = sorted({str(r["Name"] or "").strip() for r in rows} - {""})
+        if names:
+            return tuple(names)
+    except Exception as e:
+        try:
+            conn.rollback()  # keep a PG connection usable after the failed query
+        except Exception:
+            pass
+        print(f"[WARN] SLD distribution asset-group fetch failed; using static fallback: {e}")
+    return DISTRIBUTION_ASSET_GROUPS
 
 
 try:
@@ -644,7 +669,8 @@ def get_sdi_not_in_sld_assets(building=None):
             if col in sdi_columns:
                 select_parts.append(f's."{col}" AS "{col}"')
 
-        placeholders = ",".join("?" for _ in DISTRIBUTION_ASSET_GROUPS)
+        dist_groups = _distribution_asset_groups(conn)
+        placeholders = ",".join("?" for _ in dist_groups)
         approved_filter = ""
         if "Approved" in sdi_columns:
             approved_filter = 'AND TRIM(COALESCE(s."Approved", \'\')) <> \'1\''
@@ -663,7 +689,7 @@ def get_sdi_not_in_sld_assets(building=None):
               )
             ORDER BY s."Asset Group", s."UBC Asset Tag"
         '''
-        params = [building, *DISTRIBUTION_ASSET_GROUPS]
+        params = [building, *dist_groups]
         rows = conn.execute(query, params).fetchall()
         return [dict(r) for r in rows]
     finally:

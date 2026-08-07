@@ -2,7 +2,7 @@
 
 > **🐘 Database backend: PostgreSQL (C4 cutover complete, 2026-06-08).** The platform now runs on PostgreSQL (`qr_code_db`, VM `127.0.0.1:5433`) via a backend-agnostic `db.py` layer, switched by `DB_BACKEND=postgres` in `/home/developer/db_backend.env`. The SQLite `QR_codes.db` referenced throughout is now the **frozen rollback** (flip the env back to `sqlite` + restart to revert). See `Markdowns_documentation/special_processes/04_database_topography.md`, `C4_CUTOVER_RUNBOOK.md`, and the `pg-cutover-complete` memory.
 
-Current documentation refresh: 2026-05-25.
+Current documentation refresh: 2026-08-03.
 
 This document is the top-level index for the maintained documentation set in this repository.
 
@@ -55,6 +55,7 @@ The Dashboard sits across that pipeline as the operational control plane.
 - Local development / DBeaver database is PostgreSQL `qr_code_db` on `127.0.0.1:5432` (`postgres` user). Production VM uses PostgreSQL `qr_code_db` on `127.0.0.1:5433` via `/home/developer/db_backend.env`; SQLite `QR_codes.db` is rollback only.
 - Dashboard data-quality analytics use discipline-specific completeness and AI-confidence rules.
 - Chained AI+DB sync (`run_ai_and_sync.sh`) automates database synchronization after extraction.
+- ME sequence `-1` UBC tags use a bounded hybrid consensus: the normal low-detail `gpt-5.4-mini` read remains primary, local OCR validates the placard, and one independent `gpt-5.6-terra` original-detail judge call is permitted only for a suspicious tag. See `rules/asset_extraction_api.rules.md` and `workflows/02_run_extraction_me_el_bf.md`.
 - Dictionary editing from the Dashboard UI uses AST-safe parsing, same as the standalone dictionary app.
 - FLS asset management spans Dashboard CRUD and the `new_device` table with Planon checklist columns.
 - FLS devices use `Attribute.Code = FireAlarmDevice` (`Electrical/FLS - Fire Alarm Device`); New FLS Device Flow defaults and normalizes `new_device."Attribute Set"` to that code.

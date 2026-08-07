@@ -2,7 +2,7 @@
 
 > **🐘 Database backend: PostgreSQL (C4 cutover complete, 2026-06-08).** The platform now runs on PostgreSQL (`qr_code_db`, VM `127.0.0.1:5433`) via a backend-agnostic `db.py` layer, switched by `DB_BACKEND=postgres` in `/home/developer/db_backend.env`. The SQLite `QR_codes.db` referenced throughout is now the **frozen rollback** (flip the env back to `sqlite` + restart to revert). See `Markdowns_documentation/special_processes/04_database_topography.md`, `C4_CUTOVER_RUNBOOK.md`, and the `pg-cutover-complete` memory.
 
-Current documentation refresh: 2026-07-25.
+Current documentation refresh: 2026-08-03.
 
 This file describes the current runnable modules and the shared stores they use.
 
@@ -97,6 +97,7 @@ graph TD
 - Review Update Existing (`Col_process = 1`) and Manual Entry (`Col_process = 2`) stop in review and must not enter SDI packaging.
 - SDI Process also excludes rows whose QR code has `QR_codes.sdi = 1`; Manual Entry therefore affects SDI eligibility, not just review-tab display.
 - AI extraction now uses chained execution (`run_ai_and_sync.sh`) that auto-runs DB sync after AI processing.
+- ME UBC tags are owned by sequence `-1`; normal extraction stays on low-detail `gpt-5.4-mini`, with local OCR and a one-call, original-detail Terra judge available only when a tag is challenged. The judge does not modify reviewed records and is not a general model fallback.
 - Planon export parses UBC tag information and formats year-to-date values.
 - Validation logs are available through SDI Process for package integrity checks.
 - Photos are stored in `Capture_photos_upload/` as `<QR> <Building> <Type> - <Seq>.<ext>`. Per discipline: ME uses `-0..-4` (4 required + optional Extra Photo at `-4`); BF and EL use `-0..-3` (3 required + optional Extra Photo at `-3`). Extra Photo is excluded from AI extraction and "Missed Photo" counts.
@@ -106,7 +107,7 @@ graph TD
 
 The Dashboard now hosts the four process apps (ME, BF, EL, SDI) inside iframe panels rather than launching them in separate browser tabs.
 
-- `Launch App` cards on the Dashboard for `review_me`, `review_bf`, `review_el`, and `sdi_process` navigate to in-page hash views (`#review-me-view`, `#review-bf-view`, `#review-el-view`, `#sdi-view`) instead of opening new tabs.
+- The Overview opens with a `Key Performance Indicators` section (2026-08-05): three interactive **Chart.js 4** charts — `QR Codes by Asset Type` (vertical bars, distinct QR codes per discipline with legend Mechanical/Electrical/Backflow, navy tones `#002145`/`#0055b7`/`#5b9bd5`), `Performance Control KPI` (semicircle gauge, 90% target), `Overall Approval` (ring with center total). Data from `GET /api/overview/kpis` (login-gated JSON); charts animate on load, show hover tooltips, resize with zoom, honor reduced-motion, and fall back to the matplotlib SVGs (`/chart/approval.png?...&fmt=svg`) if the CDN or API is unavailable. The former `Applications` launch-card grid was removed; sub-apps are launched from the shared shell sidebar, and the in-page hash views (`#review-me-view`, `#review-bf-view`, `#review-el-view`, `#sdi-view`) remain reachable via direct hash navigation, SLD-run links, and `postMessage` from child apps.
 - Each iframe loads its sub-app at `https://<sub-app-domain>/?embedded=true`.
 - Cross-subdomain session sharing is supported because all apps load auth from `/home/developer/auth_service.env` (shared `SECRET_KEY` + `SESSION_COOKIE_DOMAIN=.assetcap.facilities.ubc.ca`) and use `SameSite=None; Secure` on session and remember cookies.
 - The sub-apps detect `?embedded=true`, set `g.embedded=True` in a `before_request` hook, and conditionally suppress their own top navbar/header so the central Dashboard chrome is the only navigation surface visible.

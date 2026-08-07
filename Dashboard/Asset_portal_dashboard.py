@@ -22,6 +22,7 @@ import json # [NEW] For saving dictionary file
 from datetime import datetime, timedelta
 from functools import wraps
 from pathlib import Path
+from threading import Lock
 from typing import Dict, List, Optional, Tuple
 
 # --- [CONFIGURATION] Python Path Setup ---
@@ -281,6 +282,21 @@ LOG_DIR = BASE_DIR / "logs"
 LOG_DIR.mkdir(exist_ok=True)
 AI_CHECK_LOG_PATH = Path("/home/developer/ai_check.log")
 
+# Scheduled integrity auditors (cron). These write [AUDIT] marker lines that
+# _audit_log_status() parses into the Status badge on the System Logs page.
+# Listing them here is the delivery channel the 2026-08-05 incident lacked:
+# audit_sdi_vs_json.py had been reporting missing curated rows hourly for
+# months into a log no operator surface displayed.
+AUDIT_LOG_PATHS = (
+    Path(os.getenv("CAPTURE_AUDIT_LOG_PATH", "/home/developer/logs/capture_audit.log")),
+    Path(os.getenv("SDI_AUDIT_LOG_PATH", "/home/developer/logs/sdi_audit.log")),
+    Path(os.getenv("SDI_FLOW_AUDIT_LOG_PATH", "/home/developer/logs/sdi_flow_audit.log")),
+)
+
+# An auditor that has not written for this long has almost certainly stopped
+# running (all are scheduled hourly), which is itself a reportable state.
+AUDIT_STALE_AFTER_SECONDS = 2 * 60 * 60
+
 ## --- Path to the SQLite DB --- ##
 possible_db_path = os.path.join(parent_dir, 'asset_capture_app_dev', 'data', 'QR_codes.db')
 if os.path.exists(possible_db_path):
@@ -496,10 +512,13 @@ def _extract_ts_from_logname(name: str) -> Optional[str]:
     return None
 
 def _safe_log_path(name: str) -> Path:
-    if name == AI_CHECK_LOG_PATH.name:
-        if AI_CHECK_LOG_PATH.exists():
-            return AI_CHECK_LOG_PATH
-        abort(404, "Log not found")
+    # Named allowlist first (absolute paths outside LOG_DIR), then the
+    # directory-contained fallback. Names are unique across both sets.
+    for allowed in (AI_CHECK_LOG_PATH, *AUDIT_LOG_PATHS):
+        if name == allowed.name:
+            if allowed.exists():
+                return allowed
+            abort(404, "Log not found")
     p = (LOG_DIR / name).resolve()
     if not p.exists() or p.parent != LOG_DIR.resolve():
         abort(404, "Log not found")
@@ -517,9 +536,19 @@ def _get_users_with_data() -> List[str]:
     except Exception: return ["All"]
 
 # ------------------ Log UI Helpers ------------------
+AUDIT_LOG_TITLES = {
+    "capture_audit": "Capture vs Curated Audit",
+    "sdi_audit": "SDI vs JSON Audit",
+    "sdi_flow_audit": "SDI Flow Integrity Audit",
+}
+
+
 def _title_from_logname(name: str) -> str:
     if name == AI_CHECK_LOG_PATH.name or Path(name).stem == "ai_check":
         return "AI Check Log"
+    audit_title = AUDIT_LOG_TITLES.get(Path(name).stem)
+    if audit_title:
+        return audit_title
     base = Path(name).stem.rsplit(".", 1)[0]
     is_interpreter = "API_interface" in base
     is_data_task = "updating_process_database" in base
@@ -548,9 +577,129 @@ def _when_from_ts(ts: Optional[str], path: Optional[Path] = None) -> str:
     return "—"
 
 def _system_log_paths() -> List[Path]:
-    if AI_CHECK_LOG_PATH.exists():
-        return [AI_CHECK_LOG_PATH]
-    return []
+    """Logs offered on the System Logs page: the AI check log plus every
+    scheduled integrity auditor that has actually written a file. Absent paths
+    are filtered rather than fatal (dev machines have none of them)."""
+    paths = []
+    for p in (AI_CHECK_LOG_PATH, *AUDIT_LOG_PATHS):
+        try:
+            if p.exists():
+                paths.append(p)
+        except OSError:
+            continue
+    return paths
+
+
+# ------------------ Audit log status ------------------
+# Read only the tail: sdi_audit.log is ~1.7 MB in production and this runs on
+# every System Logs page load.
+_AUDIT_TAIL_BYTES = 8192
+_audit_status_cache: dict = {}
+_audit_status_lock = Lock()
+
+
+def _parse_audit_marker(line: str) -> dict:
+    """Interpret one [AUDIT] marker line.
+
+    Grammar shared by the three auditors:
+        [AUDIT] OK - reconciled N QR code(s), no findings
+        [AUDIT] FINDINGS: N across M QR code(s) (DRIFT=N)
+        [AUDIT] ANOMALIES: N found across M scanned     (audit_sdi_vs_json.py)
+        [AUDIT] RUN_AT=<iso> SCANNED=N FINDINGS=N FAILING=N
+    """
+    text = line.strip()
+    for token in ("FINDINGS:", "ANOMALIES:"):
+        if token in text:
+            after = text.split(token, 1)[1].strip().split()
+            count = int(after[0]) if after and after[0].isdigit() else 0
+            return {"state": "findings" if count else "ok", "count": count}
+    if "RUN_AT=" in text:
+        # Trailers differ per auditor: audit_capture_vs_curated writes
+        # SCANNED=/FINDINGS=/FAILING=, audit_sdi_flow_integrity FINDINGS=/FAILING=,
+        # audit_sdi_vs_json ANOMALIES=. SCANNED is a scope, never a count.
+        count = 0
+        for part in text.split():
+            for key in ("FINDINGS=", "ANOMALIES="):
+                if part.startswith(key):
+                    tail = part.split("=", 1)[1]
+                    count = int(tail) if tail.isdigit() else 0
+        return {"state": "findings" if count else "ok", "count": count}
+    if text.startswith("[AUDIT] OK") or " OK -" in text:
+        return {"state": "ok", "count": 0}
+    if "ERROR" in text:
+        return {"state": "unknown", "count": 0}
+    return {}
+
+
+def _audit_log_status(path: Path) -> dict:
+    """{"state": "ok"|"findings"|"stale"|"unknown", "count": int} from a log tail.
+
+    The LAST marker wins, so a clean run after a bad one reads clean. A log
+    older than AUDIT_STALE_AFTER_SECONDS reads "stale" whatever it says — a
+    silent auditor is itself a finding, which is the failure the old
+    `--quiet` cron lines hid.
+    """
+    unknown = {"state": "unknown", "count": 0}
+    try:
+        stat = path.stat()
+    except OSError:
+        return dict(unknown)
+
+    key = (str(path), stat.st_mtime_ns, stat.st_size)
+    with _audit_status_lock:
+        hit = _audit_status_cache.get(key)
+    if hit is not None:
+        return dict(hit)
+
+    result = dict(unknown)
+    try:
+        with open(path, "rb") as fh:
+            if stat.st_size > _AUDIT_TAIL_BYTES:
+                fh.seek(-_AUDIT_TAIL_BYTES, os.SEEK_END)
+            tail = fh.read().decode("utf-8", errors="replace")
+        for line in reversed(tail.splitlines()):
+            if "[AUDIT]" not in line:
+                continue
+            parsed = _parse_audit_marker(line)
+            if parsed:
+                result = parsed
+                break
+    except OSError:
+        return dict(unknown)
+
+    if time.time() - stat.st_mtime > AUDIT_STALE_AFTER_SECONDS:
+        result = {"state": "stale", "count": result.get("count", 0)}
+
+    with _audit_status_lock:
+        if len(_audit_status_cache) > 64:
+            _audit_status_cache.clear()
+        _audit_status_cache[key] = dict(result)
+    return dict(result)
+
+
+AUDIT_STATUS_BADGES = {
+    "ok": ("bg-success", "OK"),
+    "findings": ("bg-warning text-dark", "findings"),
+    "stale": ("bg-secondary", "stale"),
+    "unknown": ("bg-light text-dark", "—"),
+}
+
+
+def _audit_status_view(path: Path) -> Optional[dict]:
+    """Badge data for the System Logs table, or None for non-audit logs."""
+    if Path(path.name).stem not in AUDIT_LOG_TITLES:
+        return None
+    st = _audit_log_status(path)
+    badge, label = AUDIT_STATUS_BADGES.get(st["state"], AUDIT_STATUS_BADGES["unknown"])
+    if st["state"] == "findings":
+        label = f"{st['count']} finding" + ("s" if st["count"] != 1 else "")
+    text = {
+        "ok": "Last run found no integrity issues.",
+        "findings": "The last run reported integrity findings — open the log for the per-QR list.",
+        "stale": "No output for over 2 hours; the scheduled job may have stopped.",
+        "unknown": "No recognizable [AUDIT] marker in this log.",
+    }[st["state"]]
+    return {"badge": badge, "label": label, "tooltip": text, "state": st["state"]}
 
 
 # ------------------ SLD Extraction Logs ------------------
@@ -2648,14 +2797,38 @@ def approval_chart():
     chart_type = request.args.get("chart_type", "all")
     status = request.args.get("status", "all")
     user = (request.args.get("user") or "").strip() or None
+    fmt = (request.args.get("fmt") or "png").strip().lower()
+    if fmt != "svg":
+        fmt = "png"
     try:
-        png_bytes = approval_mod.render_chart_png(building=building, chart_type=chart_type, status=status, user=user)
-        resp = Response(png_bytes, mimetype="image/png")
+        chart_bytes = approval_mod.render_chart_png(
+            building=building, chart_type=chart_type, status=status, user=user, fmt=fmt
+        )
+        mimetype = "image/svg+xml" if fmt == "svg" else "image/png"
+        resp = Response(chart_bytes, mimetype=mimetype)
         resp.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
         return resp
     except Exception as e:
         print(f"Chart error for type '{chart_type}': {e}")
         return Response(f"Chart error: {e}", status=500, mimetype="text/plain")
+
+
+@main_bp.get("/api/overview/kpis")
+@login_required
+def overview_kpis():
+    """Data for the Overview Key Performance Indicators charts (Chart.js)."""
+    if not CHARTS_AVAILABLE:
+        return jsonify({"error": "Chart module unavailable"}), 503
+    building = request.args.get("building", "All")
+    user = (request.args.get("user") or "").strip() or None
+    try:
+        payload = approval_mod.overview_kpi_payload(building=building, user=user)
+        resp = jsonify(payload)
+        resp.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+        return resp
+    except Exception as e:
+        print(f"Overview KPI data error: {e}")
+        return jsonify({"error": "data unavailable"}), 500
 
 
 @main_bp.get("/api/analytics/buildings")
@@ -3140,10 +3313,11 @@ def list_logs():
             try:
                 ts_raw = _extract_ts_from_logname(p.name)
                 rows.append({
-                    "name": p.name, 
+                    "name": p.name,
                     "when": _when_from_ts(ts_raw, path=p),
                     "title": _title_from_logname(p.name),
                     "size_kb": f"{max(p.stat().st_size // 1024, 1)} KB",
+                    "audit": _audit_status_view(p),
                 })
             except Exception as e:
                 print(f"WARNING: Skipping log file '{p.name}' due to error: {e}")

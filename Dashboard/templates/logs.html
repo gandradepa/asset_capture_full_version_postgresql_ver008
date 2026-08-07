@@ -75,6 +75,7 @@
                 <thead>
                 <tr>
                     <th>Title</th>
+                    <th>Status</th>
                     <th>When</th>
                     <th>Size</th>
                     <th class="text-end">Actions</th>
@@ -84,6 +85,13 @@
                 {% for row in rows %}
                     <tr>
                         <td>{{ row.title }}</td>
+                        <td>
+                          {% if row.audit %}
+                            <span class="badge {{ row.audit.badge }}" title="{{ row.audit.tooltip }}">{{ row.audit.label }}</span>
+                          {% else %}
+                            <span class="text-muted">—</span>
+                          {% endif %}
+                        </td>
                         <td>{{ row.when }}</td>
                         <td>{{ row.size_kb }}</td>
                         <td class="text-end">

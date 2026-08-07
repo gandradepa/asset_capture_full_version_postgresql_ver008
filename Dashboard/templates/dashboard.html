@@ -22,6 +22,7 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.28/jspdf.plugin.autotable.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.9/dist/chart.umd.min.js"></script>
     <script src="{{ url_for('static', filename='building-multiselect.js') }}?v=20260730-1"></script>
 
     <style>
@@ -271,43 +272,87 @@
         }
 
         /* --- Grids --- */
-        .application-card-grid {
+        .overview-kpi-grid {
             display: grid;
-            gap: 0.75rem;
-            grid-template-columns: repeat(5, minmax(0, 1fr));
+            grid-template-columns: 1fr;
+            gap: 1.5rem;
         }
 
-        @media (max-width: 1199.98px) {
-            .application-card-grid {
-                grid-template-columns: repeat(5, minmax(0, 1fr));
+        @media (min-width: 992px) {
+            .overview-kpi-grid {
+                grid-template-columns: repeat(3, minmax(0, 1fr));
             }
         }
 
-        .application-card-grid .card-title {
-            font-size: clamp(0.72rem, 0.55vw + 0.3rem, 0.92rem);
+        /* Overview KPI cards: HTML title row + fixed-height responsive canvas.
+           Chart.js resizes the canvas with the card, so charts stay sharp at
+           any browser zoom; the matplotlib <img> fallback scales fluidly too. */
+        .overview-kpi-grid .analytics-card {
+            justify-content: flex-start;
+            align-items: stretch;
+        }
+
+        .overview-kpi-head {
+            display: flex;
+            align-items: baseline;
+            justify-content: space-between;
+            gap: 0.5rem;
+            margin-bottom: 0.35rem;
+        }
+
+        .overview-kpi-head--gauge {
+            justify-content: center;
+        }
+
+        /* Title Case titles in the "SDI Live Pipeline" heading style
+           (sdi_label.html .pipeline-title: Arial bold 18px, UBC blue).
+           !important needed: the global h1-h6 rule forces Inter with !important. */
+        .overview-kpi-head h4 {
+            margin: 0;
+            font-family: Arial, Helvetica, sans-serif !important;
+            font-size: 18px;
+            font-weight: 700;
+            line-height: 1.25;
+            color: var(--primary-accent);
+        }
+
+        .overview-kpi-head--gauge h4 {
+            color: var(--primary-dark);
+        }
+
+        .overview-kpi-chip {
+            font-size: 0.72rem;
+            font-weight: 600;
+            color: var(--primary-dark);
+            background: #E6ECF2;
+            border-radius: 999px;
+            padding: 0.15rem 0.6rem;
+            font-variant-numeric: tabular-nums;
             white-space: nowrap;
-            letter-spacing: -0.01em;
         }
 
-        .application-card-grid .text-muted.small {
-            font-size: clamp(0.58rem, 0.45vw + 0.2rem, 0.75rem);
-            line-height: 1.2;
-            letter-spacing: -0.01em;
+        /* Data-integrity warning state: the capture-vs-curated check found QRs
+           that never reached the curated SDI tables. Amber, never red — the
+           numbers shown are still correct, they are just incomplete. */
+        .overview-kpi-chip--warn {
+            background: #fff3cd;
+            color: #664d03;
+            cursor: help;
         }
 
-        .application-card-grid .badge {
-            font-size: 0.6rem;
+        .overview-kpi-canvas {
+            position: relative;
+            height: 250px;
         }
 
-        .application-card-grid .text-truncate {
-            white-space: nowrap;
-            overflow: hidden;
-            text-overflow: clip;
-            word-break: normal;
+        .overview-kpi-canvas--gauge {
+            height: 280px;
         }
 
-        .application-card-grid .card-body {
-            padding: 1.25rem;
+        .overview-kpi-canvas img {
+            width: 100%;
+            height: 100%;
+            object-fit: contain;
         }
 
         .analytics-card-grid {
@@ -789,18 +834,6 @@
             -webkit-overflow-scrolling: touch;
         }
 
-        @media (max-width: 1199.98px) {
-            .application-card-grid {
-                grid-template-columns: repeat(3, minmax(0, 1fr));
-            }
-        }
-
-        @media (max-width: 991.98px) {
-            .application-card-grid {
-                grid-template-columns: repeat(2, minmax(0, 1fr));
-            }
-        }
-
         @media (max-width: 767.98px) {
             .ubc-logo {
                 height: 40px;
@@ -854,14 +887,6 @@
             .weather-card {
                 width: 100%;
                 min-width: 0;
-            }
-
-            .application-card-grid {
-                grid-template-columns: 1fr;
-            }
-
-            .application-card-grid .card-body {
-                padding: 1rem;
             }
 
             .table-container,
@@ -1430,50 +1455,42 @@
             {% endwith %}
 
             <section class="mb-5">
-                <h2 class="section-title">Applications</h2>
-                <div class="application-card-grid">
-                    {% for a in apps %}
-                    {% if a.key != 'capture' %}
-                    <div
-                        class="card tile h-100 {% if a.key == 'capture' %}capture-card-highlight{% elif a.key == 'sdi_process' %}sdi-card-highlight{% endif %}">
-                        <div class="card-body p-4 d-flex flex-column">
-                            <div class="d-flex justify-content-between align-items-start mb-3">
-                                <div class="bg-light p-2 rounded-3 border">
-                                    {% if a.key == 'capture' %}
-                                    <img src="{{ url_for('static', filename='logos/asset-capture-icon.svg') }}"
-                                        alt="Asset Capture icon" width="24" height="24">
-                                    {% else %}
-                                    <i data-lucide="box" style="color: var(--primary-accent);" width="24"
-                                        height="24"></i>
-                                    {% endif %}
-                                </div>
-                                {% if a.key in ["review_bf", "review_me", "review_el"] %}
-                                <span class="badge bg-primary bg-opacity-10 text-primary rounded-pill px-2 py-1"
-                                    style="font-size: 0.65rem;">AI Enabled</span>
-                                {% endif %}
-                            </div>
-
-                            <h3 class="card-title mb-2">
-                                {% if a.name == 'Asset Reviewer - Backflow Devices' %}
-                                Asset Reviewer - Backflow
-                                {% else %}
-                                {{ a.name }}
-                                {% endif %}
-                            </h3>
-                            <p class="text-muted small mb-4 text-truncate" title="{{ a.url }}">
-                                {{ a.url | replace('https://', '') }}
-                            </p>
-
-                            <div class="mt-auto pt-3 border-top">
-                                <div class="d-flex gap-2 flex-wrap align-items-center justify-content-between">
-                                    <a class="btn ubc-btn btn-sm w-100" href="{{ a.url }}">Launch App</a>
-                                </div>
-                            </div>
+                <h2 class="section-title">Key Performance Indicators</h2>
+                {% if chart_enabled %}
+                <div class="overview-kpi-grid">
+                    <div class="analytics-card">
+                        <div class="overview-kpi-head">
+                            <h4>QR Codes by Asset Type</h4>
+                            <span class="overview-kpi-chip" id="kpi-chip-qr">&nbsp;</span>
+                        </div>
+                        <div class="overview-kpi-canvas">
+                            <canvas id="kpi-qr-types" role="img" aria-label="QR Codes by Asset Type"
+                                data-fallback-src="{{ url_for('main.approval_chart', building=selected_building, chart_type='qr_types', fmt='svg') }}&ts={{ ts }}"></canvas>
                         </div>
                     </div>
-                    {% endif %}
-                    {% endfor %}
+                    <div class="analytics-card">
+                        <div class="overview-kpi-head overview-kpi-head--gauge">
+                            <h4>Performance Control KPI</h4>
+                        </div>
+                        <div class="overview-kpi-canvas overview-kpi-canvas--gauge">
+                            <canvas id="kpi-gauge" role="img" aria-label="Performance Control KPI"
+                                data-fallback-src="{{ url_for('main.approval_chart', building=selected_building, chart_type='gauge', fmt='svg') }}&ts={{ ts }}"></canvas>
+                        </div>
+                    </div>
+                    <div class="analytics-card">
+                        <div class="overview-kpi-head">
+                            <h4>Overall Approval</h4>
+                        </div>
+                        <div class="overview-kpi-canvas">
+                            <canvas id="kpi-donut" role="img" aria-label="Overall Approval"
+                                data-fallback-src="{{ url_for('main.approval_chart', building=selected_building, chart_type='pie', fmt='svg') }}&ts={{ ts }}"></canvas>
+                        </div>
+                    </div>
                 </div>
+                {% else %}
+                <div class="alert alert-warning rounded-3 shadow-sm"> Chart unavailable{% if charts_error %}: {{
+                    charts_error }}{% endif %}. </div>
+                {% endif %}
             </section>
 
             <section class="mb-5">
@@ -6097,6 +6114,405 @@
             }
             _accessDeniedModal.show();
         };
+    })();
+</script>
+
+<script>
+    /* ===== Overview "Key Performance Indicators" charts (Chart.js 4) =====
+       Data: GET /api/overview/kpis. If Chart.js (CDN) or the API is
+       unavailable, each canvas is swapped for the matplotlib SVG fallback
+       kept in data-fallback-src. Analytics view (#analytics-view) is
+       unaffected — it stays on server-rendered PNGs. */
+    (function () {
+        const IDS = ['kpi-qr-types', 'kpi-gauge', 'kpi-donut'];
+        const INK = '#111827', MUTED = '#6b7280', NAVY = '#002145',
+              ACCENT = '#0055b7', TRACK = '#E6ECF2';
+        // Keep in sync with QR_TYPE_COLORS in Dashboard/charts/approval.py
+        const TONES = { ME: NAVY, EL: ACCENT, BF: '#5b9bd5' };
+        const TYPE_NAMES = { ME: 'Mechanical', EL: 'Electrical', BF: 'Backflow' };
+        const FONT = "'Inter', system-ui, -apple-system, sans-serif";
+
+        function useFallback() {
+            IDS.forEach(function (id) {
+                const c = document.getElementById(id);
+                if (!c || c.tagName !== 'CANVAS') return;
+                const img = document.createElement('img');
+                img.src = c.getAttribute('data-fallback-src');
+                img.alt = c.getAttribute('aria-label') || 'KPI chart';
+                c.parentNode.replaceChild(img, c);
+            });
+        }
+
+        const qrCanvas = document.getElementById('kpi-qr-types');
+        if (!qrCanvas) return;                       // section not rendered (charts disabled)
+        if (typeof Chart === 'undefined') { useFallback(); return; }
+
+        const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+        const ANIM = reduced ? false : { duration: 900, easing: 'easeOutCubic' };
+        Chart.defaults.font.family = FONT;
+        Chart.defaults.color = MUTED;
+
+        fetch("{{ url_for('main.overview_kpis') }}?building={{ selected_building|urlencode }}", { credentials: 'same-origin' })
+            .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+            .then(function (data) {
+                if (!data || data.error) throw new Error(data && data.error);
+                drawCharts(data);
+            })
+            .catch(useFallback);
+
+        function drawCharts(data) {
+            const qt = data.qr_types || {};
+            const vals = [qt.ME || 0, qt.EL || 0, qt.BF || 0];
+            const totalQr = vals.reduce(function (a, b) { return a + b; }, 0);
+            const app = (data.approval && data.approval.approved) || 0;
+            const notApp = (data.approval && data.approval.not_approved) || 0;
+            const total = app + notApp;                    // reviewable assets (gauge universe)
+            const pct = total > 0 ? (app / total) * 100 : 0;
+            const manualExcluded = data.manual_excluded || 0;
+            const grandTotal = total + manualExcluded;     // full capture universe (bars + donut)
+
+            const chipQr = document.getElementById('kpi-chip-qr');
+            if (chipQr) {
+                // totalQr already includes Manual Entry (2026-08-06): the bars count
+                // the full capture universe, matching the SDI Live Pipeline total.
+                chipQr.textContent = totalQr.toLocaleString() + ' QR codes' +
+                    (manualExcluded > 0 ? ' · ' + manualExcluded.toLocaleString() + ' manual' : '');
+                if (manualExcluded > 0) {
+                    chipQr.title = 'Includes ' + manualExcluded.toLocaleString() +
+                        ' Manual Entry assets (entered into Planon manually, never SDI-packaged). ' +
+                        'The Performance Control KPI gauge tracks reviewable assets only (' +
+                        total.toLocaleString() + ').';
+                }
+
+                /* Integrity guardrail (2026-08-06): the payload carries a
+                   system-wide capture-vs-curated reconciliation. Any non-zero
+                   channel means captured QRs never reached the curated SDI
+                   tables — the 22-QR silent-loss class. Warn on the chip so
+                   the gap is visible instead of being read as a rounding
+                   difference between this section and the pipeline. */
+                const integ = data.integrity || {};
+                // Stranded, NOT orphan_total: a capture legitimately has no
+                // curated row until the next reviewer request, so recent ones
+                // (orphan_pending) are in flight and must not raise an alarm.
+                const orph = integ.orphan_stranded || 0;
+                const rev = integ.reverse_total || 0;
+                const munk = integ.manual_unknown || 0;
+                const dbl = integ.curated_double_counted || 0;
+                if (orph + rev + munk + dbl > 0) {
+                    const by = integ.orphans || {};
+                    const bits = [];
+                    if (orph > 0) {
+                        bits.push(orph.toLocaleString() + ' captured QR(s) have had no curated SDI row for over ' +
+                            (integ.grace_hours || 96) + ' hours' +
+                            ' (ME ' + (by.ME || 0) + ', EL ' + (by.EL || 0) +
+                            ', BF ' + (by.BF || 0) + ', unknown type ' + (by.unknown || 0) + ')');
+                    }
+                    if (munk > 0) { bits.push(munk.toLocaleString() + ' Manual Entry QR(s) have an unrecognized discipline code'); }
+                    if (rev > 0) { bits.push(rev.toLocaleString() + ' curated QR(s) have no capture record'); }
+                    if (dbl > 0) { bits.push(dbl.toLocaleString() + ' QR(s) curated under two disciplines'); }
+                    const samples = (integ.orphan_samples || []).concat(integ.manual_unknown_samples || []);
+
+                    chipQr.classList.add('overview-kpi-chip--warn');
+                    chipQr.textContent += ' · ⚠ ' + (orph + rev + munk + dbl).toLocaleString() + ' unsynced';
+                    chipQr.title = 'Data integrity check (all buildings, not just the current filter): ' +
+                        bits.join('; ') + '.' +
+                        (samples.length ? '\nSample QR codes: ' + samples.slice(0, 10).join(', ') : '') +
+                        (integ.orphan_pending ? '\nA further ' + integ.orphan_pending.toLocaleString() +
+                            ' recent capture(s) are still awaiting their first sync — normal, not counted here.' : '') +
+                        '\nFull report: System Logs → Capture vs Curated Audit.' +
+                        (chipQr.title ? '\n\n' + chipQr.title : '');
+                } else if (integ.error) {
+                    chipQr.title = (chipQr.title ? chipQr.title + '\n' : '') +
+                        'Integrity check unavailable: ' + integ.error;
+                }
+            }
+
+            /* --- 1. QR Codes by Asset Type (vertical bars + legend) --- */
+            new Chart(qrCanvas, {
+                type: 'bar',
+                data: {
+                    labels: ['ME', 'EL', 'BF'],
+                    datasets: [{
+                        data: vals,
+                        backgroundColor: [TONES.ME, TONES.EL, TONES.BF],
+                        borderRadius: 4,
+                        borderSkipped: 'bottom',
+                        maxBarThickness: 56
+                    }]
+                },
+                options: {
+                    responsive: true, maintainAspectRatio: false, animation: ANIM,
+                    layout: { padding: { top: 20 } },
+                    scales: {
+                        x: { grid: { display: false }, border: { display: false } },
+                        y: {
+                            beginAtZero: true, grace: '8%',
+                            grid: { color: '#eceff3', drawTicks: false }, border: { display: false },
+                            ticks: {
+                                maxTicksLimit: 5,
+                                // Uniform pattern: 0.00, 0.50K, 1.00K, 1.50K ... (never a mix
+                                // of 500 / 1k / 1.5k). Axes below 1,000 keep plain integers.
+                                callback: function (v) {
+                                    if (this.max >= 1000) {
+                                        return v === 0 ? '0.00' : (v / 1000).toFixed(2) + 'K';
+                                    }
+                                    return v;
+                                }
+                            }
+                        }
+                    },
+                    plugins: {
+                        legend: {
+                            position: 'bottom',
+                            onClick: function () { /* single dataset: legend is identity, not a toggle */ },
+                            labels: {
+                                boxWidth: 12, boxHeight: 12, borderRadius: 3, useBorderRadius: true,
+                                color: INK, padding: 14,
+                                generateLabels: function (chart) {
+                                    return chart.data.labels.map(function (code, i) {
+                                        return {
+                                            text: TYPE_NAMES[code] || code,
+                                            fillStyle: chart.data.datasets[0].backgroundColor[i],
+                                            strokeStyle: 'transparent', lineWidth: 0,
+                                            borderRadius: 3, hidden: false, index: i, fontColor: INK
+                                        };
+                                    });
+                                }
+                            }
+                        },
+                        tooltip: {
+                            callbacks: {
+                                title: function (items) { return TYPE_NAMES[items[0].label] || items[0].label; },
+                                label: function (item) {
+                                    const v = item.parsed.y;
+                                    const p = totalQr > 0 ? Math.round((v / totalQr) * 1000) / 10 : 0;
+                                    return ' ' + v.toLocaleString() + ' QR codes (' + p + '%)';
+                                }
+                            }
+                        }
+                    }
+                },
+                plugins: [{
+                    id: 'barValueLabels',
+                    afterDatasetsDraw: function (chart) {
+                        const c = chart.ctx, meta = chart.getDatasetMeta(0);
+                        c.save();
+                        c.fillStyle = INK; c.font = '700 13px ' + FONT;
+                        c.textAlign = 'center'; c.textBaseline = 'bottom';
+                        meta.data.forEach(function (el, i) {
+                            c.fillText(Number(chart.data.datasets[0].data[i]).toLocaleString(), el.x, el.y - 6);
+                        });
+                        c.restore();
+                    }
+                }]
+            });
+
+            /* --- 2. Performance Control KPI (semicircle gauge, target 90%) --- */
+            new Chart(document.getElementById('kpi-gauge'), {
+                type: 'doughnut',
+                data: {
+                    labels: ['Approved', 'Remaining to target'],
+                    datasets: [{
+                        data: total > 0 ? [app, total - app] : [0, 1],
+                        backgroundColor: [NAVY, TRACK],
+                        borderWidth: 0, borderRadius: 4
+                    }]
+                },
+                options: {
+                    responsive: true, maintainAspectRatio: false,
+                    rotation: -90, circumference: 180, cutout: '70%',
+                    layout: { padding: { top: 24, left: 28, right: 84, bottom: 0 } },
+                    animation: ANIM,
+                    plugins: {
+                        legend: {
+                            position: 'bottom',
+                            labels: {
+                                boxWidth: 12, boxHeight: 12, borderRadius: 3, useBorderRadius: true,
+                                color: INK, padding: 12, font: { size: 10 },
+                                generateLabels: function (chart) {
+                                    const base = Chart.overrides.doughnut.plugins.legend.labels.generateLabels(chart);
+                                    base.forEach(function (item, i) {
+                                        item.fontColor = INK;
+                                        if (i === 1) { item.strokeStyle = '#d4dde7'; item.lineWidth = 1; }
+                                    });
+                                    return base;
+                                }
+                            }
+                        },
+                        tooltip: {
+                            callbacks: {
+                                label: function (item) {
+                                    const v = item.parsed;
+                                    const p = total > 0 ? Math.round((v / total) * 100) : 0;
+                                    return ' ' + v.toLocaleString() + ' of ' + total.toLocaleString() + ' assets (' + p + '%)';
+                                }
+                            }
+                        }
+                    }
+                },
+                plugins: [{
+                    id: 'gaugeReferenceOverlay',
+                    afterDraw: function (chart) {
+                        const meta = chart.getDatasetMeta(0);
+                        if (!meta.data.length) return;
+                        const arc = meta.data[0];
+                        const c = chart.ctx, cx = arc.x, cy = arc.y, rOut = arc.outerRadius;
+                        const ratio = total > 0 ? Math.max(0, Math.min(1, pct / 100)) : 0;
+                        const pointerAngle = Math.PI + ratio * Math.PI;
+                        const outerScaleRadius = rOut + 14;
+                        const targetAngle = Math.PI + 0.9 * Math.PI;
+                        const legendTop = chart.legend ? chart.legend.top : chart.height;
+                        c.save();
+
+                        // Thin outer scale and the 0 / midpoint / total labels.
+                        c.strokeStyle = ACCENT; c.lineWidth = 1; c.lineCap = 'butt';
+                        c.globalAlpha = 0.85;
+                        c.beginPath();
+                        c.arc(cx, cy, outerScaleRadius, Math.PI, Math.PI * 2);
+                        c.stroke();
+                        c.globalAlpha = 1;
+                        c.fillStyle = INK; c.font = '500 11px ' + FONT;
+                        c.textBaseline = 'middle';
+                        c.textAlign = 'center';
+                        c.fillText((total / 2).toLocaleString(undefined, { maximumFractionDigits: 0 }),
+                            cx, cy - outerScaleRadius - 1);
+                        c.textAlign = 'right';
+                        c.fillText('0', cx - outerScaleRadius + 2, cy + 1);
+                        c.textAlign = 'left';
+                        c.fillText(total.toLocaleString(), cx + outerScaleRadius - 2, cy + 1);
+
+                        // Black needle and hub, pointing at the live approval ratio.
+                        c.strokeStyle = '#000000'; c.lineWidth = 3; c.lineCap = 'round';
+                        c.beginPath();
+                        c.moveTo(cx, cy);
+                        c.lineTo(cx + Math.cos(pointerAngle) * rOut * 0.72,
+                            cy + Math.sin(pointerAngle) * rOut * 0.72);
+                        c.stroke();
+                        c.fillStyle = '#000000';
+                        c.beginPath();
+                        c.arc(cx, cy, 6, 0, Math.PI * 2);
+                        c.fill();
+
+                        // Approved count and caption sit below the gauge baseline.
+                        c.textAlign = 'center'; c.textBaseline = 'alphabetic';
+                        c.fillStyle = NAVY; c.font = '700 26px ' + FONT;
+                        c.fillText(app.toLocaleString() + ' / ' + total.toLocaleString(), cx, legendTop - 30);
+                        c.font = '500 12px ' + FONT;
+                        c.fillText('Approved Assets', cx, legendTop - 13);
+
+                        // Blue triangle outside the scale at 90%, followed by its label.
+                        const markerTipRadius = outerScaleRadius + 2;
+                        const markerBaseRadius = outerScaleRadius + 12;
+                        const tipX = cx + Math.cos(targetAngle) * markerTipRadius;
+                        const tipY = cy + Math.sin(targetAngle) * markerTipRadius;
+                        const baseX = cx + Math.cos(targetAngle) * markerBaseRadius;
+                        const baseY = cy + Math.sin(targetAngle) * markerBaseRadius;
+                        const sideX = Math.cos(targetAngle + Math.PI / 2) * 5;
+                        const sideY = Math.sin(targetAngle + Math.PI / 2) * 5;
+                        c.fillStyle = ACCENT;
+                        c.beginPath();
+                        c.moveTo(tipX, tipY);
+                        c.lineTo(baseX + sideX, baseY + sideY);
+                        c.lineTo(baseX - sideX, baseY - sideY);
+                        c.closePath();
+                        c.fill();
+                        c.font = '500 10px ' + FONT; c.textAlign = 'left'; c.textBaseline = 'middle';
+                        const targetText = 'Target: 90%';
+                        const targetWidth = c.measureText(targetText).width;
+                        const markerRightX = Math.max(tipX, baseX + sideX, baseX - sideX);
+                        const targetLabelX = Math.min(markerRightX + 6, chart.width - targetWidth - 2);
+                        c.fillText(targetText, targetLabelX, baseY + 1);
+                        c.restore();
+                    }
+                }]
+            });
+
+            /* --- 3. Overall Approval (ring with center total; Manual Entry as its
+                   own slice so the ring covers the full capture universe) --- */
+            const MANUAL_TONE = '#8fa3b8';   // muted slate: neither approval navy nor track
+            const donutLabels = ['Approved', 'Not Approved'];
+            const donutValues = [app, notApp];
+            const donutColors = [NAVY, TRACK];
+            if (manualExcluded > 0) {
+                donutLabels.push('Manual Entry');
+                donutValues.push(manualExcluded);
+                donutColors.push(MANUAL_TONE);
+            }
+            new Chart(document.getElementById('kpi-donut'), {
+                type: 'doughnut',
+                data: {
+                    labels: donutLabels,
+                    datasets: [{
+                        data: grandTotal > 0 ? donutValues : [0, 1],
+                        backgroundColor: grandTotal > 0 ? donutColors : [NAVY, TRACK],
+                        borderColor: '#ffffff', borderWidth: 2
+                    }]
+                },
+                options: {
+                    responsive: true, maintainAspectRatio: false, cutout: '68%',
+                    animation: ANIM,
+                    plugins: {
+                        legend: {
+                            position: 'bottom',
+                            labels: {
+                                boxWidth: 12, boxHeight: 12, borderRadius: 3, useBorderRadius: true,
+                                color: INK, padding: 14,
+                                generateLabels: function (chart) {
+                                    const base = Chart.overrides.doughnut.plugins.legend.labels.generateLabels(chart);
+                                    base.forEach(function (item, i) {
+                                        item.text += ' · ' + Number(donutValues[i] || 0).toLocaleString();
+                                        item.fontColor = INK;
+                                        if (i === 1) { item.strokeStyle = '#d4dde7'; item.lineWidth = 1; }
+                                    });
+                                    return base;
+                                }
+                            }
+                        },
+                        tooltip: {
+                            callbacks: {
+                                label: function (item) {
+                                    const v = item.parsed;
+                                    const p = grandTotal > 0 ? Math.round((v / grandTotal) * 100) : 0;
+                                    return ' ' + v.toLocaleString() + ' assets (' + p + '%)';
+                                }
+                            }
+                        }
+                    }
+                },
+                plugins: [{
+                    id: 'donutCenterAndPercents',
+                    afterDatasetsDraw: function (chart) {
+                        const meta = chart.getDatasetMeta(0);
+                        if (!meta.data.length) return;
+                        const c = chart.ctx;
+                        const arc0 = meta.data[0];
+                        c.save();
+                        // Center total = full capture universe (curated + Manual Entry)
+                        c.textAlign = 'center'; c.textBaseline = 'alphabetic';
+                        c.fillStyle = NAVY; c.font = '700 24px ' + FONT;
+                        c.fillText(grandTotal.toLocaleString(), arc0.x, arc0.y - 2);
+                        c.fillStyle = MUTED; c.font = '500 12px ' + FONT;
+                        c.fillText('total assets', arc0.x, arc0.y + 16);
+                        // Percent labels on the segments (white on navy, ink on light)
+                        if (grandTotal > 0) {
+                            const data = chart.data.datasets[0].data;
+                            c.textBaseline = 'middle'; c.font = '700 13px ' + FONT;
+                            meta.data.forEach(function (arc, i) {
+                                if (!chart.getDataVisibility(i) || !data[i]) return;
+                                const p = arc.getProps(['startAngle', 'endAngle', 'innerRadius', 'outerRadius', 'x', 'y'], true);
+                                if (Math.abs(p.endAngle - p.startAngle) < 0.15) return; // sliver: label would overflow
+                                const ang = (p.startAngle + p.endAngle) / 2;
+                                const r = (p.innerRadius + p.outerRadius) / 2;
+                                c.fillStyle = i === 0 ? '#ffffff' : INK;
+                                c.fillText(Math.round((data[i] / grandTotal) * 100) + '%',
+                                    p.x + Math.cos(ang) * r, p.y + Math.sin(ang) * r);
+                            });
+                        }
+                        c.restore();
+                    }
+                }]
+            });
+        }
     })();
 </script>
 </body>

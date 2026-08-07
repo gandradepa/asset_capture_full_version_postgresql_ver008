@@ -16,7 +16,7 @@ All three review sheets also expose optional **Installation Date** from `QR_code
 
 ## Main Steps
 
-1. Open the correct review app for the discipline. (For Electrical, choose 'General' or 'Distribution' scope first on the landing page).
+1. Open the correct review app for the discipline. (For Electrical, choose 'General' or 'Distribution' scope first on the landing page; an asset belongs to the Distribution scope when its `Asset Group` has `elec_dist_setup = 'Y'` in the `Asset_Group` lookup — see `special_processes/04_database_topography.md`).
 2. Let the `before_request` sync reconcile new JSON and image state into the DB.
 3. Use the dashboard tabs to select New, Update (hidden in Electrical), or Manual Entry assets.
 4. Open the review page, compare the JSON against the photos, and edit values as needed.
@@ -79,6 +79,8 @@ The ME, BF, and EL review dashboards expose a master checkbox in the **Manual** 
 ## EL Distribution listing view
 
 The "Review Electrical Assets - Distribution" dashboard keeps the same data model as the general EL dashboard but hides three listing-table columns for scanability: **Amperage Rating**, **Volts**, and **Location**. The hide is frontend-only and scoped to `/review-distribution`; `review.html`, `/review-all`, JSON, DB rows, SDI packaging, and Planon export still carry the fields.
+
+Which assets appear here is data-driven (2026-08-04): the view lists assets whose `Asset Group` matches an `Asset_Group` row with `elec_dist_setup = 'Y'`; all other groups stay in `/review-all`. The set refreshes within ~60 seconds of a flag change (see `rules/review_apps.rules.md`).
 
 The EL dashboard also loads the shared `_shell.html` partial so the standalone sidebar/topbar behavior matches ME and BF. Required-field checklist popovers use a higher `.el-required-popover` z-index than the shell sidebar so QR hover cards render above the shell.
 

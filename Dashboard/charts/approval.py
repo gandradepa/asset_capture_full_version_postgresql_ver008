@@ -4,6 +4,8 @@ import os
 import io
 import math
 import sqlite3
+from datetime import datetime, timedelta
+from typing import Optional
 import numpy as np
 import pandas as pd
 import db as qrdb  # backend-agnostic QR_codes DB layer
@@ -25,6 +27,14 @@ COMMON_COLS = ["Approved", "Asset Group", "Attribute", "Building", "Description"
 COLOR_APPROVED = "#002145"
 COLOR_NOTAPP   = "#E6ECF2"
 COLOR_TARGET   = "#0055b7"
+
+# Dark-blue tones per discipline for the Overview "QR Codes by Asset Type" bar
+# chart (same navy schema, dark -> light: ME brand navy, EL UBC blue, BF steel).
+# Re-stepped 2026-08-05 after the dataviz palette validator flagged the old
+# EL #003b7e / BF #0055b7 pair as too close (dE 11.5); this trio passes >= 21.
+# Keep in sync with the Chart.js TONES map in dashboard.html.
+QR_TYPE_COLORS = {"ME": "#002145", "EL": "#0055b7", "BF": "#5b9bd5"}
+QR_TYPE_ORDER = ("ME", "EL", "BF")
 
 # Output DPI used by render_chart_png (must stay aligned with hitbox coordinates)
 OUTPUT_DPI = 120
@@ -144,6 +154,381 @@ def _prepare_data(user=None) -> pd.DataFrame:
     )
     df4["QTY"] = pd.to_numeric(df4["QTY"], errors="coerce").fillna(0).astype(int)
     return df4
+
+def _prepare_qr_type_counts(building: str = "All", user=None) -> pd.DataFrame:
+    """Distinct QR-code counts per discipline, columns ["Type", "QTY"] in
+    fixed ME, EL, BF order (missing types zero-filled).
+
+    Discipline inference mirrors the reviewer-analysis hover CTE:
+    sdi_dataset rows are BF when "Asset Group" contains 'backflow'
+    (case-insensitive), otherwise ME; all sdi_dataset_EL rows are EL.
+    `building` filters by Buildings.Name (same value the other approval
+    charts receive); `user` reuses the QR_code_assets capture filter.
+    """
+    frames = []
+    with qrdb.get_connection(sqlite_path=DB_PATH) as conn:
+        for table, default_type in (("sdi_dataset", "ME"), ("sdi_dataset_EL", "EL")):
+            if not _table_exists(conn, table):
+                continue
+            df = pd.read_sql_query(f'SELECT * FROM "{table}"', qrdb.raw_conn(conn))
+            for c in ("QR Code", "Asset Group", "Building"):
+                if c not in df.columns:
+                    df[c] = ""
+            df = df[["QR Code", "Asset Group", "Building"]].copy()
+            if default_type == "ME":
+                is_bf = df["Asset Group"].fillna("").astype(str).str.lower().str.contains("backflow")
+                df["Type"] = np.where(is_bf, "BF", "ME")
+            else:
+                df["Type"] = "EL"
+            frames.append(df)
+    if not frames:
+        raise RuntimeError("Neither sdi_dataset nor sdi_dataset_EL was found in the database.")
+
+    df = pd.concat(frames, ignore_index=True)
+    df["QR Code"] = df["QR Code"].fillna("").astype(str).str.strip()
+    df = df[df["QR Code"] != ""]
+
+    if building and building != "All":
+        bld = _read_table(DB_PATH, TABLE_BUILDINGS)
+        bld["Code_key"] = bld["Code"].astype(str).str.strip()
+        bld = bld.drop_duplicates(subset=["Code_key"], keep="first")
+        df["Building_key"] = df["Building"].astype(str).str.strip()
+        df = df.merge(bld[["Code_key", "Name"]], left_on="Building_key", right_on="Code_key", how="left")
+        df["Name"] = df["Name"].fillna("Unknown").astype(str).str.strip()
+        df = df[df["Name"] == building]
+
+    qrs = _qrs_for_user(user)
+    if qrs is not None:
+        df = df[df["QR Code"].isin(qrs)]
+
+    counts = df.groupby("Type")["QR Code"].nunique().reindex(list(QR_TYPE_ORDER), fill_value=0)
+    out = counts.reset_index()
+    out.columns = ["Type", "QTY"]
+    out["QTY"] = pd.to_numeric(out["QTY"], errors="coerce").fillna(0).astype(int)
+    return out
+
+def _base_qr(value) -> str:
+    """First whitespace-delimited token of a code_assets / QR Code value.
+
+    Mirrors flow_quantity_chart._base_qr so the integrity math compares the
+    same QR keys the pipeline "Total QR" pill counts.
+    """
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    return text.split(None, 1)[0]
+
+
+def _scan_capture_universe(conn) -> dict:
+    """One pass over QR_code_assets, shared by the Manual Entry and integrity
+    readers so both agree on the capture universe.
+
+    code_assets is "<QR> <building> <type> - <seq>". Returns:
+      max_proc    {qr: 0|1|2}  highest valid Col_process per QR
+      building    {qr: code}   first building token seen
+      type        {qr: "ME"|"EL"|"BF"}  first recognized discipline token
+      unknown_type  QRs with a valid process but no recognized discipline
+      unclassified  QRs whose ONLY Col_process values are invalid/unparseable
+                    (same definition as flow_quantity_chart._review_state_counts)
+    """
+    max_proc: dict = {}
+    building: dict = {}
+    qr_type: dict = {}
+    unclassified: set = set()
+    for code_assets, proc in conn.execute(
+        'SELECT "code_assets", "Col_process" FROM "QR_code_assets"'
+    ).fetchall():
+        parts = str(code_assets or "").strip().split()
+        if not parts:
+            continue
+        qr = parts[0]
+        try:
+            p = int(str(proc).strip())
+        except (TypeError, ValueError):
+            unclassified.add(qr)
+            continue
+        if p not in (0, 1, 2):
+            unclassified.add(qr)
+            continue
+        prev = max_proc.get(qr)
+        if prev is None or p > prev:
+            max_proc[qr] = p
+        if len(parts) > 1 and qr not in building:
+            building[qr] = parts[1]
+        if len(parts) > 2 and qr not in qr_type:
+            t = parts[2].upper()
+            if t in QR_TYPE_ORDER:
+                qr_type[qr] = t
+    return {
+        "max_proc": max_proc,
+        "building": building,
+        "type": qr_type,
+        "unknown_type": set(max_proc) - set(qr_type),
+        "unclassified": unclassified - set(max_proc),
+    }
+
+
+def _curated_qrs(conn) -> set:
+    """Distinct QRs present in either curated table, keyed by first token."""
+    curated = set()
+    for table in TABLES_MAIN:
+        if not _table_exists(conn, table):
+            continue
+        for (qr,) in conn.execute(f'SELECT DISTINCT "QR Code" FROM "{table}"').fetchall():
+            q = _base_qr(qr)
+            if q:
+                curated.add(q)
+    return curated
+
+
+# A capture only gains its curated row when a reviewer app next serves a
+# request (the JSON sync runs from before_request), so a recent capture is
+# legitimately curated-less. 96h clears a long weekend with no reviewer
+# traffic; genuinely stranded assets stay stranded indefinitely (the 22 lost on
+# 2026-07-29 were weeks old), so waiting costs nothing while a false alarm
+# costs the guardrail its credibility.
+ORPHAN_GRACE_HOURS = 96
+
+
+def _capture_timestamps(conn) -> dict:
+    """{qr: datetime} from QR_codes.date_set (TEXT in PostgreSQL).
+
+    Unparseable or missing values are simply absent from the map; callers treat
+    an unknown capture time as NOT in flight, since a capture with no QR_codes
+    row cannot be excused as recent.
+    """
+    out: dict = {}
+    if not _table_exists(conn, "QR_codes"):
+        return out
+    try:
+        rows = conn.execute('SELECT "QR_code_ID", "date_set" FROM "QR_codes"').fetchall()
+    except Exception:
+        return out
+    for qr_raw, raw in rows:
+        qr = _base_qr(qr_raw)
+        if not qr:
+            continue
+        text = str(raw or "").strip()
+        if not text:
+            continue
+        if isinstance(raw, datetime):
+            out[qr] = raw
+            continue
+        try:
+            out[qr] = datetime.strptime(text[:19], "%Y-%m-%d %H:%M:%S")
+        except ValueError:
+            try:
+                out[qr] = datetime.fromisoformat(text[:19])
+            except ValueError:
+                continue
+    return out
+
+
+def _curated_type_buckets(conn) -> dict:
+    """{qr: {types}} using the same discipline inference as the KPI bars.
+
+    sdi_dataset rows are BF when "Asset Group" contains 'backflow', else ME;
+    every sdi_dataset_EL row is EL — mirroring _prepare_qr_type_counts. A QR
+    landing in more than one bucket is counted once per bucket by the bars but
+    only once by the pipeline, so the extra memberships are a divergence
+    channel in their own right.
+    """
+    buckets: dict = {}
+    if _table_exists(conn, "sdi_dataset"):
+        for qr, group in conn.execute('SELECT "QR Code", "Asset Group" FROM "sdi_dataset"').fetchall():
+            q = _base_qr(qr)
+            if not q:
+                continue
+            t = "BF" if "backflow" in str(group or "").lower() else "ME"
+            buckets.setdefault(q, set()).add(t)
+    if _table_exists(conn, "sdi_dataset_EL"):
+        for (qr,) in conn.execute('SELECT "QR Code" FROM "sdi_dataset_EL"').fetchall():
+            q = _base_qr(qr)
+            if q:
+                buckets.setdefault(q, set()).add("EL")
+    return buckets
+
+
+def integrity_snapshot(sample_limit: int = 10, grace_hours: Optional[int] = None) -> dict:
+    """Capture-vs-curated reconciliation for the Overview KPI section.
+
+    Read-only and deliberately GLOBAL — the invariant "pipeline Total QR ==
+    sum of KPI bars" is system-wide, so this takes no building/user filter.
+
+    Reported channels — together they account for the whole gap between the
+    pipeline "Total QR" pill and the sum of the KPI bars:
+
+        pipeline - bars == orphan_total + manual_unknown
+                           - reverse_total - curated_double_counted
+
+    (identity pinned by test/test_pipeline_kpi_equivalence.py, so no
+    divergence can hide in an unnamed remainder)
+
+    orphans  QRs whose max Col_process is 0/1 (active review states) with NO
+             row in sdi_dataset / sdi_dataset_EL. This is the 22-QR silent-loss
+             class: captured, expected in SDI, curated row never written.
+             Bucketed per discipline, plus "unknown" for QRs whose discipline
+             token the KPI bars would silently drop. Counts only STRANDED
+             orphans (captured longer than grace_hours ago); recent captures are
+             still in flight and reported as orphan_pending instead.
+    orphan_total  stranded + pending — the term in the accounting identity.
+    manual_unknown  uncurated Manual Entry QRs whose discipline token is not
+             ME/EL/BF — the bars cannot place them, the pipeline still counts
+             them.
+    reverse  curated QRs with no validly classified capture row.
+    curated_double_counted  extra type-bucket memberships (a QR curated as
+             both ME/BF and EL is counted once per bucket by the bars).
+    unclassified  QRs carrying only invalid Col_process values (also shown on
+             the pipeline chart's own diagnostic line); excluded from both
+             totals, so informational.
+
+    All values are plain ints; sample lists are sorted and capped.
+    """
+    grace = ORPHAN_GRACE_HOURS if grace_hours is None else int(grace_hours)
+    empty = {t: 0 for t in QR_TYPE_ORDER}
+    out = {
+        "orphans": {**empty, "unknown": 0},
+        "orphan_total": 0,
+        "orphan_stranded": 0,
+        "orphan_pending": 0,
+        "orphan_samples": [],
+        "orphan_pending_samples": [],
+        "manual_unknown": 0,
+        "manual_unknown_samples": [],
+        "reverse_total": 0,
+        "reverse_samples": [],
+        "curated_double_counted": 0,
+        "unclassified": 0,
+        "grace_hours": grace,
+        "scope": "global",
+    }
+    with qrdb.get_connection(sqlite_path=DB_PATH) as conn:
+        if not _table_exists(conn, "QR_code_assets"):
+            return out
+        scan = _scan_capture_universe(conn)
+        buckets = _curated_type_buckets(conn)
+        captured_at = _capture_timestamps(conn)
+
+    curated = set(buckets)
+    max_proc = scan["max_proc"]
+    known_type = scan["type"]
+
+    active = {qr for qr, p in max_proc.items() if p in (0, 1)}
+    orphans = active - curated
+    cutoff = datetime.now() - timedelta(hours=grace)
+    # In flight: captured recently enough that the reviewer sync may simply not
+    # have run yet. An unknown capture time is never excused.
+    pending = {qr for qr in orphans if captured_at.get(qr) is not None and captured_at[qr] > cutoff}
+    stranded = orphans - pending
+
+    for qr in stranded:
+        t = known_type.get(qr)
+        out["orphans"]["unknown" if t not in empty else t] += 1
+    out["orphan_total"] = len(orphans)
+    out["orphan_stranded"] = len(stranded)
+    out["orphan_pending"] = len(pending)
+    out["orphan_samples"] = sorted(stranded)[:sample_limit]
+    out["orphan_pending_samples"] = sorted(pending)[:sample_limit]
+
+    manual_unknown = {
+        qr for qr, p in max_proc.items()
+        if p == 2 and qr not in curated and qr not in known_type
+    }
+    out["manual_unknown"] = len(manual_unknown)
+    out["manual_unknown_samples"] = sorted(manual_unknown)[:sample_limit]
+
+    reverse = curated - set(max_proc)
+    out["reverse_total"] = len(reverse)
+    out["reverse_samples"] = sorted(reverse)[:sample_limit]
+
+    out["curated_double_counted"] = sum(len(types) - 1 for types in buckets.values())
+    out["unclassified"] = len(scan["unclassified"])
+    return out
+
+
+def _manual_excluded_by_type(building: str = "All", user=None) -> dict:
+    """Distinct Manual Entry QRs with no curated row, split by discipline.
+
+    A QR counts when its max valid Col_process in QR_code_assets is 2 (Manual
+    Entry) and it has no row in sdi_dataset / sdi_dataset_EL. Discipline comes
+    from the third token of code_assets ("<QR> <building> <type> - <seq>").
+    These are the by-design KPI-vs-pipeline holdouts (Manual Entry = SDI
+    exclusion state); the Overview bar chart adds them per type and the chip
+    names their total so the section reconciles with the pipeline.
+    """
+    empty = {t: 0 for t in QR_TYPE_ORDER}
+    with qrdb.get_connection(sqlite_path=DB_PATH) as conn:
+        if not _table_exists(conn, "QR_code_assets"):
+            return dict(empty)
+        scan = _scan_capture_universe(conn)
+        per_qr = scan["max_proc"]
+        qr_building = scan["building"]
+        qr_type = scan["type"]
+
+        manual_qrs = {qr for qr, p in per_qr.items() if p == 2}
+        if not manual_qrs:
+            return dict(empty)
+
+        curated = _curated_qrs(conn)
+    manual_qrs -= curated
+
+    if building and building != "All":
+        bld = _read_table(DB_PATH, TABLE_BUILDINGS)
+        codes = {
+            str(code).strip()
+            for code, name in zip(bld.get("Code", []), bld.get("Name", []))
+            if str(name or "").strip() == building
+        }
+        manual_qrs = {qr for qr in manual_qrs if qr_building.get(qr) in codes}
+
+    qrs_user = _qrs_for_user(user)
+    if qrs_user is not None:
+        manual_qrs &= {str(q).strip() for q in qrs_user}
+
+    out = dict(empty)
+    for qr in manual_qrs:
+        t = qr_type.get(qr)
+        if t in out:
+            out[t] += 1
+    return out
+
+
+def _count_manual_excluded(building: str = "All", user=None) -> int:
+    """Total Manual Entry QRs held out of the curated tables (chip + donut slice)."""
+    return int(sum(_manual_excluded_by_type(building=building, user=user).values()))
+
+
+def overview_kpi_payload(building: str = "All", user=None) -> dict:
+    """JSON-safe data for the Overview KPI charts (Chart.js client rendering).
+
+    Shape: {"qr_types": {"ME": n, "EL": n, "BF": n},
+            "approval": {"approved": n, "not_approved": n},
+            "manual_excluded": n,
+            "integrity": {...}}   # see integrity_snapshot(); global scope
+    All values are plain Python ints (numpy ints break jsonify).
+    """
+    counts = _prepare_qr_type_counts(building=building, user=user)
+    manual = _manual_excluded_by_type(building=building, user=user)
+    # Bars count the full capture universe (2026-08-06): curated + Manual Entry.
+    # The approval numbers stay curated-only — the gauge measures review
+    # performance on reviewable assets; Manual Entry is never approved here.
+    qr_types = {str(t): int(q) + int(manual.get(str(t), 0)) for t, q in zip(counts["Type"], counts["QTY"])}
+
+    df4 = _prepare_data(user)
+    filtered = df4 if (building == "All" or not building) else df4[df4["Name"] == building]
+    approved = int(filtered.loc[filtered["Approved"] == "Approved", "QTY"].sum())
+    not_approved = int(filtered.loc[filtered["Approved"] == "Not Approved", "QTY"].sum())
+    payload = {
+        "qr_types": qr_types,
+        "approval": {"approved": approved, "not_approved": not_approved},
+        "manual_excluded": int(sum(manual.values())),
+    }
+    # Integrity is advisory: a failure here must never take down the charts.
+    try:
+        payload["integrity"] = integrity_snapshot()
+    except Exception as exc:
+        payload["integrity"] = {"error": str(exc)}
+    return payload
 
 # ---------- Public helpers used by Flask ----------
 def building_options(user=None):
@@ -265,6 +650,29 @@ def _draw_bar_chart(ax, filtered_data):
         "not_approved_vals": not_approved_vals,
     }
 
+def _draw_qr_type_bar(ax, counts):
+    """Vertical bars: distinct QR codes per discipline (ME / EL / BF)."""
+    types = counts["Type"].tolist()
+    values = counts["QTY"].to_numpy()
+    colors = [QR_TYPE_COLORS.get(t, COLOR_APPROVED) for t in types]
+    x = np.arange(len(types))
+    ax.bar(x, values, color=colors, width=0.6)
+
+    max_val = int(values.max()) if len(values) else 0
+    for xi, val in zip(x, values):
+        ax.text(xi, val + max(max_val * 0.03, 0.5), f"{int(val):,}",
+                ha="center", va="bottom", fontsize=13, weight="bold", color=COLOR_APPROVED)
+
+    ax.set_xticks(x, types)
+    ax.tick_params(axis="x", labelsize=12, colors=COLOR_APPROVED, length=0)
+    ax.set_yticks([])
+    for s in ax.spines.values():
+        s.set_visible(False)
+    ax.grid(False)
+    ax.set_ylim(0, max_val * 1.22 if max_val > 0 else 1)
+    ax.set_title("QR Codes by Asset Type", fontsize=16, weight="bold", color=COLOR_APPROVED, pad=20)
+
+
 def _draw_pie_chart(ax, app_total, not_total):
     grand_total = app_total + not_total
     
@@ -294,16 +702,52 @@ def _draw_pie_chart(ax, app_total, not_total):
     ax.set_title("Overall Approval", fontsize=14, color=COLOR_APPROVED, pad=10)
 
 # ---------- Main Rendering Function ----------
-def render_chart_png(building: str = "All", chart_type: str = "all", status: str = "all", user=None) -> bytes:
+def _normalize_fmt(fmt) -> str:
+    """Only 'svg' (vector, zoom-crisp) and 'png' (default) are supported."""
+    return "svg" if str(fmt or "").strip().lower() == "svg" else "png"
+
+
+def _fig_bytes(fig, ax, fmt: str) -> bytes:
+    fig.patch.set_facecolor('none')
+    ax.set_facecolor('none')
+    plt.tight_layout(pad=0.5)
+    buf = io.BytesIO()
+    fig.savefig(buf, format=fmt, dpi=OUTPUT_DPI, transparent=True)
+    plt.close(fig)
+    buf.seek(0)
+    return buf.read()
+
+
+def _error_fig_bytes(err, fmt: str) -> bytes:
+    fig, ax = plt.subplots(figsize=(6, 4))
+    ax.text(0.5, 0.5, f"Data error:\n{err}", ha="center", va='center', wrap=True)
+    return _fig_bytes(fig, ax, fmt)
+
+
+def render_chart_png(building: str = "All", chart_type: str = "all", status: str = "all", user=None, fmt: str = "png") -> bytes:
+    fmt = _normalize_fmt(fmt)
+
+    if chart_type == "qr_types":
+        try:
+            counts = _prepare_qr_type_counts(building=building, user=user)
+            # Match the Chart.js bars: the capture universe includes Manual Entry.
+            manual = _manual_excluded_by_type(building=building, user=user)
+            counts["QTY"] = [int(q) + int(manual.get(str(t), 0))
+                             for t, q in zip(counts["Type"], counts["QTY"])]
+        except Exception as e:
+            return _error_fig_bytes(e, fmt)
+        fig, ax = plt.subplots(figsize=(6, 4.5))
+        if int(counts["QTY"].sum()) == 0:
+            ax.text(0.5, 0.5, "No data", ha="center")
+        else:
+            _draw_qr_type_bar(ax, counts)
+        return _fig_bytes(fig, ax, fmt)
+
     try:
         df4 = _prepare_data(user)
         filtered = df4 if (building == "All" or not building) else df4[df4["Name"] == building]
     except Exception as e:
-        fig, ax = plt.subplots(figsize=(6, 4))
-        ax.text(0.5, 0.5, f"Data error:\n{e}", ha="center", va='center', wrap=True)
-        buf = io.BytesIO()
-        fig.savefig(buf, format="png", dpi=OUTPUT_DPI, transparent=True); plt.close(fig); buf.seek(0)
-        return buf.read()
+        return _error_fig_bytes(e, fmt)
 
     app_total = int(filtered.loc[filtered["Approved"] == "Approved", "QTY"].sum())
     not_total = int(filtered.loc[filtered["Approved"] == "Not Approved", "QTY"].sum())
@@ -332,15 +776,8 @@ def render_chart_png(building: str = "All", chart_type: str = "all", status: str
         else: _draw_pie_chart(ax, app_total, not_total)
 
     if fig:
-        fig.patch.set_facecolor('none')
-        ax.set_facecolor('none')
-        plt.tight_layout(pad=0.5)
-        buf = io.BytesIO()
-        fig.savefig(buf, format="png", dpi=OUTPUT_DPI, transparent=True)
-        plt.close(fig)
-        buf.seek(0)
-        return buf.read()
-    
+        return _fig_bytes(fig, ax, fmt)
+
     return b""
 
 

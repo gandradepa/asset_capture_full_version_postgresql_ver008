@@ -1,6 +1,6 @@
 # Extraction API Rules
 
-Current documentation refresh: 2026-07-30.
+Current documentation refresh: 2026-08-03.
 
 ## Purpose
 
@@ -20,11 +20,14 @@ Current documentation refresh: 2026-07-30.
   - `Standard` → the untouched standard EL flow (byte-identical behavior to pre-gate).
   - `Legacy` → `_process_legacy_asset()`: verbatim-transcription prompt (`EL_LEGACY_PROMPT`) with the raw-preserving `ELLegacyStructuredExtraction` model (no normalizing validators — the standard model destroys legacy strings like `MAIN DIST. CTRE.` at parse time), then `legacy_flow.legacy_structured_from_raw()` for all rule-based structuring.
   - Blank/NULL `Process`, or DB unreachable → **skip the asset with a warning; never default to Standard** (fail-closed).
-- Legacy JSON envelope keys: `"process": "Legacy"`, `"el_legacy_rule_version"`, and `structured_data.label_text` (the verbatim transcription; enables rule-only regeneration without a new vision call where applicable).
+- Legacy JSON envelope keys: `"process": "Legacy"`, `"el_legacy_rule_version"`, `structured_data.label_text` (verbatim **lamacoid** transcription, EL-1), `structured_data.nameplate_text` (verbatim **manufacturer nameplate** transcription, EL-0; added 2026-08-04, rule v5 — kept in its own field so plate text can never contaminate the lamacoid parse), and `structured_data.rating_plausibility_flags` (parsed-but-rejected readings from the plausibility tripwire, 2026-08-05). `label_text`/`nameplate_text` enable rule-only regeneration without a new vision call.
 - `review/Asset_dashboard_browser_EL/legacy_flow.py` is the single legacy rules module, shared by the extraction API (via importlib), the EL review app, and the SLD extractor. Never fork its logic into the API script.
-- Staleness / regeneration: `EL_LEGACY_RULE_VERSION` (currently 4) is independent of `Config.EXTRACTION_RULE_VERSION`. Bumping it makes `_existing_el_legacy_output_needs_rescore()` flag legacy JSONs stale so they reset `ai_status` and regenerate on the next run. Never bump `EXTRACTION_RULE_VERSION` for legacy-only rule changes — that forces fleet-wide standard re-extraction.
+- **Prompt and schema move together (extra="forbid").** `ELLegacyStructuredExtraction` / `ELLegacyConfidenceScores` forbid unknown keys: if `EL_LEGACY_PROMPT` asks for a field the models do not declare (e.g. `Nameplate Text`), every legacy QR fails to parse and returns `ERROR (Legacy extraction failed)`. Ship both in one commit.
+- Scoring is transformer-aware: `_el_legacy_scoring_fields()` selects `EL_LEGACY_TRANSFORMER_SCORING_FIELDS` (`UBC Asset Tag`, `Volts`, `Power Rating`, `Power Rating (UoM)`) via `legacy_flow.is_legacy_transformer()`, else the flat 4-field set — without the split a transformer caps at 50% and is permanently flagged. Confidence is provenance-aware (`_el_legacy_conf_scores()`): a nameplate-derived field inherits the `Nameplate Text` transcription score, because the model scores `Volts`/`Ampere` against the lamacoid it correctly left blank.
+- Plausibility tripwire reason codes: `unrecognized_voltage` / `implausible_amperage` are appended to `manual_review.reason_codes` from `structured_data.rating_plausibility_flags` — a parsed reading that matches no known voltage system or standard amperage size is stored blank and flagged, never stored as data. Rails live in `legacy_flow` (`is_plausible_voltage` / `is_plausible_amperage` / `_apply_rating_rails`).
+- Staleness / regeneration: `EL_LEGACY_RULE_VERSION` (currently **6** — v5 2026-08-04: manufacturer-nameplate support; v6 2026-08-05: Supply From stores one feeder identifier, no composite sentences or `via` qualifiers) is independent of `Config.EXTRACTION_RULE_VERSION`. Bumping it makes `_existing_el_legacy_output_needs_rescore()` flag legacy JSONs stale so they reset `ai_status` and regenerate on the next run. Never bump `EXTRACTION_RULE_VERSION` for legacy-only rule changes — that forces fleet-wide standard re-extraction.
 - `_load_ai_processed_qrs()` and the existing-JSON skip must route payloads with `"process": "Legacy"` through the legacy rescore check, not the standard one (the standard check re-scores legacy JSONs with standard rules and creates a permanent billable re-extraction loop).
-- Human-reviewed legacy JSON is authoritative: `modified=true`, `supply_from_manual_override=1`, or `volts_manual_override=1` block both stale-flagging and overwrite — same invariant as the standard flow.
+- Human-reviewed legacy JSON is authoritative: `modified=true`, `structured_data.Approved == "True"` (added 2026-08-04 — the extractor previously lacked the Approved check the review app already enforced, so a CLI rerun with `EL_OVERWRITE_EXISTING_JSON=true` could overwrite approved work), `supply_from_manual_override=1`, or `volts_manual_override=1` block both stale-flagging and overwrite — same invariant as the standard flow.
 - Dictionaries: Legacy uses `dictionary/electrical.dictionary_old.py` (the working copy, incl. `panel_legacy.codes.ident_normalization` for plate-typo/punctuation normalization); Standard uses `dictionary/electrical.dictionary.py`. Never cross them.
 - Legacy identifier and field conventions (Equipment ID = UBC Asset Tag, hyphen form `DCC-1` / `PNL-UPS1`; Supply From ≡ Fed From Equipment ID; Description `<type word> - <Equipment ID>`; X-tag structure is dictionary-decode-only) are specified in `review_apps.rules.md` → "EL Legacy Flow Rules". The extraction script must not re-implement them — they live in `legacy_flow.py`.
 
@@ -71,6 +74,22 @@ Current documentation refresh: 2026-07-30.
 - TSBC rereads may send zoomed UNIT NO. row/value crops ahead of the full seq `-3` image; ambiguous digits must stay blank rather than guessed.
 - Seq `-4` is the optional **Extra Photo** slot, owns no fields, and is never sent to the LLM (excluded via `VALID_SUFFIXES`).
 - If the owning source is absent or not evidenced, leave the field blank.
+
+## ME UBC Tag Hybrid Consensus
+
+Current documentation refresh: 2026-08-03.
+
+- The normal ME simple extraction remains the primary source: production keeps `gpt-5.4-mini` with `ME_IMAGE_DETAIL=low`. Consensus adds no API call for an unchallenged tag.
+- For every readable seq `-1`, the local validator detects the dominant dark elongated placard (3-75% frame area, elongation at least 1.6, rectangular fill at least 0.5), falling back to the full image. It performs exactly four bounded Tesseract reads: two opposite orientations, each as grayscale and Otsu, over the central 70%, PSM 11, character whitelist, four-second timeout.
+- Local OCR is one independent source, not four sources. A local prefix or core vote exists only when at least two variants agree. Partial evidence such as prefix `HX` with no reliable core is valid.
+- ME prefixes are loaded from `dictionary/mechanical_dictionary.py` through `ast.parse()` and `ast.literal_eval()`. Dictionary membership may challenge a prefix but is never counted as visual evidence. Dictionary read/parse failure is non-fatal.
+- Challenge triggers are: missing/malformed primary tag, a dictionary-unknown prefix, an explicit primary confidence below 70, or local disagreement with the primary. A missing model confidence alone is not a challenge.
+- A challenged asset receives at most one independent judge call, with no retry: `ME_UBC_JUDGE_MODEL=gpt-5.6-terra`, `ME_UBC_JUDGE_DETAIL=original`, and `ME_UBC_JUDGE_REASONING_EFFORT=low`. The call sends two opposite orientations without disclosing primary/local candidates. Each prepared image has a 1280-pixel maximum edge, and output is capped at 220 completion tokens.
+- Prefix and core are resolved separately. A challenged component changes only when two non-empty visual sources agree; unchallenged primary components are preserved. Existing forms including `HUM 5`, dotted cores, and multi-segment tags remain valid.
+- Unresolved disagreement or judge failure preserves the primary component, caps UBC confidence at 65, and adds `ubc_consensus_unresolved`; an unresolved unknown prefix also adds `ubc_prefix_unrecognized`. Confirmed/corrected quorum receives at least 92 confidence. An accepted unchallenged tag with no primary model score receives 84, not a synthesized 95.
+- `manual_review.ubc_consensus` records status (`accepted_primary`, `confirmed_by_quorum`, `corrected_by_quorum`, or `unresolved`), triggers, component votes, final tag, judge model, call count, token usage, and only a normalized failure category (`timeout`, `quota`, `auth`, `rate_limit`, `api`, or `parse`). Raw API exception details are not stored.
+- Cost guard and rollback: `ME_UBC_CONSENSUS_ENABLED=1` enables the cascade; setting it to `0` restores the legacy targeted UBC reread behavior. Monitor returned judge token usage, but never relax the one-call/no-retry/image/token caps without explicit approval.
+- This behavior is ME-only. It introduces no database schema or endpoint changes and does not alter BF or EL. Human-reviewed values and existing manual-override protections remain authoritative.
 
 ## ME Manufacturer Canonicalization
 

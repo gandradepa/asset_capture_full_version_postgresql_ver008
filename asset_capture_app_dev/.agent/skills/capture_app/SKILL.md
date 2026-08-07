@@ -190,7 +190,7 @@ Example: 0000177276 314-1 ME - 0.jpg
 |---|---|---|
 | Mechanical (ME) | `-0`..`-4` | Asset Plate / UBC Tag / Main Asset Photo / Technical Safety BC / **Extra Photo (Optional, `-4`)** |
 | Backflow (BF) | `-0`..`-3` | Asset Plate / Asset Plate (additional) / Main Photo / **Extra Photo (Optional, `-3`)** |
-| Electrical (EL) | `-0`..`-3` | Asset Plate (Optional) / UBC Asset Tag / Panel Schedule / **Extra Photo (Optional, `-3`)** |
+| Electrical (EL) | `-0`..`-3` | Asset Plate (Optional) / UBC Asset Tag / Full Interior Panel / **Extra Photo (Optional, `-3`)** |
 
 The Extra Photo is captured/displayed but never feeds completeness, AI confidence, AI extraction (`VALID_SUFFIXES`), or "Missed Photo". Its file input is marked `data-optional="true"` so `updateCompletionState()` excludes it from the green "all required captured" toast.
 

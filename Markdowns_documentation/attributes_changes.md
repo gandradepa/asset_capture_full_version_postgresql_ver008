@@ -1,6 +1,16 @@
 # Attribute Changes
 
-Current documentation refresh: 2026-07-30.
+Current documentation refresh: 2026-08-04.
+
+## 2026-08-04: EL General/Distribution split driven by `Asset_Group.elec_dist_setup` — deployed same day
+
+### Summary
+
+The "Electrical Assets" vs "Electrical Assets - Distribution" dashboard split is now data-driven: an asset lands in the Distribution view when its `Asset Group` matches an `Asset_Group` row with `elec_dist_setup = 'Y'` (`CHAR(1) NOT NULL DEFAULT 'N'` + `ck_asset_group_elec_dist_setup` check constraint; owner-run migrations `scripts/migrations/2026-08-04_asset_group_elec_dist_setup*.sql`, applied to Local and VM — 8 seeded `Y` rows including both Panels records and the newly added Main Transformers, with matching `audit_trail` rows).
+
+App side: `get_distribution_asset_groups()` in `Asset_dashboard_EL.py` (60s TTL cache) feeds the two views, the review-page amp-warning gating, and the XLSX export (`build_workbook` / `has_el_amperage_warning` gain an optional `distribution_groups` parameter — three-copy rule kept, ME/BF behavior unchanged); the SLD Switch Over query reads the flag via `_distribution_asset_groups()` in `sld_blueprint.py`. The static `EL_DISTRIBUTION_ASSET_GROUPS` frozenset (and its `sld_blueprint.py` tuple mirror) remains only as the DB-unavailable fallback (e.g. the frozen local SQLite copy). Precursor, same day: "Main Transformers" was added to the static set and seeded `Y`.
+
+Deployed to the VM same day: file copy with `.bak_20260804_103822` backups, then gunicorn SIGHUP graceful reload of `assetcap-el` / `assetcap-reviewme` / `assetcap-bf` (units have `Restart=no`, so masters were HUPed, not killed). Moving a group between views is now an audited `UPDATE "Asset_Group" SET elec_dist_setup = ...`, not a code change; the dashboards pick it up within ~60 seconds.
 
 ## 2026-07-30: Legacy ident normalization (U.P.S./USP → UPS) + UPS feeder — deployed same day
 

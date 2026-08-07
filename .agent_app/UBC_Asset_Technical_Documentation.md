@@ -1,6 +1,6 @@
 ﻿# UBC Asset Technical Documentation
 
-Current documentation refresh: 2026-04-28.
+Current documentation refresh: 2026-08-03.
 
 ## Repository Architecture
 
@@ -47,6 +47,7 @@ A valid QR code must remain consistent across:
 - `Avg_ai_conf` is discipline-aware
 - EL excludes `Volts`, `Location`, and `Branch Panel`
 - ME includes `Technical Safety BC` only when seq `-3` exists
+- A challenged ME sequence `-1` UBC tag is resolved independently by primary extraction, local OCR, and at most one Terra judge. A fully resolved quorum is at least 92 confidence; unresolved consensus preserves the primary tag, caps it at 65, and records manual-review metadata.
 
 ### Review / SDI Contract
 

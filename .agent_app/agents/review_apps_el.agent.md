@@ -1,6 +1,6 @@
 ﻿# Review App (EL) Agent
 
-Current documentation refresh: 2026-05-27.
+Current documentation refresh: 2026-08-04.
 
 ## Purpose
 Electrical asset review for engineers validating panel, transformer, and distribution data against extracted JSON and source images.
@@ -22,6 +22,7 @@ Electrical asset review for engineers validating panel, transformer, and distrib
 
 ## Critical Conventions
 - Local and production port: `8005`.
+- The General (`/review-all`) vs Distribution (`/review-distribution`) split is data-driven (2026-08-04): assets whose `Asset Group` has `Asset_Group.elec_dist_setup = 'Y'` belong to Distribution. Loaded by `get_distribution_asset_groups()` (60s TTL cache); the static `EL_DISTRIBUTION_ASSET_GROUPS` frozenset / `sld_blueprint.py` tuple is fallback only. Move groups between views with an audited flag `UPDATE`, never by editing code.
 - EL derives `Attribute`, `Asset Group`, and `Main Asset` through `_apply_tag_dictionary_first()` with mechanical fallback where required.
 - Approval toggles must not bypass the derived-field pipeline. Persisted JSON and `sdi_dataset_EL` must remain classification-complete after approval changes.
 - Keep tag normalization case-insensitive and process-aware.

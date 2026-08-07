@@ -815,14 +815,6 @@ ASSET_DICTIONARY = {
         "asset_type": "ME",
         "type": "ME"
     },
-    "T-|EL": {
-        "attribute_set": "Electrical",
-        "asset_group": "Interior Distribution Transformers",
-        "main_asset": "Emergency Lighting and Power Systems",
-        "description": "Transformer",
-        "asset_type": "EL",
-        "type": "EL"
-    },
     "T-|ME": {
         "attribute_set": "Receiver",
         "asset_group": "Lab Air Compressor Receiver",
@@ -847,11 +839,35 @@ ASSET_DICTIONARY = {
         "asset_type": "ME",
         "type": "ME"
     },
+    "TX-MAIN|EL": {
+        "attribute_set": "Electrical",
+        "asset_group": "Main Transformers",
+        "main_asset": "Electrical Service and Distribution",
+        "description": "Main Transformer",
+        "asset_type": "EL",
+        "type": "EL"
+    },
     "TX|EL": {
         "attribute_set": "Electrical",
         "asset_group": "Interior Distribution Transformers",
         "main_asset": "Electrical Service and Distribution",
         "description": "Transformer",
+        "asset_type": "EL",
+        "type": "EL"
+    },
+    "T|EL": {
+        "attribute_set": "Electrical",
+        "asset_group": "Interior Distribution Transformers",
+        "main_asset": "Emergency Lighting and Power Systems",
+        "description": "Transformer",
+        "asset_type": "EL",
+        "type": "EL"
+    },
+    "UN-|EL": {
+        "attribute_set": "FireAlarmPanel",
+        "asset_group": "Fire Alarm Annunciator Panels",
+        "main_asset": "Fire Alarm and Detection Systems",
+        "description": "SIMPLEX",
         "asset_type": "EL",
         "type": "EL"
     },
