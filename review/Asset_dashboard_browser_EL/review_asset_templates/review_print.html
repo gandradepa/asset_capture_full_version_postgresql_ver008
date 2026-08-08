@@ -285,6 +285,8 @@
                     <div class="k">Model</div><div class="v {{ 'empty' if not data.get('Model') }}">{{ data.get('Model') or '—' }}</div>
                     <div class="k">Serial Number</div><div class="v {{ 'empty' if not data.get('Serial Number') }}">{{ data.get('Serial Number') or '—' }}</div>
                     <div class="k">Year</div><div class="v {{ 'empty' if not data.get('Year') }}">{{ data.get('Year') or '—' }}</div>
+                    {% set capacity_text = (((data.get('Capacity') or '') ~ ' ' ~ (data.get('Capacity (UoM)') or ''))|trim) %}
+                    <div class="k">Capacity</div><div class="v {{ 'empty' if not capacity_text }}">{{ capacity_text or '—' }}</div>
                 </div>
             </div>
             {% else %}

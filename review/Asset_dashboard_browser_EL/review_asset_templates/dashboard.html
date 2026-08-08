@@ -3186,6 +3186,7 @@
             var colNotes = 2;
             var colBuilding = 3;
             var colTag = 6;        // UBC Asset Tag
+            var colSupplyFrom = 7;
             var colAmperage = 8;
             var colVolts = 9;
             var colLocation = 10;
@@ -3194,6 +3195,11 @@
             var colAction = 19;
             var colCapturedBy = 20;
             var distributionHiddenColumns = [colAmperage, colVolts, colLocation];
+            // General "Electrical Assets" view drops the feeder/electrical columns
+            // (2026-08-07): headers stay in the DOM so indices and saved filters
+            // don't shift; the columns are hidden but remain searchable.
+            var generalHiddenColumns = [colSupplyFrom, colAmperage, colVolts, colLocation];
+            var hiddenColumns = isDistributionDashboard ? distributionHiddenColumns : generalHiddenColumns;
             var tableStateVersion = 'capture-notes-v1';
 
             $.fn.dataTable.ext.search.push(function (settings, data, dataIndex) {
@@ -3242,12 +3248,9 @@
 
                 var columnDefs = [
                     { orderable: false, targets: [colApproved, colAction] },
-                    { targets: colCapturedBy, visible: false, searchable: true }
+                    { targets: colCapturedBy, visible: false, searchable: true },
+                    { targets: hiddenColumns, visible: false, searchable: true }
                 ];
-
-                if (isDistributionDashboard) {
-                    columnDefs.push({ targets: distributionHiddenColumns, visible: false, searchable: true });
-                }
 
                 var table = $('#' + tableId).DataTable({
                     pageLength: 15,
@@ -3265,23 +3268,20 @@
                         if (!data || data.reviewDashboardStateVersion !== tableStateVersion) return false;
                         if (!data.columns || data.columns.length !== expectedColumns) return false;
                         if (!data.order || data.order.length === 0) { data.order = [[colCaptureDate, 'desc']]; }  // default sort: Capture Date (newest first)
-                        if (!isDistributionDashboard || !data || !data.columns) return;
-                        distributionHiddenColumns.forEach(function (idx) {
+                        hiddenColumns.forEach(function (idx) {
                             if (data.columns[idx]) data.columns[idx].visible = false;
                         });
                     },
                 });
 
-                if (isDistributionDashboard) {
-                    distributionHiddenColumns.forEach(function (idx) {
-                        table.column(idx).visible(false, false);
-                    });
-                    table.columns.adjust();
-                    // Responsive is a CDN-loaded extension; if it failed to load, recalc is
-                    // undefined. Never let it abort init or drop the stored table instance.
-                    if (table.responsive && typeof table.responsive.recalc === 'function') {
-                        table.responsive.recalc();
-                    }
+                hiddenColumns.forEach(function (idx) {
+                    table.column(idx).visible(false, false);
+                });
+                table.columns.adjust();
+                // Responsive is a CDN-loaded extension; if it failed to load, recalc is
+                // undefined. Never let it abort init or drop the stored table instance.
+                if (table.responsive && typeof table.responsive.recalc === 'function') {
+                    table.responsive.recalc();
                 }
 
                 var $building = $(buildingSelector);

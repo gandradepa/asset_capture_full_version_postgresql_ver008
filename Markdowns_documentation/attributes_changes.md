@@ -2,6 +2,20 @@
 
 Current documentation refresh: 2026-08-07.
 
+## 2026-08-07 (follow-up): EL General Capacity field + General listing column drop
+
+### Summary
+
+Two follow-ups to the EL General nameplate form shipped earlier the same day. (1) The General review form's Identity card gains an optional `Capacity` + `Capacity (UoM)` pair (bare value, unit as printed — no fixed code list unlike `AMP`/`VLT`), captured by AI from the `-0` Asset Plate for all EL assets, stored for General rows only, and exported through SDI packaging to the Planon template columns `Capacity` (CH) / `Capacity UoM` (CI). Capacity is deliberately **excluded** from review completeness scoring, the hover checklist, and the traffic light. (2) The General "Review Electrical Assets" listing (`/review-all`) now hides the Supply From, Amperage Rating, Volts, and Location columns (DataTables `visible:false, searchable:true`, same mechanism the Distribution listing already used for Amperage/Volts/Location); the Distribution listing and the dashboard XLSX export are unchanged.
+
+### Scope
+
+- **DB:** owner-run migration `scripts/migrations/2026-08-07_el_capacity_columns.sql` adds `Capacity`, `Capacity (UoM)` (`TEXT`) to `sdi_dataset_EL`, `sdi_print_out`, and `sdi_print_out_arch` (packaging INSERTs every `PRINT_OUT_COLS` column). `_ensure_package_amperage_columns` raises with the migration name if a package table misses them on PostgreSQL.
+- **Review app:** `EL_CAPACITY_FIELDS` constant (NOT part of `EL_NAMEPLATE_FIELDS` — scoring unchanged); DB sync writes the pair for General rows, `''` for Distribution; `keep_blank` additions; General Identity card input pair (modeled on the Distribution Power Rating pair); review sheet Nameplate section shows Capacity as value+UoM joined.
+- **AI extraction:** `Capacity`/`Capacity (UoM)` added to `STRUCTURED_FIELDS`, both schema families, and the API-side `Config.EL_NAMEPLATE_FIELDS` (inherits the retry/fallback-gate exclusions, legacy raw-copy, and non-blank-only confidence projection). `_normalize_el_capacity_pair` splits a combined "75 kVA" reading into value+unit; no unit whitelist. **No rule-version bump** — existing JSONs are not re-extracted.
+- **SDI\Planon:** pair added to `PACKAGE_ONLY_COLS`; `ATTRIBUTE_SETS.py` lists `Capacity`/`Capacity UoM` under `Electrical` so the attribute-set filter keeps them for EL rows (the file mirrors Planon's configuration). The punctuation-insensitive template header match lands `Capacity (UoM)` in `Capacity UoM` with no rename entry. No UoM default-fill at export.
+- **Listing:** `generalHiddenColumns = [Supply From (7), Amperage Rating (8), Volts (9), Location (10)]`; view-selected via `hiddenColumns` alongside the existing `distributionHiddenColumns` (8/9/10).
+
 ## 2026-08-07: EL General nameplate review form (ME-style) + Planon nameplate flow
 
 ### Summary

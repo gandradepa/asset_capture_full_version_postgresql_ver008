@@ -62,3 +62,38 @@ Canonical details live in `Markdowns_documentation/rules/review_apps.rules.md`
 → "EL Review Form Variants (2026-08-07)", `rules/sdi_process.rules.md` (Serial
 rename), `special_processes/04_database_topography.md` (columns), and
 `attributes_changes.md` (changelog). CLAUDE.md carries the summary bullet.
+
+## Addendum (2026-08-07, same-day follow-up): Capacity pair + General listing columns
+
+User-approved decisions: Capacity takes the **full Planon path**; Capacity is
+**optional** (never scored).
+
+- **Capacity + Capacity (UoM)** join the General Identity card as a dual-grid
+  form-floating pair (modeled on the Distribution Power Rating pair). Bare
+  value + unit as printed; NO unit whitelist (kVA, kW, HP, A, BTU, ...) and no
+  hardcoded UoM code, unlike AMP/VLT.
+- **Storage:** migration `2026-08-07_el_capacity_columns.sql` adds both TEXT
+  columns to `sdi_dataset_EL` AND `sdi_print_out` / `sdi_print_out_arch`
+  (packaging INSERTs every PRINT_OUT_COLS column). General rows only;
+  Distribution rows blank. `_ensure_package_amperage_columns` raises with the
+  migration name when a package table misses them on PostgreSQL.
+- **Scoring isolation:** the review app keeps the pair in `EL_CAPACITY_FIELDS`,
+  deliberately OUT of `EL_NAMEPLATE_FIELDS` / scoring / checklist / traffic
+  light. The API-side `Config.EL_NAMEPLATE_FIELDS` DOES include the pair so it
+  inherits the retry/fallback-gate exclusions, legacy raw-copy, and
+  non-blank-only confidence projection (still no rule-version bump).
+- **Extraction:** `_normalize_el_capacity_pair` splits a combined "75 kVA"
+  reading into value + unit; a bare unit with no value is dropped. Prompt rules
+  (standard + legacy): EL-0 only, number in `Capacity`, unit verbatim in
+  `Capacity (UoM)`, never derived from voltage strings or the winding table.
+- **SDI/Planon:** pair added to `PACKAGE_ONLY_COLS`; `ATTRIBUTE_SETS.py` lists
+  `Capacity` and `Capacity UoM` under `Electrical` (the file mirrors Planon's
+  configuration — without this the attribute-set filter clears the values for
+  EL rows). The punctuation-insensitive template header match lands
+  `Capacity (UoM)` in Planon column `Capacity UoM` (CI) with no rename entry.
+- **General listing (`/review-all`) column drop:** hides Supply From (7),
+  Amperage Rating (8), Volts (9), Location (10) via the same three-site
+  DataTables mechanism the Distribution view already used
+  (`hiddenColumns = isDistributionDashboard ? distributionHiddenColumns :
+  generalHiddenColumns`). Headers stay in the DOM; the dashboard XLSX export
+  keeps every column.

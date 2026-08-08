@@ -473,6 +473,11 @@ EL_SLD_DEPENDENT_FIELDS = ("Fed From Amperage Rating", "Fed From Amperage Rating
 # form variant (2026-08-07). Column names on sdi_dataset_EL match these JSON
 # keys; Distribution rows keep them blank.
 EL_NAMEPLATE_FIELDS = ("Manufacturer", "Model", "Serial Number", "Year")
+# Optional General-form fields (2026-08-07 Capacity follow-up): stored and
+# packaged like the nameplate fields, but deliberately excluded from
+# EL_NAMEPLATE_FIELDS so completeness scoring, the hover checklist, and the
+# traffic light are unaffected.
+EL_CAPACITY_FIELDS = ("Capacity", "Capacity (UoM)")
 EL_REQUIRED_ALL_COLUMNS = tuple(
     dict.fromkeys(
         ("QR Code", "Asset Group", "Building", *EL_REQUIRED_COMMON_FIELDS)
@@ -2032,7 +2037,8 @@ def _db_upsert_el_row(conn, row: dict):
         "QR Code", "Building", "Description", "UBC Asset Tag", "Equipment ID", "Equipment Type", "Branch Panel", "Amperage Rating", "Amperage Rating (UoM)", "Ampere",
         "Power Type", "Power Rating", "Power Rating (UoM)", "Supply From", "Fed From Equipment ID", "Fed From Amperage Rating", "Fed From Amperage Rating (UoM)", "Volts", "Voltage Rating", "Voltage Rating (UoM)", "Location", "Asset Group", "Attribute", "Approved", "Flagged",
         "Avg_ai_conf", "Main Asset",
-        "Manufacturer", "Model", "Serial Number", "Year"
+        "Manufacturer", "Model", "Serial Number", "Year",
+        "Capacity", "Capacity (UoM)"
     ]
     existing = _db_existing_cols(conn)
     if not existing:
@@ -2190,6 +2196,8 @@ def _sync_db_from_structured(qr: str, building: str, sd: dict, asset_type: str =
             "Model": (sd.get("Model") or "").strip() if is_general else "",
             "Serial Number": (sd.get("Serial Number") or "").strip() if is_general else "",
             "Year": (sd.get("Year") or "").strip() if is_general else "",
+            "Capacity": (sd.get("Capacity") or "").strip() if is_general else "",
+            "Capacity (UoM)": (sd.get("Capacity (UoM)") or "").strip() if is_general else "",
         }
         _db_upsert_el_row(conn, row)
         _ensure_el_power_type_column(conn)
@@ -3717,7 +3725,7 @@ def _build_el_sheet_context(doc_id):
         "UBC Asset Tag", "Equipment ID", "Equipment Type", "Branch Panel", "Ampere", "Supply From", "Volts", "Location",
         "Power Type", "Power Rating", "Power Rating (UoM)", "Fed From Equipment ID", "Fed From Amperage Rating",
         "Fed From Amperage Rating (UoM)", "Attribute", "Approved", "Asset Group", "Description", "Amperage Rating (UoM)",
-        "Manufacturer", "Model", "Serial Number", "Year"
+        "Manufacturer", "Model", "Serial Number", "Year", "Capacity", "Capacity (UoM)"
     ]
     for k in keep_blank:
         data.setdefault(k, '')
@@ -3897,7 +3905,7 @@ def review(doc_id):
     keep_blank = [
         "UBC Asset Tag", "Equipment ID", "Equipment Type", "Branch Panel", "Ampere", "Supply From", "Volts", "Location",
         "Power Type", "Power Rating", "Power Rating (UoM)", "Fed From Equipment ID", "Fed From Amperage Rating", "Fed From Amperage Rating (UoM)", "Attribute", "Approved", "Asset Group", "Description", "Amperage Rating (UoM)",
-        "Manufacturer", "Model", "Serial Number", "Year"
+        "Manufacturer", "Model", "Serial Number", "Year", "Capacity", "Capacity (UoM)"
     ]
     for k in keep_blank:
         data.setdefault(k, '')
@@ -4271,7 +4279,7 @@ def save_review(doc_id):
         keep_blank = [
             "UBC Asset Tag", "Equipment ID", "Equipment Type", "Branch Panel", "Ampere", "Supply From", "Volts", "Location",
             "Power Type", "Power Rating", "Power Rating (UoM)", "Fed From Equipment ID", "Fed From Amperage Rating", "Fed From Amperage Rating (UoM)", "Attribute", "Approved", "Asset Group", "Description", "Amperage Rating (UoM)", "Main Asset",
-            "Manufacturer", "Model", "Serial Number", "Year"
+            "Manufacturer", "Model", "Serial Number", "Year", "Capacity", "Capacity (UoM)"
         ]
         for k in keep_blank:
             structured.setdefault(k, '')

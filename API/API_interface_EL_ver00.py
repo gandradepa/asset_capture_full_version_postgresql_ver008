@@ -330,8 +330,9 @@ class Config:
     )
 
     # --- Fields ---
-    STRUCTURED_FIELDS = ["UBC Asset Tag", "Branch Panel", "Ampere", "Power Rating", "Power Rating (UoM)", "Supply From", "Volts", "Location", "Manufacturer", "Model", "Serial Number", "Year"]
-    # ME-style nameplate fields (2026-08-07), read from the EL-0 Asset Plate for
+    STRUCTURED_FIELDS = ["UBC Asset Tag", "Branch Panel", "Ampere", "Power Rating", "Power Rating (UoM)", "Supply From", "Volts", "Location", "Manufacturer", "Model", "Serial Number", "Year", "Capacity", "Capacity (UoM)"]
+    # ME-style nameplate fields (2026-08-07; Capacity pair added the same day),
+    # read from the EL-0 Asset Plate for
     # ALL EL assets: General vs Distribution cannot be classified before
     # extraction (every tag-derivable group is a Distribution group), so the
     # values are always stored in the JSON and only the General review form /
@@ -339,7 +340,7 @@ class Config:
     # completeness math, retry/fallback gates, and flag thresholds are
     # unchanged, and their confidences are projected only when non-blank so
     # existing JSONs are never mass-flagged stale (no rule-version bump).
-    EL_NAMEPLATE_FIELDS = ("Manufacturer", "Model", "Serial Number", "Year")
+    EL_NAMEPLATE_FIELDS = ("Manufacturer", "Model", "Serial Number", "Year", "Capacity", "Capacity (UoM)")
     EL_TRANSFORMER_ASSET_GROUP = "Interior Distribution Transformers"
     EL_UNKNOWN_ASSET_GROUP = "Unknown"
     EL_BASE_SCORING_FIELDS = ("UBC Asset Tag", "Volts")
@@ -476,6 +477,8 @@ class ELConfidenceScores(BaseModel):
     model: int = Field(default=0, alias="Model")
     serial_number: int = Field(default=0, alias="Serial Number")
     year: int = Field(default=0, alias="Year")
+    capacity: int = Field(default=0, alias="Capacity")
+    capacity_uom: int = Field(default=0, alias="Capacity (UoM)")
 
 
 class ELStructuredExtraction(BaseModel):
@@ -497,6 +500,8 @@ class ELStructuredExtraction(BaseModel):
     model: str = Field(default="", alias="Model")
     serial_number: str = Field(default="", alias="Serial Number")
     year: str = Field(default="", alias="Year")
+    capacity: str = Field(default="", alias="Capacity")
+    capacity_uom: str = Field(default="", alias="Capacity (UoM)")
     confidence_scores: ELConfidenceScores = Field(
         default_factory=ELConfidenceScores,
         alias="Confidence Scores",
@@ -585,6 +590,7 @@ Rules:
 - Nameplate Text vs Label Text: keep them strictly separate. `Label Text` is the BLACK LAMACOID plate(s) only; manufacturer-nameplate text must NEVER be merged into it. Do not copy nameplate figures into Volts or Ampere -- transcribe them into Nameplate Text and let post-processing decide.
 - Source precedence: EL-1 (lamacoid) is the PRIMARY source for identity and for any printed Volts/Ampere; EL-0 (Asset Plate, optional) is SECONDARY and supplies manufacturer-nameplate technical specs only. Never use the blue QR sticker text for any field.
 - Manufacturer / Model / Serial Number / Year: read ONLY from the EL-0 manufacturer nameplate (the same plate transcribed into Nameplate Text). Manufacturer is the brand (e.g., `ABB`, `WESTINGHOUSE`, `SQUARE D`); Model is the catalog/type designation; Serial Number is the printed serial exactly as shown; Year is the 4-digit year of manufacture only. Leave all four blank when EL-0 is missing or shows no manufacturer plate. Never source them from the lamacoid or the blue QR sticker.
+- Capacity: an explicitly printed capacity/output rating on the EL-0 manufacturer nameplate only (e.g., `75 KVA`, `15 KW`, `5 HP`). Return the number only in `Capacity` and the unit exactly as printed in `Capacity (UoM)`. Leave both blank when no capacity rating is printed. Never build Capacity from voltage strings or the winding-current table.
 """
 
 # Fields scored for legacy completeness / manual-review thresholds. Separate
@@ -700,6 +706,8 @@ class ELLegacyConfidenceScores(BaseModel):
     model: int = Field(default=0, alias="Model")
     serial_number: int = Field(default=0, alias="Serial Number")
     year: int = Field(default=0, alias="Year")
+    capacity: int = Field(default=0, alias="Capacity")
+    capacity_uom: int = Field(default=0, alias="Capacity (UoM)")
 
 
 class ELLegacyStructuredExtraction(BaseModel):
@@ -727,13 +735,15 @@ class ELLegacyStructuredExtraction(BaseModel):
     model: str = Field(default="", alias="Model")
     serial_number: str = Field(default="", alias="Serial Number")
     year: str = Field(default="", alias="Year")
+    capacity: str = Field(default="", alias="Capacity")
+    capacity_uom: str = Field(default="", alias="Capacity (UoM)")
     confidence_scores: ELLegacyConfidenceScores = Field(
         default_factory=ELLegacyConfidenceScores,
         alias="Confidence Scores",
         description="Per-field confidence 0-100.",
     )
 
-    @field_validator("label_text", "ubc_asset_tag", "supply_from", "volts", "ampere", "nameplate_text", "manufacturer", "model", "serial_number", "year", mode="before")
+    @field_validator("label_text", "ubc_asset_tag", "supply_from", "volts", "ampere", "nameplate_text", "manufacturer", "model", "serial_number", "year", "capacity", "capacity_uom", mode="before")
     @classmethod
     def _coerce_to_string(cls, value: Any) -> str:
         if value is None:
@@ -1211,6 +1221,30 @@ def _clean_raw_manufacturer(raw: str) -> str:
     return s[:80]
 
 
+_EL_CAPACITY_SPLIT_RE = re.compile(r"^([0-9]+(?:[.,][0-9]+)?)\s*([A-Za-z/%°]+(?:[·.\-][A-Za-z]+)*)$")
+
+
+def _normalize_el_capacity_pair(value: str, uom: str) -> tuple[str, str]:
+    """Normalize the optional Capacity pair: bare value, unit in the UoM slot.
+
+    Capacity units vary by equipment (kVA, kW, HP, A, BTU, ...) so there is
+    deliberately NO unit whitelist -- the unit is kept as printed. When the
+    model returns a combined reading ("75 kVA") and the UoM slot is blank,
+    the trailing unit token is split off the value per the EL rating storage
+    convention (bare value + unit in the "(UoM)" column). A unit with no
+    value is dropped: a bare unit is not a capacity reading.
+    """
+    value = str(value or "").strip()
+    uom = str(uom or "").strip()
+    if value and not uom:
+        match = _EL_CAPACITY_SPLIT_RE.match(value)
+        if match:
+            value, uom = match.group(1), match.group(2)
+    if not value:
+        uom = ""
+    return value, uom
+
+
 def _normalize_el_nameplate_fields(candidate: Dict[str, Any], conf: Dict[str, Any]) -> None:
     """Normalize the EL-0 nameplate fields in place (2026-08-07).
 
@@ -1218,7 +1252,8 @@ def _normalize_el_nameplate_fields(candidate: Dict[str, Any], conf: Dict[str, An
     fallback for Manufacturer, and the date-shaped-serial rejection (incl.
     upside-down misreads) used by the ME/BF serial gates. Zeroes the matching
     confidence entry whenever a value normalizes to blank, following the
-    Ampere/Power Rating pattern.
+    Ampere/Power Rating pattern. Also handles the optional Capacity pair
+    (same-day follow-up).
     """
     raw_year = str(candidate.get("Year", "") or "")
     year = normalize_year(raw_year)
@@ -1241,17 +1276,24 @@ def _normalize_el_nameplate_fields(candidate: Dict[str, Any], conf: Dict[str, An
     raw_manufacturer = str(candidate.get("Manufacturer", "") or "")
     manufacturer = normalize_manufacturer(raw_manufacturer) or _clean_raw_manufacturer(raw_manufacturer)
     model = normalize_model(str(candidate.get("Model", "") or ""))
+    capacity, capacity_uom = _normalize_el_capacity_pair(
+        candidate.get("Capacity", ""), candidate.get("Capacity (UoM)", "")
+    )
 
     candidate["Manufacturer"] = manufacturer
     candidate["Model"] = model
     candidate["Serial Number"] = serial
     candidate["Year"] = year
+    candidate["Capacity"] = capacity
+    candidate["Capacity (UoM)"] = capacity_uom
     if isinstance(conf, dict):
         for field, value in (
             ("Manufacturer", manufacturer),
             ("Model", model),
             ("Serial Number", serial),
             ("Year", year),
+            ("Capacity", capacity),
+            ("Capacity (UoM)", capacity_uom),
         ):
             if not value:
                 conf[field] = 0
@@ -2215,6 +2257,7 @@ Rules:
 - Manufacturer: the brand name only (e.g., `SQUARE D`, `EATON`, `SIEMENS`), not slogans or addresses.
 - Serial Number: copy the printed serial exactly as shown; leave blank when only a date is printed where a serial would be.
 - Year: the 4-digit year of manufacture only (e.g., from `MFG DATE` or a date code). Never the installation or inspection date.
+- Capacity: an explicitly printed capacity/output rating on the EL-0 Asset Plate only (e.g., `75 kVA`, `15 kW`, `5 HP`, `100 A`). Return the number only in `Capacity` and the unit exactly as printed in `Capacity (UoM)`. Leave both blank when no capacity rating is printed. Never derive Capacity from voltage strings like `600V` or `208Y/120V`, and never reuse the transformer Power Rating rules for it.
 """
                         content = self._build_multimodal_content(prompt, ordered, ocr_context)
 

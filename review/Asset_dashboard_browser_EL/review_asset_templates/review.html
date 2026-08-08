@@ -1324,6 +1324,23 @@
                         </div>
                     </div>
 
+                    {# Optional capacity rating pair (2026-08-07): bare value +
+                       unit as printed, mirroring the Distribution Power Rating
+                       pair. Not part of completeness scoring. #}
+                    <div class="identity-dual-grid">
+                        <div class="form-floating">
+                            <input type="text" class="form-control" name="Capacity" id="capacity" data-lock-editable="true"
+                                value="{{ data.get('Capacity','') }}" placeholder="Capacity">
+                            <label for="capacity">Capacity</label>
+                        </div>
+
+                        <div class="form-floating">
+                            <input type="text" class="form-control" name="Capacity (UoM)" id="capacity_uom" data-lock-editable="true"
+                                value="{{ data.get('Capacity (UoM)','') }}" placeholder="UoM">
+                            <label for="capacity_uom">UoM</label>
+                        </div>
+                    </div>
+
                     {{ installation_date_field(installation_date) }}
                 </div>
 
