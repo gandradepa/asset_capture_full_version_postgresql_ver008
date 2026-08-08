@@ -469,6 +469,10 @@ EL_REQUIRED_GROUP_FIELDS["Main Transformers"] = EL_REQUIRED_GROUP_FIELDS[
 # of Amperage Rating).
 EL_TRANSFORMER_ASSET_GROUPS = ("Interior Distribution Transformers", "Main Transformers")
 EL_SLD_DEPENDENT_FIELDS = ("Fed From Amperage Rating", "Fed From Amperage Rating (UoM)")
+# ME-style nameplate fields captured by the General (non-distribution) review
+# form variant (2026-08-07). Column names on sdi_dataset_EL match these JSON
+# keys; Distribution rows keep them blank.
+EL_NAMEPLATE_FIELDS = ("Manufacturer", "Model", "Serial Number", "Year")
 EL_REQUIRED_ALL_COLUMNS = tuple(
     dict.fromkeys(
         ("QR Code", "Asset Group", "Building", *EL_REQUIRED_COMMON_FIELDS)
@@ -477,6 +481,7 @@ EL_REQUIRED_ALL_COLUMNS = tuple(
             for fields in EL_REQUIRED_GROUP_FIELDS.values()
             for field in fields
         )
+        + EL_NAMEPLATE_FIELDS
     )
 )
 
@@ -1611,6 +1616,7 @@ def _get_el_power_rating_pair(sd: dict) -> tuple[str, str]:
 EL_REVIEW_BASE_SCORING_FIELDS = ("UBC Asset Tag", "Volts")
 EL_REVIEW_NON_TRANSFORMER_SCORING_FIELDS = EL_REVIEW_BASE_SCORING_FIELDS + ("Ampere", "Supply From")
 EL_REVIEW_TRANSFORMER_SCORING_FIELDS = EL_REVIEW_BASE_SCORING_FIELDS + ("Power Rating", "Power Rating (UoM)")
+EL_REVIEW_GENERAL_SCORING_FIELDS = ("UBC Asset Tag",) + EL_NAMEPLATE_FIELDS
 
 def _el_review_scoring_fields(sd: dict) -> tuple[str, ...]:
     tag = str((sd or {}).get("UBC Asset Tag") or (sd or {}).get("Branch Panel") or "").strip()
@@ -1618,6 +1624,11 @@ def _el_review_scoring_fields(sd: dict) -> tuple[str, ...]:
     # A row may carry its dictionary-assigned group ('Main Transformers') even
     # when the tag heuristic above lands on the interior-distribution default.
     stored_group = str((sd or {}).get("Asset Group") or "").strip()
+    # The stored group decides General vs Distribution: a reviewer-assigned
+    # General group on a PNL-style tag must score against the nameplate set,
+    # not the tag-derived Distribution default.
+    if _el_form_variant(stored_group or asset_group) == "general":
+        return EL_REVIEW_GENERAL_SCORING_FIELDS
     if asset_group in EL_TRANSFORMER_ASSET_GROUPS or stored_group in EL_TRANSFORMER_ASSET_GROUPS:
         return EL_REVIEW_TRANSFORMER_SCORING_FIELDS
     return EL_REVIEW_NON_TRANSFORMER_SCORING_FIELDS
@@ -2020,7 +2031,8 @@ def _db_upsert_el_row(conn, row: dict):
     all_cols = [
         "QR Code", "Building", "Description", "UBC Asset Tag", "Equipment ID", "Equipment Type", "Branch Panel", "Amperage Rating", "Amperage Rating (UoM)", "Ampere",
         "Power Type", "Power Rating", "Power Rating (UoM)", "Supply From", "Fed From Equipment ID", "Fed From Amperage Rating", "Fed From Amperage Rating (UoM)", "Volts", "Voltage Rating", "Voltage Rating (UoM)", "Location", "Asset Group", "Attribute", "Approved", "Flagged",
-        "Avg_ai_conf", "Main Asset"
+        "Avg_ai_conf", "Main Asset",
+        "Manufacturer", "Model", "Serial Number", "Year"
     ]
     existing = _db_existing_cols(conn)
     if not existing:
@@ -2141,6 +2153,11 @@ def _sync_db_from_structured(qr: str, building: str, sd: dict, asset_type: str =
         _ensure_el_fed_from_amperage_column(conn)
         fed_from_amperage_value = _get_el_fed_from_amperage_value(conn, building, fed_from_equipment_id_value or supply_from_value)
         fed_from_amperage_uom = _get_el_fed_from_amperage_uom_value(fed_from_amperage_value)
+        # Nameplate columns are populated only for General (non-distribution)
+        # rows; Distribution rows are kept blank by contract. The JSON keeps
+        # the values either way, so reclassifying back to General re-syncs
+        # them without loss.
+        is_general = _el_form_variant(asset_group_val) == "general"
         row = {
             "QR Code": qr,
             "Building": building,
@@ -2169,6 +2186,10 @@ def _sync_db_from_structured(qr: str, building: str, sd: dict, asset_type: str =
             "Flagged": flagged_db,
             "Avg_ai_conf": _normalize_avg_ai_conf(avg_ai_conf)[0],
             "Main Asset": (sd.get("Main Asset") or "").strip(),
+            "Manufacturer": (sd.get("Manufacturer") or "").strip() if is_general else "",
+            "Model": (sd.get("Model") or "").strip() if is_general else "",
+            "Serial Number": (sd.get("Serial Number") or "").strip() if is_general else "",
+            "Year": (sd.get("Year") or "").strip() if is_general else "",
         }
         _db_upsert_el_row(conn, row)
         _ensure_el_power_type_column(conn)
@@ -2672,12 +2693,21 @@ def _fetch_el_required_field_rows(qr_codes: list[str]) -> dict[str, dict]:
 
     rows_by_qr = {}
     chunk_size = 500
-    select_cols = ", ".join(_quote(col) for col in EL_REQUIRED_ALL_COLUMNS)
 
     try:
         with qrdb.get_connection(sqlite_path=DB_PATH) as conn:
             conn.row_factory = sqlite3.Row
             cur = conn.cursor()
+            # Deploy-order tolerance (same contract as _db_upsert_el_row): on a
+            # DB that predates the 2026-08-07 nameplate migration the missing
+            # columns are dropped from the SELECT instead of failing the whole
+            # batch -- only their checklist entries read as unfilled.
+            existing = set(_db_existing_cols(conn))
+            select_fields = (
+                [col for col in EL_REQUIRED_ALL_COLUMNS if col in existing]
+                if existing else list(EL_REQUIRED_ALL_COLUMNS)
+            )
+            select_cols = ", ".join(_quote(col) for col in select_fields)
             for idx in range(0, len(cleaned_qrs), chunk_size):
                 chunk = cleaned_qrs[idx:idx + chunk_size]
                 placeholders = ",".join("?" for _ in chunk)
@@ -2722,6 +2752,10 @@ def _build_el_required_fields_payload(sdi_row: Optional[dict], sld_available: bo
     fields = list(EL_REQUIRED_COMMON_FIELDS)
     if asset_group in EL_REQUIRED_GROUP_FIELDS:
         fields.extend(EL_REQUIRED_GROUP_FIELDS[asset_group])
+    elif _el_form_variant(asset_group) == "general":
+        # General (non-distribution) assets are checked against the nameplate
+        # field set captured by the General review-form variant (2026-08-07).
+        fields.extend(EL_NAMEPLATE_FIELDS)
     if not sld_available:
         fields = [field for field in fields if field not in EL_SLD_DEPENDENT_FIELDS]
 
@@ -2881,6 +2915,21 @@ def get_distribution_asset_groups() -> frozenset:
         _dist_groups_cache["groups"] = groups
         _dist_groups_cache["expires"] = now + _DIST_GROUPS_CACHE_TTL_SECONDS
     return groups
+
+
+def _el_form_variant(asset_group) -> str:
+    """Review-form variant for an asset's resolved Asset Group (2026-08-07).
+
+    'general' renders the ME-style nameplate form; 'distribution' renders the
+    electrical tech-card form. Blank/unknown groups default to 'distribution'
+    (the pre-split behavior) so a mis-defaulted asset never loses fields --
+    the tag heuristics always land on a Distribution group anyway
+    (ASSET_GROUP_DEFAULT = 'Panels').
+    """
+    group = str(asset_group or "").strip()
+    if group and group not in get_distribution_asset_groups():
+        return "general"
+    return "distribution"
 
 
 def _parse_filter_values(raw):
@@ -3667,7 +3716,8 @@ def _build_el_sheet_context(doc_id):
     keep_blank = [
         "UBC Asset Tag", "Equipment ID", "Equipment Type", "Branch Panel", "Ampere", "Supply From", "Volts", "Location",
         "Power Type", "Power Rating", "Power Rating (UoM)", "Fed From Equipment ID", "Fed From Amperage Rating",
-        "Fed From Amperage Rating (UoM)", "Attribute", "Approved", "Asset Group", "Description", "Amperage Rating (UoM)"
+        "Fed From Amperage Rating (UoM)", "Attribute", "Approved", "Asset Group", "Description", "Amperage Rating (UoM)",
+        "Manufacturer", "Model", "Serial Number", "Year"
     ]
     for k in keep_blank:
         data.setdefault(k, '')
@@ -3721,6 +3771,7 @@ def _build_el_sheet_context(doc_id):
         building_name=_el_building_name(building),
         space=space,
         avg_ai_conf_display=avg_ai_conf_display,
+        form_variant=_el_form_variant(data.get("Asset Group")),
         data=data,
         capture_info=capture_info,
         capture_notes=get_qr_capture_notes().get(qr, ""),
@@ -3845,7 +3896,8 @@ def review(doc_id):
     data["Amperage Rating (UoM)"] = "AMP" if amperage_value else ""
     keep_blank = [
         "UBC Asset Tag", "Equipment ID", "Equipment Type", "Branch Panel", "Ampere", "Supply From", "Volts", "Location",
-        "Power Type", "Power Rating", "Power Rating (UoM)", "Fed From Equipment ID", "Fed From Amperage Rating", "Fed From Amperage Rating (UoM)", "Attribute", "Approved", "Asset Group", "Description", "Amperage Rating (UoM)"
+        "Power Type", "Power Rating", "Power Rating (UoM)", "Fed From Equipment ID", "Fed From Amperage Rating", "Fed From Amperage Rating (UoM)", "Attribute", "Approved", "Asset Group", "Description", "Amperage Rating (UoM)",
+        "Manufacturer", "Model", "Serial Number", "Year"
     ]
     for k in keep_blank:
         data.setdefault(k, '')
@@ -3883,6 +3935,7 @@ def review(doc_id):
     _apply_qr_location_fallback(data, qr)
 
     asset_group = data.get("Asset Group")
+    form_variant = _el_form_variant(asset_group)
     tag = tag_for_group
     data["Description"] = _resolve_description(
         asset_group,
@@ -3990,6 +4043,7 @@ def review(doc_id):
         review_revision=review_revision,
         amp_rating_warning=amp_rating_warning,
         distribution_asset_groups=sorted(get_distribution_asset_groups()),
+        form_variant=form_variant,
         review_buttons=REVIEW_BUTTONS,
         review_endpoints=dict(REVIEW_ENDPOINTS_STATIC, dashboard=base_route),
     )
@@ -4216,7 +4270,8 @@ def save_review(doc_id):
         structured["Amperage Rating (UoM)"] = "AMP" if amperage_value else ""
         keep_blank = [
             "UBC Asset Tag", "Equipment ID", "Equipment Type", "Branch Panel", "Ampere", "Supply From", "Volts", "Location",
-            "Power Type", "Power Rating", "Power Rating (UoM)", "Fed From Equipment ID", "Fed From Amperage Rating", "Fed From Amperage Rating (UoM)", "Attribute", "Approved", "Asset Group", "Description", "Amperage Rating (UoM)", "Main Asset"
+            "Power Type", "Power Rating", "Power Rating (UoM)", "Fed From Equipment ID", "Fed From Amperage Rating", "Fed From Amperage Rating (UoM)", "Attribute", "Approved", "Asset Group", "Description", "Amperage Rating (UoM)", "Main Asset",
+            "Manufacturer", "Model", "Serial Number", "Year"
         ]
         for k in keep_blank:
             structured.setdefault(k, '')
@@ -4241,12 +4296,15 @@ def save_review(doc_id):
 
         skip_fields = {"Flagged", "Approved", "Description"}
         hidden_passthrough_fields = {"Amperage Rating", "Equipment ID", "Equipment Type", "Power Type", "Power Rating", "Power Rating (UoM)", "Fed From Amperage Rating", "Fed From Amperage Rating (UoM)"}
+        # form_variant is the render-time variant echo (general|distribution);
+        # nav_prev/nav_next are pagination hints. None of them are asset data,
+        # so they must never merge into structured_data.
         if merge_form_into_structured(
             structured,
             request.form,
             skip_fields=skip_fields,
             hidden_passthrough_fields=hidden_passthrough_fields,
-            ignored_form_fields={"Flagged", "action", "dashboard_query", "new_qr_code", "review_revision", "base_route", "asset_group_manual", "installation_date"},
+            ignored_form_fields={"Flagged", "action", "dashboard_query", "new_qr_code", "review_revision", "base_route", "asset_group_manual", "installation_date", "form_variant", "nav_prev", "nav_next"},
         ):
             json_data["modified"] = True
 

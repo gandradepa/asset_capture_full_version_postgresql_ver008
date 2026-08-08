@@ -894,6 +894,13 @@ def build_sdi_dataset(building_code: str = None) -> pd.DataFrame:
 
         if "UBC Asset Tag" in el.columns and "UBC Tag" not in el.columns:
             el = el.rename(columns={"UBC Asset Tag": "UBC Tag"})
+        # sdi_dataset_EL stores the General-asset serial under its JSON key
+        # "Serial Number" (2026-08-07 nameplate columns); the package/master
+        # column is "Serial" (renamed back to "Serial Number" only at Planon
+        # export). Without this rename the EL serial is silently dropped at
+        # the PRINT_OUT_COLS projection in export_to_sdi.
+        if "Serial Number" in el.columns and "Serial" not in el.columns:
+            el = el.rename(columns={"Serial Number": "Serial"})
         el = _normalize_equipment_type_column(_normalize_equipment_id_column(el))
 
         return pd.concat([me, el], ignore_index=True)

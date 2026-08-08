@@ -1,5 +1,27 @@
 {% from 'macros/review_buttons.html' import render_review_buttons %}
 
+{# Installation Date group: rendered once per page, in the General variant's
+   Identity card or the Distribution variant's identity card. A macro (with the
+   value passed explicitly -- macros don't see template context) keeps the
+   unique installation_date/installation_date_calendar/installation_date_picker
+   IDs defined in exactly one place. #}
+{% macro installation_date_field(installation_date) %}
+                    <div class="input-group installation-date-group">
+                        <div class="form-floating">
+                            <input type="text" class="form-control" id="installation_date" name="installation_date"
+                                value="{{ installation_date|default('') }}" placeholder="DD/MM/YYYY" inputmode="numeric"
+                                maxlength="10" pattern="\d{2}/\d{2}/\d{4}" data-lock-editable="true">
+                            <label>Installation Date</label>
+                        </div>
+                        <button type="button" class="btn btn-outline-secondary" id="installation_date_calendar"
+                            data-lock-editable="true" aria-label="Pick Installation Date from calendar">
+                            <i class="bi bi-calendar3" aria-hidden="true"></i>
+                        </button>
+                        <input type="date" id="installation_date_picker" class="installation-date-picker-input"
+                            tabindex="-1" aria-hidden="true" data-lock-editable="true">
+                    </div>
+{% endmacro %}
+
 <!DOCTYPE html>
 <html lang="en">
 
@@ -1145,6 +1167,7 @@
 
     <form method="POST" action="{{ url_for('main.save_review', doc_id=doc_id) }}" id="reviewForm" class="workspace-container">
         <input type="hidden" name="base_route" value="{{ base_route }}">
+        <input type="hidden" name="form_variant" value="{{ form_variant|default('distribution') }}">
 
         <input type="hidden" name="Approved" value="{{ data.get('Approved','') }}">
         <input type="hidden" name="review_revision" id="review_revision" value="{{ review_revision }}">
@@ -1268,7 +1291,46 @@
                     {% endif %}
                 </div>
 
+                {% if form_variant == 'general' %}
+                {# General (non-distribution) variant: ME-style nameplate
+                   Identity card. The shared UBC Asset Tag / Asset Group /
+                   Attribute / Main Asset card below becomes "Classification"
+                   and the electrical Technical Details section is skipped. #}
                 <div class="form-section-title">Identity</div>
+                <div class="identity-card section-surface mb-3">
+                    <div class="form-floating">
+                        <input type="text" class="form-control" name="Manufacturer" id="manufacturer" data-lock-editable="true"
+                            value="{{ data.get('Manufacturer','') }}" placeholder="Manufacturer">
+                        <label for="manufacturer">Manufacturer</label>
+                    </div>
+
+                    <div class="form-floating">
+                        <input type="text" class="form-control" name="Model" id="model" data-lock-editable="true"
+                            value="{{ data.get('Model','') }}" placeholder="Model">
+                        <label for="model">Model</label>
+                    </div>
+
+                    <div class="identity-dual-grid">
+                        <div class="form-floating">
+                            <input type="text" class="form-control" name="Serial Number" id="serial_number" data-lock-editable="true"
+                                value="{{ data.get('Serial Number','') }}" placeholder="Serial #">
+                            <label for="serial_number">Serial #</label>
+                        </div>
+
+                        <div class="form-floating">
+                            <input type="text" class="form-control" name="Year" id="year" data-lock-editable="true"
+                                value="{{ data.get('Year','') }}" placeholder="Year" inputmode="numeric" maxlength="4">
+                            <label for="year">Year</label>
+                        </div>
+                    </div>
+
+                    {{ installation_date_field(installation_date) }}
+                </div>
+
+                <div class="form-section-title">Classification</div>
+                {% else %}
+                <div class="form-section-title">Identity</div>
+                {% endif %}
                 <div class="identity-card section-surface mb-3">
                     <div class="form-floating">
                         <input type="text" class="form-control fw-bold text-primary" name="UBC Asset Tag" id="ubc_asset_tag" data-lock-editable="true"
@@ -1305,22 +1367,12 @@
                         <input type="hidden" name="Main Asset" id="main_asset" value="{{ data.get('Main Asset','') }}" readonly>
                     </div>
 
-                    <div class="input-group installation-date-group">
-                        <div class="form-floating">
-                            <input type="text" class="form-control" id="installation_date" name="installation_date"
-                                value="{{ installation_date|default('') }}" placeholder="DD/MM/YYYY" inputmode="numeric"
-                                maxlength="10" pattern="\d{2}/\d{2}/\d{4}" data-lock-editable="true">
-                            <label>Installation Date</label>
-                        </div>
-                        <button type="button" class="btn btn-outline-secondary" id="installation_date_calendar"
-                            data-lock-editable="true" aria-label="Pick Installation Date from calendar">
-                            <i class="bi bi-calendar3" aria-hidden="true"></i>
-                        </button>
-                        <input type="date" id="installation_date_picker" class="installation-date-picker-input"
-                            tabindex="-1" aria-hidden="true" data-lock-editable="true">
-                    </div>
+                    {% if form_variant != 'general' %}
+                    {{ installation_date_field(installation_date) }}
+                    {% endif %}
                 </div>
 
+                {% if form_variant != 'general' %}
                 <div class="form-section-title">Technical Details</div>
                 <div class="technical-layout mb-3">
                     <section class="tech-group section-surface">
@@ -1421,6 +1473,7 @@
                         </div>
                     </section>
                 </div>
+                {% endif %}
 
                 <div class="form-section-title">Location</div>
                 <div class="section-surface location-card mb-3">

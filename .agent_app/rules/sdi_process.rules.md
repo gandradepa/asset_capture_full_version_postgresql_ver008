@@ -1,4 +1,4 @@
-# SDI Process Rules
+﻿# SDI Process Rules
 
 Current documentation refresh: 2026-06-23.
 
@@ -21,6 +21,7 @@ The SDI Process app stages approved assets for packaging and Planon export.
 - Approved source rows are necessary but not sufficient for SDI packaging.
 - `sdi_dataset` carries ME and BF.
 - `sdi_dataset_EL` carries EL.
+- EL nameplate columns (2026-08-07): `sdi_dataset_EL` stores General-asset `Manufacturer`, `Model`, `Serial Number`, `Year` (blank on Distribution rows). `Manufacturer`/`Model`/`Year` flow into packages unchanged because they are already `MASTER_COLS` package columns; `build_sdi_dataset()` renames the EL `Serial Number` column to the package column name `Serial` (next to the `UBC Asset Tag` -> `UBC Tag` rename) — without that rename the EL serial is silently dropped at the `PRINT_OUT_COLS` projection. Export renames `Serial` back to Planon `Serial Number` as before; archive/retrieve transfer the four values via the existing `PRINT_OUT_COLS` list with no schema change.
 - Once a QR exists in `sdi_print_out` or `sdi_print_out_arch`, it is considered in the SDI process. Review sync must preserve/coerce source approval to `"1"` and review JSON approval to `"True"`; package tables do not carry their own `Approved` column.
 
 ## Unpackaged-Asset Rules

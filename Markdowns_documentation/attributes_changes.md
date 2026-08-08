@@ -1,6 +1,19 @@
 # Attribute Changes
 
-Current documentation refresh: 2026-08-04.
+Current documentation refresh: 2026-08-07.
+
+## 2026-08-07: EL General nameplate review form (ME-style) + Planon nameplate flow
+
+### Summary
+
+General "Electrical Assets" (`elec_dist_setup='N'` groups) now review through an ME-style nameplate form instead of the electrical tech-card form. `review.html` renders one of two server-selected variants via the new `_el_form_variant(asset_group)` (data-driven off `get_distribution_asset_groups()`; the client-supplied `base_route` stays pagination-only; blank/unknown group → Distribution). The General variant captures Manufacturer, Model, Serial Number, Year (+ Installation Date) with a Classification card (UBC Asset Tag / Asset Group / readonly Attribute / Main Asset), keeps Location and auto-Description, and drops TSBC and all electrical tech cards; Equipment ID / Equipment Type / Power Type are still derived server-side and stored. The Distribution variant is byte-identical to the previous form.
+
+### Scope
+
+- **DB:** owner-run migration `scripts/migrations/2026-08-07_sdi_dataset_el_nameplate_columns.sql` adds `Manufacturer`, `Model`, `Serial Number`, `Year` (`TEXT`, JSON-key names) to `sdi_dataset_EL`. The sync writes them only for General rows; Distribution rows stay blank by contract.
+- **Review app:** variant-aware review scoring (`EL_REVIEW_GENERAL_SCORING_FIELDS` = UBC Asset Tag + the four nameplate fields; stored group beats tag-derived group), General entries in the dashboard hover checklist, variant-aware print/export sheet (Nameplate column replaces Technical Details for General). The hidden `form_variant` input is a diagnostic echo in `ignored_form_fields` — save derivations never branch on it. Same change fixes a pre-existing leak: `nav_prev`/`nav_next` no longer merge into `structured_data`.
+- **AI extraction:** `API_interface_EL_ver00.py` reads the four fields from the `-0` Asset Plate for ALL EL assets (standard + legacy flows) — General cannot be classified pre-extraction. Normalizers: `normalize_year` / `normalize_serial` (+ `looks_like_date_misread_serial` rejection) / `normalize_model`; `normalize_manufacturer` falls back to `_clean_raw_manufacturer` because the shared validator is a BF whitelist that would blank electrical brands. **No `EXTRACTION_RULE_VERSION` / `EL_LEGACY_RULE_VERSION` bump**, and confidences project only when non-blank — both deliberate, to avoid mass-flagging the existing corpus stale (a corpus-wide billable re-extraction). Backfill of existing General assets is targeted per-QR `FORCE_REPROCESS`. Note: `Avg_ai_conf` on newly extracted EL JSONs now includes nameplate confidences whenever a plate is read.
+- **SDI/Planon:** Manufacturer/Model/Year already flow through packaging (`MASTER_COLS`); `build_sdi_dataset()` gained the EL-only `Serial Number` → `Serial` rename so the serial survives the `PRINT_OUT_COLS` projection. EL General rows now export Make (J), Model (K), Serial Number (M), Date Of Manufacture Or Construction (AN, via `format_year_to_date`). No package-table schema change; archive/retrieve unchanged.
 
 ## 2026-08-04: EL General/Distribution split driven by `Asset_Group.elec_dist_setup` — deployed same day
 

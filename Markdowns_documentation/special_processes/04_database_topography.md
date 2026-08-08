@@ -51,6 +51,8 @@ Curated EL records for approved assets.
 
 Note: `ID_check` is a `GENERATED ALWAYS AS (...) STORED` column derived from `Building | UBC Asset Tag | Supply From` (PostgreSQL has no `VIRTUAL` generated columns; the SQLite original used `VIRTUAL`). Do not write to it from Python — the DB rejects the write. The column is used to detect divergence against `electrical_building_schema.ID_check` (see below) and surface the result in the SLD panel's Reconciliation column.
 
+Nameplate columns (2026-08-07, owner-run migration `scripts/migrations/2026-08-07_sdi_dataset_el_nameplate_columns.sql`): `Manufacturer`, `Model`, `Serial Number`, `Year` — all `TEXT`, named after the structured-JSON keys (deliberately not ME's `Serial` DB-column rename). Populated by the EL review sync **only for General (non-distribution) assets**; Distribution rows are kept blank by contract. Exported to Planon via the SDI package (Make / Model / Serial Number / Date Of Manufacture Or Construction); `SDI_process/app.py::build_sdi_dataset` renames `Serial Number` -> `Serial` to match the package column.
+
 ### `electrical_building_schema`
 
 Diagram-side table for Electrical Distribution. Each row represents a node parsed out of a building's Single Line Diagram PDF by the SLD extraction pipeline. Active rows have `new_draw = "TRUE"`; superseded rows (replaced by a re-extraction) are archived in-place with `new_draw = "FALSE"`.
