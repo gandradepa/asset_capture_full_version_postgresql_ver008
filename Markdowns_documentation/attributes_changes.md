@@ -1,6 +1,12 @@
 # Attribute Changes
 
-Current documentation refresh: 2026-08-07.
+Current documentation refresh: 2026-08-08.
+
+## 2026-08-08: EL nameplate extraction — `-1` photo allowed as manufacturer-plate fallback
+
+### Summary
+
+Prompt-only change in `API/API_interface_EL_ver00.py` (standard + legacy flows). Manufacturer / Model / Serial Number / Year / Capacity+UoM are still read from the `-0` Asset Plate as the preferred source, but when `-0` is missing or shows no manufacturer plate, the model may now read them from the `-1` photo **only when it clearly shows a manufacturer nameplate/data plate** — the field tech sometimes captures the maker's plate in that frame. The prohibition is content-based: facility-made text (printed panel label, engraved lamacoid, blue QR sticker, `-2` panel schedule) is never a source, in any photo. Legacy `Nameplate Text` stays a `-0`-only transcription (guards the lamacoid/nameplate separation that feeds `legacy_nameplate_specs`). **No rule-version bump** — applies to newly extracted assets only; the existing corpus is not re-extracted. No schema, review-app, SDI, or normalization changes.
 
 ## 2026-08-07 (follow-up): EL General Capacity field + General listing column drop
 

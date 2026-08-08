@@ -97,3 +97,15 @@ User-approved decisions: Capacity takes the **full Planon path**; Capacity is
   (`hiddenColumns = isDistributionDashboard ? distributionHiddenColumns :
   generalHiddenColumns`). Headers stay in the DOM; the dashboard XLSX export
   keeps every column.
+
+## Addendum (2026-08-08): EL-1 fallback source for nameplate fields
+
+Prompt-only follow-up. The five nameplate fields (Manufacturer / Model /
+Serial Number / Year / Capacity+UoM) keep EL-0 as the preferred source; EL-1
+becomes an allowed fallback ONLY when it clearly shows a manufacturer
+nameplate/data plate. The forbidden-source rule is now content-based rather
+than photo-based: facility-made text (printed panel label, engraved lamacoid,
+blue QR sticker, EL-2 schedule) is never a source in any photo. Legacy
+`Nameplate Text` intentionally stays EL-0-only (lamacoid/nameplate
+cross-contamination guard). No rule-version bump — new extractions only; all
+normalizers and gates unchanged (they are source-agnostic).
