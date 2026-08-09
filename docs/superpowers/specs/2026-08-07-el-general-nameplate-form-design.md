@@ -109,3 +109,16 @@ blue QR sticker, EL-2 schedule) is never a source in any photo. Legacy
 `Nameplate Text` intentionally stays EL-0-only (lamacoid/nameplate
 cross-contamination guard). No rule-version bump — new extractions only; all
 normalizers and gates unchanged (they are source-agnostic).
+
+## Addendum (2026-08-08): Simplex -> UN-<Model> UBC Asset Tag rule
+
+Deterministic post-processing in both EL flows: when the captured
+Manufacturer contains "Simplex" (case-insensitive), _apply_el_simplex_tag_rule
+ALWAYS overwrites UBC Asset Tag with "UN-" + whitespace-stripped uppercased
+Model (bare "UN-" while no model is read); confidence = min of the source
+fields. Prompts additionally allow maker-printed branding + model designation
+on the equipment's own face as a Manufacturer/Model source (manufacturer-made,
+unlike facility text). The pre-existing dictionary entry UN-|EL (SIMPLEX)
+derives Fire Alarm Annunciator Panels / FireAlarmPanel / Fire Alarm and
+Detection Systems downstream — General form variant. No rule-version bump;
+never add "UN" to Config.ABBREVIATIONS.

@@ -2,6 +2,12 @@
 
 Current documentation refresh: 2026-08-08.
 
+## 2026-08-08: Simplex fire-alarm panels — deterministic `UN-<Model>` UBC Asset Tag
+
+### Summary
+
+New post-processing rule in `API/API_interface_EL_ver00.py` (both flows): when the captured Manufacturer contains "Simplex" (case-insensitive; covers SimplexGrinnell), `_apply_el_simplex_tag_rule` **always overwrites** `UBC Asset Tag` with `UN-` + the whitespace-stripped uppercased Model (bare `UN-` while no model is read) — e.g. Simplex + 4100ES → `UN-4100ES`. Simplex fire-alarm control panels carry no UBC lamacoid, so any tag the AI reads off the panel face is junk. Confidence = min of the Manufacturer/Model confidences; a bare `UN-` is capped below the manual-review threshold so placeholder records flag for review. The rule also re-syncs tag-derived companions when it fires (`Branch Panel` cleared in both flows; legacy `Equipment ID` follows the new tag, `Equipment Type`/`Power Type` clear, `Description` recomposes as `SIMPLEX - <tag>`; feeder fields untouched), and the standard flow **re-applies the rule after its post-loop tag formatting** — adversarial review caught that `_apply_tag_formatting` would otherwise rewrite the tag to `PNL-UN-<Model>` and leak the synthesized tag into `Branch Panel`. Both prompts also now state that maker-printed branding + model designation on the equipment's own face (e.g. a fire panel front) is a valid Manufacturer/Model source — manufacturer-made, unlike facility-made text. The pre-existing dictionary entry `UN-|EL` (description SIMPLEX) then derives Asset Group `Fire Alarm Annunciator Panels` (General form variant), Attribute `FireAlarmPanel`, and Main Asset `Fire Alarm and Detection Systems` — no dictionary change needed. **No rule-version bump** — new extractions only. No schema, review-app, SDI, or validator changes.
+
 ## 2026-08-08: EL nameplate extraction — `-1` photo allowed as manufacturer-plate fallback
 
 ### Summary

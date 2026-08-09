@@ -589,7 +589,7 @@ Rules:
 - Nameplate Text: if EL-0 shows a MANUFACTURER nameplate (an engraved or stamped metal data plate, e.g. ABB / Westinghouse / Square D, carrying KVA, H.V./L.V. voltages, serial number), transcribe ALL of it verbatim, table cells row by row, preserving line breaks as \\n. Leave blank when EL-0 is not a manufacturer nameplate.
 - Nameplate Text vs Label Text: keep them strictly separate. `Label Text` is the BLACK LAMACOID plate(s) only; manufacturer-nameplate text must NEVER be merged into it. Do not copy nameplate figures into Volts or Ampere -- transcribe them into Nameplate Text and let post-processing decide.
 - Source precedence: EL-1 (lamacoid) is the PRIMARY source for identity and for any printed Volts/Ampere; EL-0 (Asset Plate, optional) is SECONDARY and supplies manufacturer-nameplate technical specs only. A manufacturer data plate visible in the EL-1 frame may supply the nameplate identity fields when EL-0 lacks one (see the rule below). Never use the blue QR sticker text for any field.
-- Manufacturer / Model / Serial Number / Year: read from the EL-0 manufacturer nameplate (preferred; the same plate transcribed into Nameplate Text). If EL-0 is missing or shows no manufacturer plate, you may read them from the EL-1 photo ONLY when it clearly shows a manufacturer nameplate or data plate — never from the engraved lamacoid text itself. Manufacturer is the brand (e.g., `ABB`, `WESTINGHOUSE`, `SQUARE D`); Model is the catalog/type designation; Serial Number is the printed serial exactly as shown; Year is the 4-digit year of manufacture only. Leave all four blank when neither photo shows a manufacturer plate. Never source them from the lamacoid or the blue QR sticker.
+- Manufacturer / Model / Serial Number / Year: read from the EL-0 manufacturer nameplate (preferred; the same plate transcribed into Nameplate Text). If EL-0 is missing or shows no manufacturer plate, you may read them from the EL-1 photo ONLY when it clearly shows a manufacturer nameplate or data plate — never from the engraved lamacoid text itself. Branding and a model designation printed by the equipment maker on the unit's own face (e.g. a fire alarm control panel front showing `Simplex` and `4100ES`) also count as a manufacturer source for Manufacturer / Model. Manufacturer is the brand (e.g., `ABB`, `WESTINGHOUSE`, `SQUARE D`); Model is the catalog/type designation; Serial Number is the printed serial exactly as shown; Year is the 4-digit year of manufacture only. Leave all four blank when neither photo shows a manufacturer plate. Never source them from the lamacoid or the blue QR sticker.
 - Capacity: an explicitly printed capacity/output rating on the same manufacturer plate used above — EL-0 preferred, EL-1 under the same fallback rule (e.g., `75 KVA`, `15 KW`, `5 HP`). Return the number only in `Capacity` and the unit exactly as printed in `Capacity (UoM)`. Leave both blank when no capacity rating is printed. Never build Capacity from voltage strings or the winding-current table.
 """
 
@@ -1297,6 +1297,64 @@ def _normalize_el_nameplate_fields(candidate: Dict[str, Any], conf: Dict[str, An
         ):
             if not value:
                 conf[field] = 0
+
+
+def _apply_el_simplex_tag_rule(candidate: Dict[str, Any], conf: Dict[str, Any]) -> None:
+    """Simplex fire-alarm panels get a deterministic `UN-<Model>` tag (2026-08-08).
+
+    Simplex panels carry no UBC lamacoid; anything the model reads as a tag off
+    the panel face is junk, so when Manufacturer contains "Simplex" the tag is
+    ALWAYS overwritten with "UN-" + Model (bare "UN-" while no model is known).
+    The dictionary entry "UN-|EL" then derives Fire Alarm Annunciator Panels /
+    FireAlarmPanel downstream. Config.ABBREVIATIONS must NOT gain a "UN" entry
+    (it would mangle raw tags starting with those letters); instead the
+    standard flow RE-APPLIES this rule after its post-loop
+    _resolve_el_asset_tag + _apply_tag_formatting step, which would otherwise
+    rewrite the tag to "PNL-UN-<MODEL>" and promote the synthesized
+    single-token tag into Branch Panel.
+
+    When the rule fires it also re-syncs the tag-derived companions so the
+    stored identity is internally consistent: Branch Panel is cleared (a fire
+    panel has no branch identifier; whatever was read is junk), and — in the
+    legacy flow, whose composition runs before this rule — Equipment ID
+    follows the new tag while Equipment Type / Power Type / Description are
+    recomposed for the unknown prefix. Feeder fields (Supply From / Fed From
+    Equipment ID) are deliberately left alone: a fed-from reading can be
+    legitimate for a fire panel.
+
+    A bare "UN-" (model not read yet) caps the tag confidence below the
+    manual-review threshold so the placeholder record still flags for human
+    review instead of masquerading as a confidently-tagged asset.
+    """
+    manufacturer = str(candidate.get("Manufacturer", "") or "")
+    if "simplex" not in manufacturer.lower():
+        return
+    model = re.sub(r"\s+", "", str(candidate.get("Model", "") or "")).upper()
+    new_tag = f"UN-{model}" if model else "UN-"
+    old_tag = str(candidate.get("UBC Asset Tag", "") or "").strip()
+    candidate["UBC Asset Tag"] = new_tag
+    candidate["Branch Panel"] = ""
+    if "Equipment ID" in candidate:
+        candidate["Equipment ID"] = new_tag
+    if "Equipment Type" in candidate:
+        candidate["Equipment Type"] = ""
+    if "Power Type" in candidate:
+        candidate["Power Type"] = ""
+    if "Description" in candidate:
+        candidate["Description"] = f"SIMPLEX - {new_tag}"
+    if isinstance(conf, dict):
+        conf["Branch Panel"] = 0
+        source_confs = [_normalize_el_confidence_score(conf.get("Manufacturer", 0))]
+        if model:
+            source_confs.append(_normalize_el_confidence_score(conf.get("Model", 0)))
+        else:
+            source_confs.append(max(int(Config.MANUAL_REVIEW_MIN_CONFIDENCE) - 1, 0))
+        conf["UBC Asset Tag"] = min(source_confs)
+    if old_tag != new_tag:
+        logging.info(
+            "Simplex rule: UBC Asset Tag %r -> %r (Manufacturer=%r, Model=%r).",
+            old_tag, new_tag, manufacturer, candidate.get("Model", ""),
+        )
 
 
 def _normalize_el_confidence_scores(scores: Dict[str, Any]) -> Dict[str, int]:
@@ -2254,6 +2312,7 @@ Rules:
 - Location: ignore location-like text from EL-0 and EL-1.
 - Manufacturer / Model / Serial Number / Year: read from the EL-0 Asset Plate photo (preferred source: manufacturer nameplate or data sticker). If EL-0 is missing or shows no manufacturer plate, you may read them from the EL-1 photo ONLY when it clearly shows a manufacturer nameplate or data sticker. Leave all four blank when neither photo shows one.
 - Manufacturer / Model / Serial Number / Year: never source these from facility-made text in any photo — the printed panel label / engraved lamacoid, the blue QR sticker, or the EL-2 panel schedule. A manufacturer plate is the equipment maker's own plate or sticker; a panel label naming the panel is not one.
+- Manufacturer / Model: branding and a model designation printed by the equipment maker on the unit's own face also count as a manufacturer source (e.g. a fire alarm control panel front showing `Simplex` and `4100ES`) — that text is manufacturer-made, unlike the facility-made text above.
 - Manufacturer: the brand name only (e.g., `SQUARE D`, `EATON`, `SIEMENS`), not slogans or addresses.
 - Serial Number: copy the printed serial exactly as shown; leave blank when only a date is printed where a serial would be.
 - Year: the 4-digit year of manufacture only (e.g., from `MFG DATE` or a date code). Never the installation or inspection date.
@@ -2318,6 +2377,7 @@ Rules:
                         if not candidate.get("UBC Asset Tag"):
                             conf["UBC Asset Tag"] = 0
                         _normalize_el_nameplate_fields(candidate, conf)
+                        _apply_el_simplex_tag_rule(candidate, conf)
                         score = _el_completeness_score(candidate)
                         logging.info(
                             "[%s] Extraction completed: completeness=%.0f%%, missing_fields=%s (model=%s, role=%s, profile=%s).",
@@ -2401,6 +2461,14 @@ Rules:
             
         final_tag = _apply_tag_formatting(raw_tag)
         final_data["UBC Asset Tag"] = final_tag
+        # Re-apply the Simplex rule on the finalized tag: the formatting above
+        # turns the in-loop "UN-<MODEL>" into "PNL-UN-<MODEL>" (no "UN"
+        # abbreviation by design) and _resolve_el_asset_tag can promote the
+        # synthesized single-token tag into Branch Panel. Re-applying restores
+        # the deterministic tag, clears the leaked branch, and lets the
+        # description/dictionary lookups below see the UN- prefix.
+        _apply_el_simplex_tag_rule(final_data, final_confidence)
+        final_tag = str(final_data.get("UBC Asset Tag", "") or "")
         supply_from_raw = (final_data.get("Supply From") or "").strip()
         if supply_from_raw:
             final_data["Supply From"] = normalize_el_supply_from_tag(supply_from_raw)
@@ -2663,6 +2731,7 @@ Rules:
                 for _np_field in Config.EL_NAMEPLATE_FIELDS:
                     candidate[_np_field] = str(raw_payload.get(_np_field) or "").strip()
                 _normalize_el_nameplate_fields(candidate, conf)
+                _apply_el_simplex_tag_rule(candidate, conf)
                 score = completeness_score(candidate, list(_el_legacy_scoring_fields(candidate)))
                 logging.info(
                     "[%s] Legacy extraction completed: completeness=%.0f%% (model=%s, role=%s).",
