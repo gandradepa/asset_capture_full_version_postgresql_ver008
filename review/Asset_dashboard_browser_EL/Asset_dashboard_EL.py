@@ -3077,6 +3077,33 @@ def _get_card_scope_data(process_target: str, building_filter: str = "", distrib
         data = [item for item in data if item.get("building") in code_set]
     return data
 
+def _landing_pending_counts():
+    """Pending-review counts per scope for the landing page cards (2026-08-08).
+
+    Mirrors the dashboards' default view exactly: New-process items ("0"),
+    archived QRs hidden, Pending = Approved != "True", scope split by
+    Asset_Group.elec_dist_setup membership. The landing page must never 500
+    over a counting problem, so any failure degrades to None counts (the
+    template renders an em dash).
+    """
+    try:
+        items = load_json_items("0")
+        archived = get_archived_qrs()
+        dist_groups = get_distribution_asset_groups()
+        counts = {"general": 0, "distribution": 0}
+        for item in items:
+            if item.get("qr_code") in archived:
+                continue
+            if str(item.get("Approved") or "").strip() == "True":
+                continue
+            scope = "distribution" if item.get("Asset Group") in dist_groups else "general"
+            counts[scope] += 1
+        return counts
+    except Exception as exc:
+        app.logger.warning("[landing] pending-count computation failed: %r", exc)
+        return {"general": None, "distribution": None}
+
+
 def _get_buildings_for_selector(*item_lists):
     codes = sorted({str(it.get("building") or "").strip()
                     for lst in item_lists for it in lst
@@ -3105,9 +3132,12 @@ def _get_buildings_name_map():
 def landing():
     if not has_permission(current_user, "application", "reviewer_electrical", "viewer"):
         return access_denied_response("Asset Reviewer - Electrical")
+    pending = _landing_pending_counts()
     return render_template(
         "landing.html",
-        username=current_user.username
+        username=current_user.username,
+        pending_general=pending.get("general"),
+        pending_distribution=pending.get("distribution"),
     )
 
 @main_bp.route("/review-all")

@@ -12,446 +12,316 @@
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 
     <style>
         :root {
-            --ubc-blue:         #002145;
-            --ubc-blue-mid:     #00356b;
-            --ubc-blue-hover:   #0055b7;
-            --ubc-blue-light:   #d6e4f7;
-            --ubc-gold:         #f2a900;
-            --ubc-gold-soft:    #fff8e7;
-            --surface:          #f4f7fc;
-            --card-bg:          #ffffff;
-            --text-primary:     #0d1f38;
-            --text-muted:       #5b6f89;
-            --border:           #dce5f0;
-            --glow-blue:        rgba(0, 85, 183, 0.18);
-            --glow-gold:        rgba(242, 169, 0, 0.22);
+            --ubc-blue:        #002145;
+            --ubc-blue-link:   #0055b7;
+            --ubc-gold:        #c98f00;
+            --surface:         #f3f6fa;
+            --card-bg:         #ffffff;
+            --ink:             #12263f;
+            --muted:           #5a6b82;
+            --border:          #d9e2ee;
+            --border-strong:   #b9c9dd;
         }
 
         *, *::before, *::after { box-sizing: border-box; }
 
-        html, body {
-            height: 100%;
-            margin: 0;
-        }
+        html, body { margin: 0; height: 100%; }
 
         body {
             background: var(--surface);
-            font-family: 'Inter', 'Segoe UI', system-ui, sans-serif;
-            color: var(--text-primary);
+            color: var(--ink);
+            font-family: 'Inter', 'Segoe UI', system-ui, Roboto, 'Helvetica Neue', Arial, sans-serif;
             min-height: 100vh;
             display: flex;
             flex-direction: column;
-            overflow-x: hidden;
         }
 
-        /* ─── Animated mesh background ─── */
-        body::before {
-            content: "";
-            position: fixed;
-            inset: 0;
-            background:
-                radial-gradient(ellipse 80% 60% at 10% 0%, rgba(0,33,69,.07) 0%, transparent 70%),
-                radial-gradient(ellipse 60% 50% at 90% 100%, rgba(0,85,183,.07) 0%, transparent 70%);
-            pointer-events: none;
-            z-index: 0;
-        }
-
-        /* ─── Top nav ─── */
-        .top-bar {
-            position: relative;
-            z-index: 100;
-            background: rgba(255,255,255,0.85);
-            backdrop-filter: blur(12px);
-            -webkit-backdrop-filter: blur(12px);
+        /* ─── Masthead ─── */
+        .masthead {
+            background: var(--card-bg);
             border-bottom: 1px solid var(--border);
-            padding: 0.55rem 1.5rem;
+            padding: 14px 28px;
             display: flex;
             align-items: center;
-            justify-content: flex-end;
+            gap: 16px;
+        }
+
+        .masthead img {
+            width: 44px; height: 44px;
+            border-radius: 8px;
+            display: block;
+        }
+
+        .mast-title { flex: 1; min-width: 0; }
+
+        .mast-title h1 {
+            margin: 0;
+            font-size: 19px;
+            font-weight: 700;
+            letter-spacing: -0.01em;
+            color: var(--ubc-blue);
+            line-height: 1.2;
+        }
+
+        .mast-title p {
+            margin: 2px 0 0;
+            font-size: 12px;
+            color: var(--muted);
+            font-weight: 500;
         }
 
         .user-chip {
             display: inline-flex;
             align-items: center;
-            gap: 0.5rem;
-            background: #f0f4fa;
-            border: 1px solid var(--border);
-            border-radius: 999px;
-            padding: 0.28rem 0.85rem 0.28rem 0.4rem;
-            font-size: 0.82rem;
+            gap: 8px;
+            font-size: 13px;
             font-weight: 500;
-            color: var(--text-primary);
-            cursor: pointer;
-            transition: background 0.2s;
-            text-decoration: none;
+            color: var(--ink);
+            background: var(--surface);
+            border: 1px solid var(--border) !important;
+            border-radius: 6px;
+            padding: 6px 12px;
+            white-space: nowrap;
         }
 
-        .user-chip:hover { background: #e2ecf7; }
+        .user-chip:hover { border-color: var(--border-strong) !important; }
 
-        .user-avatar {
-            width: 26px; height: 26px;
+        .user-chip .avatar {
+            width: 22px; height: 22px;
             border-radius: 50%;
             background: var(--ubc-blue);
             color: #fff;
             display: inline-flex;
             align-items: center;
             justify-content: center;
-            font-size: 0.72rem;
-            flex-shrink: 0;
+            font-size: 10px;
+            font-weight: 700;
         }
 
-        /* ─── Hero section ─── */
-        .hero {
+        /* ─── Single-line-diagram bus ─── */
+        .busboard {
+            max-width: 960px;
+            width: 100%;
+            margin: 0 auto;
+            padding: 44px 28px 56px;
+            flex: 1;
+        }
+
+        .bus-label {
+            font-size: 11px;
+            font-weight: 700;
+            letter-spacing: 0.14em;
+            text-transform: uppercase;
+            color: var(--muted);
+            margin: 0 0 10px 2px;
+        }
+
+        .bus-line {
             position: relative;
-            z-index: 1;
-            text-align: center;
-            padding: 3.5rem 1.5rem 1.5rem;
-        }
-
-        .hero-logo-wrap {
-            display: inline-flex;
-            align-items: center;
-            justify-content: center;
-            width: 86px; height: 86px;
-            border-radius: 20px;
+            height: 3px;
             background: var(--ubc-blue);
-            box-shadow: 0 8px 28px rgba(0,33,69,.28);
-            margin-bottom: 1.4rem;
-            overflow: hidden;
+            border-radius: 1px;
         }
 
-        .hero-logo-wrap img {
-            width: 100%;
-            height: 100%;
-            object-fit: cover;
-        }
-
-        .hero-eyebrow {
-            display: inline-flex;
-            align-items: center;
-            gap: 0.4rem;
-            background: var(--ubc-gold-soft);
-            border: 1px solid rgba(242,169,0,0.35);
-            border-radius: 999px;
-            padding: 0.2rem 0.85rem;
-            font-size: 0.72rem;
-            font-weight: 700;
-            letter-spacing: 0.08em;
-            text-transform: uppercase;
-            color: #8a5e00;
-            margin-bottom: 1rem;
-        }
-
-        .hero-title {
-            font-size: clamp(1.7rem, 4vw, 2.6rem);
-            font-weight: 800;
-            color: var(--ubc-blue);
-            line-height: 1.15;
-            margin-bottom: 0.5rem;
-            letter-spacing: -0.02em;
-        }
-
-        .hero-title span {
-            background: linear-gradient(90deg, var(--ubc-blue-hover), #3b9bff);
-            -webkit-background-clip: text;
-            -webkit-text-fill-color: transparent;
-            background-clip: text;
-        }
-
-        .hero-sub {
-            font-size: 0.98rem;
-            color: var(--text-muted);
-            max-width: 420px;
-            margin: 0 auto 0.5rem;
-            line-height: 1.6;
-        }
-
-        /* ─── Divider ─── */
-        .section-divider {
-            position: relative;
-            z-index: 1;
-            display: flex;
-            align-items: center;
-            gap: 1rem;
-            max-width: 860px;
-            margin: 1.5rem auto 0;
-            padding: 0 1.5rem;
-        }
-
-        .section-divider::before,
-        .section-divider::after {
+        .bus-line::before, .bus-line::after {
             content: "";
-            flex: 1;
-            height: 1px;
-            background: var(--border);
+            position: absolute;
+            top: -4px;
+            width: 3px; height: 11px;
+            background: var(--ubc-blue);
         }
 
-        .section-divider span {
-            font-size: 1.01rem;
-            font-weight: 700;
-            letter-spacing: 0.1em;
-            text-transform: uppercase;
-            color: var(--text-muted);
-            white-space: nowrap;
-        }
+        .bus-line::before { left: 0; }
+        .bus-line::after  { right: 0; }
 
-        /* ─── Cards grid ─── */
-        .cards-section {
-            position: relative;
-            z-index: 1;
-            flex: 1;
-            display: flex;
-            align-items: flex-start;
-            justify-content: center;
-            padding: 2rem 1.5rem 3rem;
-        }
-
-        .cards-grid {
+        .drops {
             display: grid;
-            grid-template-columns: 1fr;
-            gap: 1.5rem;
+            grid-template-columns: 1fr 1fr;
+            gap: 28px;
+        }
+
+        .drop { display: flex; flex-direction: column; align-items: center; }
+
+        .drop-stub  { width: 2px; height: 26px; background: var(--ubc-blue); }
+        .drop-stub2 { width: 2px; height: 14px; background: var(--ubc-blue); }
+
+        .drop-breaker {
+            width: 12px; height: 12px;
+            border: 2px solid var(--ubc-blue);
+            background: var(--card-bg);
+            transform: rotate(45deg);
+            margin: 2px 0 4px;
+        }
+
+        .drop--dist .drop-stub,
+        .drop--dist .drop-stub2 { background: var(--ubc-gold); }
+        .drop--dist .drop-breaker { border-color: var(--ubc-gold); }
+
+        /* ─── Scope cards ─── */
+        .scope-card {
             width: 100%;
-            max-width: 860px;
-        }
-
-        @media (min-width: 680px) {
-            .cards-grid { grid-template-columns: 1fr 1fr; }
-        }
-
-        /* ─── Individual card ─── */
-        .nav-card {
-            position: relative;
             background: var(--card-bg);
             border: 1px solid var(--border);
-            border-radius: 20px;
-            padding: 2.2rem 2rem 1.8rem;
+            border-radius: 10px;
+            padding: 22px 24px 0;
             text-decoration: none;
             color: inherit;
             display: flex;
             flex-direction: column;
-            gap: 0;
-            overflow: hidden;
-            box-shadow:
-                0 1px 3px rgba(0,0,0,.05),
-                0 6px 20px -4px rgba(0,33,69,.08);
-            transition: transform 0.25s cubic-bezier(.25,.8,.25,1),
-                        box-shadow 0.25s cubic-bezier(.25,.8,.25,1),
-                        border-color 0.25s;
+            height: 100%;
+            transition: border-color .15s ease, transform .15s ease, box-shadow .15s ease;
+            box-shadow: 0 1px 2px rgba(18,38,63,.05);
         }
 
-        /* Top accent bar */
-        .nav-card::before {
-            content: "";
-            position: absolute;
-            top: 0; left: 0; right: 0;
-            height: 3px;
-            border-radius: 20px 20px 0 0;
-            background: linear-gradient(90deg, var(--ubc-blue), var(--ubc-blue-hover));
-            opacity: 0;
-            transition: opacity 0.3s;
-        }
-
-        /* Glow background */
-        .nav-card::after {
-            content: "";
-            position: absolute;
-            inset: 0;
-            border-radius: 20px;
-            background: radial-gradient(ellipse 80% 60% at 50% -10%, var(--glow-blue), transparent 65%);
-            opacity: 0;
-            transition: opacity 0.35s;
-            pointer-events: none;
-        }
-
-        .nav-card:hover {
-            transform: translateY(-6px);
-            border-color: rgba(0,85,183,.28);
-            box-shadow:
-                0 2px 6px rgba(0,0,0,.06),
-                0 16px 40px -8px rgba(0,33,69,.18);
+        .scope-card:hover {
+            border-color: var(--border-strong);
+            transform: translateY(-1px);
+            box-shadow: 0 3px 10px rgba(18,38,63,.08);
             color: inherit;
             text-decoration: none;
         }
 
-        .nav-card:hover::before { opacity: 1; }
-        .nav-card:hover::after  { opacity: 1; }
-
-        /* Gold variant for distribution card */
-        .nav-card--gold::before {
-            background: linear-gradient(90deg, var(--ubc-gold), #f5c842);
+        .scope-card:focus-visible {
+            outline: 3px solid var(--ubc-blue-link);
+            outline-offset: 2px;
         }
 
-        .nav-card--gold::after {
-            background: radial-gradient(ellipse 80% 60% at 50% -10%, var(--glow-gold), transparent 65%);
-        }
-
-        .nav-card--gold:hover {
-            border-color: rgba(242,169,0,.35);
-        }
-
-        /* Card icon */
-        .card-icon-wrap {
-            width: 58px; height: 58px;
-            border-radius: 16px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-size: 1.6rem;
-            margin-bottom: 1.4rem;
-            position: relative;
-            z-index: 1;
-            transition: transform 0.25s;
-        }
-
-        .card-icon-wrap--blue {
-            background: linear-gradient(135deg, #e8f0fd 0%, #cfe0fc 100%);
-            color: var(--ubc-blue-hover);
-        }
-
-        .card-icon-wrap--gold {
-            background: linear-gradient(135deg, #fff4d0 0%, #fde89a 100%);
-            color: #8a5e00;
-        }
-
-        .nav-card:hover .card-icon-wrap { transform: scale(1.1) rotate(-4deg); }
-
-        /* Tag chips below icon */
-        .card-tags {
-            display: flex;
-            flex-wrap: wrap;
-            gap: 0.4rem;
-            margin-bottom: 1rem;
-            position: relative;
-            z-index: 1;
-        }
-
-        .tag-chip {
-            font-size: 0.68rem;
-            font-weight: 600;
-            letter-spacing: 0.04em;
-            padding: 0.18rem 0.6rem;
-            border-radius: 999px;
-        }
-
-        .tag-chip--blue {
-            background: var(--ubc-blue-light);
-            color: var(--ubc-blue-hover);
-            border: 1px solid rgba(0,85,183,.2);
-        }
-
-        .tag-chip--gold {
-            background: var(--ubc-gold-soft);
-            color: #8a5e00;
-            border: 1px solid rgba(242,169,0,.35);
-        }
-
-        /* Card text content */
-        .card-body-inner {
-            position: relative;
-            z-index: 1;
-        }
-
-        .card-headline {
-            font-size: 1.18rem;
+        .scope-kicker {
+            font-size: 12px;
             font-weight: 700;
-            color: var(--text-primary);
-            margin: 0 0 0.45rem;
-            line-height: 1.3;
+            letter-spacing: 0.02em;
+            color: var(--ubc-blue-link);
+            margin: 0 0 8px;
         }
 
-        .card-desc {
-            font-size: 0.875rem;
-            color: var(--text-muted);
+        .drop--dist .scope-kicker { color: var(--ubc-gold); }
+
+        .scope-card h2 {
+            margin: 0 0 6px;
+            font-size: 20px;
+            font-weight: 700;
+            letter-spacing: -0.01em;
+            color: var(--ink);
+        }
+
+        .scope-card .desc {
             margin: 0;
-            line-height: 1.6;
+            font-size: 13.5px;
+            line-height: 1.55;
+            color: var(--muted);
+            max-width: 44ch;
         }
 
-        /* CTA row at bottom */
-        .card-cta {
-            position: relative;
-            z-index: 1;
+        .stat-row {
             display: flex;
-            align-items: center;
-            justify-content: flex-end;
-            margin-top: auto;
-            padding-top: 1.2rem;
+            align-items: baseline;
+            gap: 10px;
+            margin: 20px 0 0;
+            padding: 14px 0;
             border-top: 1px solid var(--border);
         }
 
-        .cta-btn {
+        .stat-num {
+            font-size: 40px;
+            font-weight: 800;
+            line-height: 1;
+            color: var(--ubc-blue);
+            font-variant-numeric: tabular-nums;
+            letter-spacing: -0.02em;
+        }
+
+        .stat-cap {
+            font-size: 12.5px;
+            font-weight: 600;
+            color: var(--muted);
+        }
+
+        .stat-row--quiet .stat-num {
+            color: var(--muted);
+            font-weight: 700;
+        }
+
+        .card-foot {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 10px;
+            padding: 12px 0 16px;
+            border-top: 1px solid var(--border);
+            margin-top: auto;
+        }
+
+        .tags { display: flex; flex-wrap: wrap; gap: 6px; }
+
+        .tag {
+            font-size: 11px;
+            font-weight: 600;
+            color: var(--muted);
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 4px;
+            padding: 2px 8px;
+        }
+
+        .go {
             display: inline-flex;
             align-items: center;
-            gap: 0.45rem;
-            font-size: 0.83rem;
-            font-weight: 600;
-            padding: 0.45rem 1rem;
-            border-radius: 999px;
-            transition: background 0.2s, transform 0.2s;
+            gap: 6px;
+            font-size: 13px;
+            font-weight: 700;
+            color: var(--ubc-blue-link);
+            white-space: nowrap;
         }
 
-        .cta-btn--blue {
-            background: var(--ubc-blue);
-            color: #fff;
-        }
-
-        .nav-card:hover .cta-btn--blue {
-            background: var(--ubc-blue-hover);
-            transform: translateX(3px);
-        }
-
-        .cta-btn--gold {
-            background: var(--ubc-gold);
-            color: #3d2800;
-        }
-
-        .nav-card:hover .cta-btn--gold {
-            background: #e09b00;
-            transform: translateX(3px);
-        }
+        .go .arr { transition: transform .15s ease; display: inline-block; }
+        .scope-card:hover .go .arr { transform: translateX(3px); }
 
         /* ─── Footer ─── */
         .page-footer {
-            position: relative;
-            z-index: 1;
             text-align: center;
-            padding: 1rem;
-            font-size: 0.72rem;
-            color: var(--text-muted);
+            padding: 14px;
+            font-size: 11.5px;
+            color: var(--muted);
             border-top: 1px solid var(--border);
-            background: rgba(255,255,255,0.6);
+            background: var(--card-bg);
         }
 
-        /* ─── Fade-up animation ─── */
-        @keyframes fadeUp {
-            from { opacity: 0; transform: translateY(22px); }
-            to   { opacity: 1; transform: translateY(0); }
+        @media (max-width: 680px) {
+            .drops { grid-template-columns: 1fr; }
+            .bus-line { display: none; }
+            .bus-label { text-align: center; margin-left: 0; }
+            .drop-stub { height: 14px; }
         }
 
-        .hero        { animation: fadeUp 0.5s ease both; }
-        .section-divider { animation: fadeUp 0.5s 0.1s ease both; }
-        .nav-card:nth-child(1) { animation: fadeUp 0.5s 0.18s ease both; }
-        .nav-card:nth-child(2) { animation: fadeUp 0.5s 0.28s ease both; }
+        @media (prefers-reduced-motion: reduce) {
+            * { transition: none !important; }
+        }
 
         /* ─── Embedded mode (iframe inside central dashboard) ─── */
-        body.embedded-mode .top-bar { display: none !important; }
+        body.embedded-mode .masthead { display: none !important; }
     </style>
     {% include "_shell.html" %}
 </head>
 
 <body class="{% if g.embedded %}embedded-mode{% endif %}">
 
-    <!-- Top bar -->
+    <!-- Masthead -->
     {% if not g.embedded %}
-    <nav class="top-bar">
+    <header class="masthead">
+        <img src="{{ url_for('static', filename='ubc_facilities_logo_new.jpg') }}" alt="UBC Facilities">
+        <div class="mast-title">
+            <h1>Electrical Asset Review</h1>
+            <p>UBC Facilities &middot; Maintenance Planning</p>
+        </div>
         {% if current_user.is_authenticated %}
         <div class="dropdown">
             <button class="user-chip border-0 bg-transparent" type="button" data-bs-toggle="dropdown" aria-expanded="false">
-                <span class="user-avatar"><i class="bi bi-person-fill"></i></span>
-                Welcome, <strong>{{ username }}</strong>
+                <span class="avatar">{{ (username or '?')[:2]|upper }}</span>
+                {{ username }}
                 <i class="bi bi-chevron-down ms-1" style="font-size:0.65rem; opacity:0.6;"></i>
             </button>
             <ul class="dropdown-menu dropdown-menu-end shadow border-0 mt-2">
@@ -463,83 +333,68 @@
             </ul>
         </div>
         {% endif %}
-    </nav>
+    </header>
     {% endif %}
 
-    <!-- Hero -->
-    <section class="hero">
-        <div class="hero-logo-wrap">
-            <img src="{{ url_for('static', filename='ubc_facilities_logo_new.jpg') }}" alt="UBC Facilities">
-        </div>
-        <h1 class="hero-title">Electrical Asset Review Dashboard</h1>
-        <p class="hero-sub">Maintenance Planning Department &bull; Select a review scope to begin</p>
-    </section>
+    <!-- Review scopes fed from the SLD-style bus -->
+    <main class="busboard">
+        <p class="bus-label">Review scopes</p>
+        <div class="bus-line"></div>
+        <div class="drops">
 
-    <div class="section-divider">
-        <span>Choose your review scope</span>
-    </div>
-
-    <!-- Cards -->
-    <section class="cards-section">
-        <div class="cards-grid">
-
-            <!-- Card 1: General -->
-            <a href="{{ url_for('main.review_all', tab='new', process='0') }}"
-               class="nav-card" id="card-general">
-
-                <div class="card-icon-wrap card-icon-wrap--blue">
-                    <i class="bi bi-lightning-charge-fill"></i>
-                </div>
-
-                <div class="card-tags">
-                    <span class="tag-chip tag-chip--blue">General Assets</span>
-                </div>
-
-                <div class="card-body-inner">
-                    <h2 class="card-headline">Electrical Assets</h2>
-                    <p class="card-desc">
+            <!-- General -->
+            <div class="drop">
+                <span class="drop-stub"></span>
+                <span class="drop-breaker"></span>
+                <span class="drop-stub2"></span>
+                <a class="scope-card" id="card-general"
+                   href="{{ url_for('main.review_all', tab='new', process='0') }}">
+                    <p class="scope-kicker">General Electrical Assets</p>
+                    <h2>Electrical Assets</h2>
+                    <p class="desc">
                         Review all general electrical assets. In the group the distribution panels are not included.
                     </p>
-                </div>
+                    <div class="stat-row{% if not pending_general %} stat-row--quiet{% endif %}">
+                        <span class="stat-num">{{ pending_general if pending_general is not none else '—' }}</span>
+                        <span class="stat-cap">QRs pending review</span>
+                    </div>
+                    <div class="card-foot">
+                        <div class="tags"><span class="tag">Nameplate form</span></div>
+                        <span class="go">Open review <span class="arr">&rarr;</span></span>
+                    </div>
+                </a>
+            </div>
 
-                <div class="card-cta">
-                    <span class="cta-btn cta-btn--blue">
-                        Open Review <i class="bi bi-arrow-right"></i>
-                    </span>
-                </div>
-            </a>
-
-            <!-- Card 2: Distribution -->
-            <a href="{{ url_for('main.review_distribution', tab='new', process='0') }}"
-               class="nav-card" id="card-distribution">
-
-                <div class="card-icon-wrap card-icon-wrap--blue">
-                    <img src="{{ url_for('static', filename='distribution_icon.png') }}" alt="Distribution Icon" style="width: 32px; height: 32px;">
-                </div>
-
-                <div class="card-tags">
-                    <span class="tag-chip tag-chip--blue">Panels</span>
-                    <span class="tag-chip tag-chip--blue">Transformers</span>
-                    <span class="tag-chip tag-chip--blue">MCCs</span>
-                    <span class="tag-chip tag-chip--blue">ATSs</span>
-                </div>
-
-                <div class="card-body-inner">
-                    <h2 class="card-headline">Electrical Assets - Distribution</h2>
-                    <p class="card-desc">
+            <!-- Distribution -->
+            <div class="drop drop--dist">
+                <span class="drop-stub"></span>
+                <span class="drop-breaker"></span>
+                <span class="drop-stub2"></span>
+                <a class="scope-card" id="card-distribution"
+                   href="{{ url_for('main.review_distribution', tab='new', process='0') }}">
+                    <p class="scope-kicker">Electrical Distribution Systems</p>
+                    <h2>Electrical Assets - Distribution</h2>
+                    <p class="desc">
                         Review process dedicated for distribution asset such as Panels, Transformers, MCC, Breakers, and Switches.
                     </p>
-                </div>
-
-                <div class="card-cta">
-                    <span class="cta-btn cta-btn--blue">
-                        Open Distribution <i class="bi bi-arrow-right"></i>
-                    </span>
-                </div>
-            </a>
+                    <div class="stat-row{% if not pending_distribution %} stat-row--quiet{% endif %}">
+                        <span class="stat-num">{{ pending_distribution if pending_distribution is not none else '—' }}</span>
+                        <span class="stat-cap">QRs pending review</span>
+                    </div>
+                    <div class="card-foot">
+                        <div class="tags">
+                            <span class="tag">Panels</span>
+                            <span class="tag">Transformers</span>
+                            <span class="tag">MCCs</span>
+                            <span class="tag">ATSs</span>
+                        </div>
+                        <span class="go">Open review <span class="arr">&rarr;</span></span>
+                    </div>
+                </a>
+            </div>
 
         </div>
-    </section>
+    </main>
 
     <!-- Footer -->
     <footer class="page-footer">

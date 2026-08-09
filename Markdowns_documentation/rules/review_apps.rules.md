@@ -191,6 +191,12 @@ Constraints to preserve:
 - The EL General listing (`/review-all`) hides Supply From, Amperage Rating, Volts, and Location (2026-08-07; previously it showed all four). The values still render into the hidden cells and stay searchable, and the dashboard XLSX export intentionally keeps every column.
 - If a listing-table column order changes, update the DataTables index variables and hidden-column arrays in the same change.
 
+## EL Landing Page (2026-08-08)
+
+- The EL landing page (`/`, `landing.html`) shows the two scope cards ("Electrical Assets" / "Electrical Assets - Distribution") with a **pending-review count** each, computed by `_landing_pending_counts()`: New-process items only (`load_json_items("0")`), archived QRs excluded, Pending = `Approved != "True"`, scope split by `get_distribution_asset_groups()`. This is byte-for-byte the dashboards' default view, so the landing number always matches what the reviewer sees after clicking through.
+- **Never-500 contract:** any counting failure degrades to `None` counts and the template renders a muted em dash — the landing page must always load.
+- Design (2026-08-08 refresh): compact masthead + a single-line-diagram bus motif feeding the two worklist cards (blue drop = General, gold drop = Distribution); card kickers read "General Electrical Assets" / "Electrical Distribution Systems" in title case (user-specified copy). Scope links, embedded-iframe behavior (`?embedded=true` propagation + postMessage), and the logout dropdown are unchanged.
+
 ## EL Review Form Variants (2026-08-07)
 
 EL `review.html` is one template that renders one of two server-selected form variants. The variant is decided by `_el_form_variant(asset_group)` in `Asset_dashboard_EL.py`: **General** when the asset's resolved `Asset Group` is non-blank and not in `get_distribution_asset_groups()` (`Asset_Group.elec_dist_setup='Y'`, 60s TTL cache); **Distribution** otherwise. Blank/unknown groups default to Distribution (the pre-split behavior; the tag heuristics always land on a Distribution group anyway). The client-supplied `base_route` param stays pagination-only and never selects the variant.

@@ -2,6 +2,12 @@
 
 Current documentation refresh: 2026-08-08.
 
+## 2026-08-08: EL landing page — pending-count cards + design refresh
+
+### Summary
+
+The EL landing page (`/`, `landing.html`) now shows the count of QRs pending review inside each scope card, and was visually refreshed per the frontend-design pass (user-approved mock). Counts come from the new `_landing_pending_counts()` in `Asset_dashboard_EL.py`: New-process JSON items, archived QRs excluded, Pending = `Approved != "True"`, split by `Asset_Group.elec_dist_setup` membership — identical semantics to the dashboards' default Pending view. Counting failures degrade to a muted em dash (the landing page never 500s). The refresh replaces the marketing-hero styling (animated mesh, glass blur, gradient text, glow hovers, staggered fade-ups) with a compact masthead and a single-line-diagram bus motif feeding two worklist cards (blue = General, gold = Distribution); kickers read "General Electrical Assets" / "Electrical Distribution Systems" (title case, user-specified). Scope links, embedded-iframe behavior, and the logout dropdown are unchanged. No DB, extraction, or SDI changes.
+
 ## 2026-08-08: Simplex fire-alarm panels — deterministic `UN-<Model>` UBC Asset Tag
 
 ### Summary
