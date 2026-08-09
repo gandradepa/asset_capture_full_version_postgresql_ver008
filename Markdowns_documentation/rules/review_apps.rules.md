@@ -195,7 +195,7 @@ Constraints to preserve:
 
 - The EL landing page (`/`, `landing.html`) shows the two scope cards ("Electrical Assets" / "Electrical Assets - Distribution") with a **pending-review count** each, computed by `_landing_pending_counts()`: New-process items only (`load_json_items("0")`), archived QRs excluded, Pending = `Approved != "True"`, scope split by `get_distribution_asset_groups()`. This is byte-for-byte the dashboards' default view, so the landing number always matches what the reviewer sees after clicking through.
 - **Never-500 contract:** any counting failure degrades to `None` counts and the template renders a muted em dash — the landing page must always load.
-- Design (2026-08-08 refresh): compact masthead + a single-line-diagram bus motif feeding the two worklist cards (blue drop = General, gold drop = Distribution). User-specified copy, all title case: bus label "Review Captured Assets", card kickers "General Electrical Assets" / "Electrical Distribution Systems", General tag chip "Standard Form". Scope links, embedded-iframe behavior (`?embedded=true` propagation + postMessage), and the logout dropdown are unchanged.
+- Design (2026-08-08 refresh): compact masthead + a single-line-diagram bus motif feeding the two worklist cards (blue drop = General, gold drop = Distribution). User-specified copy, all title case: bus label "Review the Captured Assets", card kickers "General Electrical Assets" / "Electrical Distribution Systems", General tag chip "Standard Form". Scope links, embedded-iframe behavior (`?embedded=true` propagation + postMessage), and the logout dropdown are unchanged.
 
 ## EL Review Form Variants (2026-08-07)
 
