@@ -1299,62 +1299,140 @@ def _normalize_el_nameplate_fields(candidate: Dict[str, Any], conf: Dict[str, An
                 conf[field] = 0
 
 
-def _apply_el_simplex_tag_rule(candidate: Dict[str, Any], conf: Dict[str, Any]) -> None:
-    """Simplex fire-alarm panels get a deterministic `UN-<Model>` tag (2026-08-08).
+class fire_alarm_control:
+    """Fire-alarm control panels get a deterministic maker-derived tag (2026-08-08/10).
 
-    Simplex panels carry no UBC lamacoid; anything the model reads as a tag off
-    the panel face is junk, so when Manufacturer contains "Simplex" the tag is
-    ALWAYS overwritten with "UN-" + Model (bare "UN-" while no model is known).
-    The dictionary entry "UN-|EL" then derives Fire Alarm Annunciator Panels /
-    FireAlarmPanel downstream. Config.ABBREVIATIONS must NOT gain a "UN" entry
-    (it would mangle raw tags starting with those letters); instead the
-    standard flow RE-APPLIES this rule after its post-loop
-    _resolve_el_asset_tag + _apply_tag_formatting step, which would otherwise
-    rewrite the tag to "PNL-UN-<MODEL>" and promote the synthesized
-    single-token tag into Branch Panel.
+    Fire-alarm control panels carry no UBC lamacoid; anything the model reads
+    as a tag off the panel face is junk. Each maker subclass keys off the
+    extracted Manufacturer and derives the tag from the extracted Model:
 
-    When the rule fires it also re-syncs the tag-derived companions so the
+      Simplex  -> "UN-<Model>" (e.g. "UN-4100ES"; bare "UN-" while no model
+                  is known, capped below the manual-review threshold so the
+                  placeholder still flags for human review)
+      Autocall -> "<Model>"    (e.g. "4100ES"; Manufacturer canonicalized to
+                  "AUTOCALL"; tag left untouched while no model is known so
+                  the asset keeps flagging for review)
+
+    The dictionary entries "UN-|EL" and "4100|EL" then derive the fire-alarm
+    Asset Group / Attribute downstream. Config.ABBREVIATIONS must NOT gain a
+    "UN" (or "4100") entry — it would mangle raw tags starting with those
+    characters; instead the standard flow RE-APPLIES these rules after its
+    post-loop _resolve_el_asset_tag + _apply_tag_formatting step, which would
+    otherwise rewrite the tags to "PNL-UN-<MODEL>" / "PNL-<MODEL>" and promote
+    the synthesized single-token tag into Branch Panel. Subclass apply() must
+    therefore stay IDEMPOTENT: it re-derives everything from Manufacturer and
+    Model, which persist across the re-application.
+
+    When a rule fires it also re-syncs the tag-derived companions so the
     stored identity is internally consistent: Branch Panel is cleared (a fire
     panel has no branch identifier; whatever was read is junk), and — in the
     legacy flow, whose composition runs before this rule — Equipment ID
     follows the new tag while Equipment Type / Power Type / Description are
-    recomposed for the unknown prefix. Feeder fields (Supply From / Fed From
-    Equipment ID) are deliberately left alone: a fed-from reading can be
+    recomposed for the maker-derived tag. Feeder fields (Supply From / Fed
+    From Equipment ID) are deliberately left alone: a fed-from reading can be
     legitimate for a fire panel.
-
-    A bare "UN-" (model not read yet) caps the tag confidence below the
-    manual-review threshold so the placeholder record still flags for human
-    review instead of masquerading as a confidently-tagged asset.
     """
+
+    MAKERS = ()  # precedence order (Simplex wins over Autocall); bound below
+
+    # -- subclass contract --------------------------------------------------
+    @classmethod
+    def matches(cls, manufacturer: str) -> bool:
+        raise NotImplementedError
+
+    @classmethod
+    def apply(cls, candidate: Dict[str, Any], conf: Dict[str, Any]) -> None:
+        raise NotImplementedError
+
+    # -- shared helpers -----------------------------------------------------
+    @staticmethod
+    def _model_of(candidate: Dict[str, Any]) -> str:
+        return re.sub(r"\s+", "", str(candidate.get("Model", "") or "")).upper()
+
+    @staticmethod
+    def _set_tag(candidate: Dict[str, Any], conf: Dict[str, Any],
+                 new_tag: str, brand: str, tag_confidence) -> None:
+        """Overwrite the tag and re-sync its companions (see class docstring)."""
+        old_tag = str(candidate.get("UBC Asset Tag", "") or "").strip()
+        candidate["UBC Asset Tag"] = new_tag
+        candidate["Branch Panel"] = ""
+        if "Equipment ID" in candidate:
+            candidate["Equipment ID"] = new_tag
+        if "Equipment Type" in candidate:
+            candidate["Equipment Type"] = ""
+        if "Power Type" in candidate:
+            candidate["Power Type"] = ""
+        if "Description" in candidate:
+            candidate["Description"] = f"{brand} - {new_tag}"
+        if isinstance(conf, dict):
+            conf["Branch Panel"] = 0
+            if tag_confidence is not None:
+                conf["UBC Asset Tag"] = tag_confidence
+        if old_tag != new_tag:
+            logging.info(
+                "%s rule: UBC Asset Tag %r -> %r (Manufacturer=%r, Model=%r).",
+                brand, old_tag, new_tag,
+                candidate.get("Manufacturer", ""), candidate.get("Model", ""),
+            )
+
+
+class Simplex(fire_alarm_control):
+    """Simplex panels: tag is ALWAYS overwritten with "UN-" + Model."""
+
+    @classmethod
+    def matches(cls, manufacturer: str) -> bool:
+        return "simplex" in manufacturer.lower()
+
+    @classmethod
+    def apply(cls, candidate: Dict[str, Any], conf: Dict[str, Any]) -> None:
+        model = cls._model_of(candidate)
+        new_tag = f"UN-{model}" if model else "UN-"
+        tag_confidence = None
+        if isinstance(conf, dict):
+            source_confs = [_normalize_el_confidence_score(conf.get("Manufacturer", 0))]
+            if model:
+                source_confs.append(_normalize_el_confidence_score(conf.get("Model", 0)))
+            else:
+                source_confs.append(max(int(Config.MANUAL_REVIEW_MIN_CONFIDENCE) - 1, 0))
+            tag_confidence = min(source_confs)
+        cls._set_tag(candidate, conf, new_tag, "SIMPLEX", tag_confidence)
+
+
+class Autocall(fire_alarm_control):
+    """Autocall panels: tag becomes the model number itself (e.g. "4100ES")."""
+
+    @classmethod
+    def matches(cls, manufacturer: str) -> bool:
+        return "autocall" in manufacturer.lower()
+
+    @classmethod
+    def apply(cls, candidate: Dict[str, Any], conf: Dict[str, Any]) -> None:
+        candidate["Manufacturer"] = "AUTOCALL"
+        model = cls._model_of(candidate)
+        if not model:
+            # No model read yet: no deterministic tag is derivable. Leave the
+            # tag untouched (usually blank -> confidence already 0) so the
+            # asset keeps flagging for manual review.
+            return
+        tag_confidence = None
+        if isinstance(conf, dict):
+            tag_confidence = min(
+                _normalize_el_confidence_score(conf.get("Manufacturer", 0)),
+                _normalize_el_confidence_score(conf.get("Model", 0)),
+            )
+        cls._set_tag(candidate, conf, model, "AUTOCALL", tag_confidence)
+
+
+fire_alarm_control.MAKERS = (Simplex, Autocall)
+
+
+def _apply_el_fire_alarm_control_rules(candidate: Dict[str, Any], conf: Dict[str, Any]) -> None:
+    """Apply the first matching fire_alarm_control maker rule (Simplex wins)."""
     manufacturer = str(candidate.get("Manufacturer", "") or "")
-    if "simplex" not in manufacturer.lower():
-        return
-    model = re.sub(r"\s+", "", str(candidate.get("Model", "") or "")).upper()
-    new_tag = f"UN-{model}" if model else "UN-"
-    old_tag = str(candidate.get("UBC Asset Tag", "") or "").strip()
-    candidate["UBC Asset Tag"] = new_tag
-    candidate["Branch Panel"] = ""
-    if "Equipment ID" in candidate:
-        candidate["Equipment ID"] = new_tag
-    if "Equipment Type" in candidate:
-        candidate["Equipment Type"] = ""
-    if "Power Type" in candidate:
-        candidate["Power Type"] = ""
-    if "Description" in candidate:
-        candidate["Description"] = f"SIMPLEX - {new_tag}"
-    if isinstance(conf, dict):
-        conf["Branch Panel"] = 0
-        source_confs = [_normalize_el_confidence_score(conf.get("Manufacturer", 0))]
-        if model:
-            source_confs.append(_normalize_el_confidence_score(conf.get("Model", 0)))
-        else:
-            source_confs.append(max(int(Config.MANUAL_REVIEW_MIN_CONFIDENCE) - 1, 0))
-        conf["UBC Asset Tag"] = min(source_confs)
-    if old_tag != new_tag:
-        logging.info(
-            "Simplex rule: UBC Asset Tag %r -> %r (Manufacturer=%r, Model=%r).",
-            old_tag, new_tag, manufacturer, candidate.get("Model", ""),
-        )
+    for maker in fire_alarm_control.MAKERS:
+        if maker.matches(manufacturer):
+            maker.apply(candidate, conf)
+            return
 
 
 def _normalize_el_confidence_scores(scores: Dict[str, Any]) -> Dict[str, int]:
@@ -2377,7 +2455,7 @@ Rules:
                         if not candidate.get("UBC Asset Tag"):
                             conf["UBC Asset Tag"] = 0
                         _normalize_el_nameplate_fields(candidate, conf)
-                        _apply_el_simplex_tag_rule(candidate, conf)
+                        _apply_el_fire_alarm_control_rules(candidate, conf)
                         score = _el_completeness_score(candidate)
                         logging.info(
                             "[%s] Extraction completed: completeness=%.0f%%, missing_fields=%s (model=%s, role=%s, profile=%s).",
@@ -2461,13 +2539,14 @@ Rules:
             
         final_tag = _apply_tag_formatting(raw_tag)
         final_data["UBC Asset Tag"] = final_tag
-        # Re-apply the Simplex rule on the finalized tag: the formatting above
-        # turns the in-loop "UN-<MODEL>" into "PNL-UN-<MODEL>" (no "UN"
+        # Re-apply the fire_alarm_control rules on the finalized tag: the
+        # formatting above turns the in-loop "UN-<MODEL>" into "PNL-UN-<MODEL>"
+        # and the Autocall "<MODEL>" into "PNL-<MODEL>" (no "UN"/"4100"
         # abbreviation by design) and _resolve_el_asset_tag can promote the
         # synthesized single-token tag into Branch Panel. Re-applying restores
         # the deterministic tag, clears the leaked branch, and lets the
-        # description/dictionary lookups below see the UN- prefix.
-        _apply_el_simplex_tag_rule(final_data, final_confidence)
+        # description/dictionary lookups below see the maker-derived tag.
+        _apply_el_fire_alarm_control_rules(final_data, final_confidence)
         final_tag = str(final_data.get("UBC Asset Tag", "") or "")
         supply_from_raw = (final_data.get("Supply From") or "").strip()
         if supply_from_raw:
@@ -2731,7 +2810,7 @@ Rules:
                 for _np_field in Config.EL_NAMEPLATE_FIELDS:
                     candidate[_np_field] = str(raw_payload.get(_np_field) or "").strip()
                 _normalize_el_nameplate_fields(candidate, conf)
-                _apply_el_simplex_tag_rule(candidate, conf)
+                _apply_el_fire_alarm_control_rules(candidate, conf)
                 score = completeness_score(candidate, list(_el_legacy_scoring_fields(candidate)))
                 logging.info(
                     "[%s] Legacy extraction completed: completeness=%.0f%% (model=%s, role=%s).",

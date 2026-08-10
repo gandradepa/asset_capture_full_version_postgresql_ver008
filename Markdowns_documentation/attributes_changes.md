@@ -1,6 +1,12 @@
 # Attribute Changes
 
-Current documentation refresh: 2026-08-08.
+Current documentation refresh: 2026-08-10.
+
+## 2026-08-10: Fire-alarm tag rules restructured — `fire_alarm_control` family adds Autocall
+
+### Summary
+
+The 2026-08-08 Simplex rule in `API/API_interface_EL_ver00.py` is restructured into a class family: base `fire_alarm_control` with subclasses `Simplex` and `Autocall` (user-specified naming), applied through `_apply_el_fire_alarm_control_rules` at the same three call sites (standard in-loop, standard post-loop re-application, legacy). Both subclasses trigger on the extracted **Manufacturer** (Simplex checked first). Simplex behavior is unchanged (`UN-<Model>`, bare-`UN-` confidence cap). New **Autocall** rule: Manufacturer containing "Autocall" (any casing) canonicalizes `Manufacturer` to `AUTOCALL` and overwrites `UBC Asset Tag` with the whitespace-stripped uppercased model number itself — e.g. Autocall + 4100ES → tag `4100ES` (no `UN-` prefix; with no model read the tag is left untouched so the asset keeps flagging for review). Tag confidence = min(Manufacturer, Model). Companion re-syncs and the post-loop re-application contract are shared with Simplex (`_apply_tag_formatting` would otherwise ship `PNL-<Model>`); subclass `apply()` is idempotent by contract. Never add `UN` **or `4100`** to `Config.ABBREVIATIONS`. Downstream classification is dictionary data: the user-created `4100|EL` entry (description `AUTOCALL 4100 ES`) derives Asset Group `Fire Alarm Annunciator Panels` / Attribute `FireAlarmPanel` / Main Asset `Fire Alarm and Detection Systems`; the VM's `UN-|EL` entry maps Simplex panels to `Fire Alarm Control Panels` (both General groups → nameplate form variant; repo dictionary copy synced from the VM). A side benefit of the prefix-free Autocall tag: `derive_electrical_power_type("4100ES")` returns blank (no hyphen), avoiding the spurious `ES` Power Type that `UN-4100ES` produces. **No rule-version bump** — new extractions only. Reference asset: QR 0000184491 (building 217). No schema, review-app, SDI, or validator changes.
 
 ## 2026-08-08: EL landing page — pending-count cards + design refresh
 

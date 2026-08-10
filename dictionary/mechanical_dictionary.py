@@ -1,4 +1,12 @@
 ASSET_DICTIONARY = {
+    "4100|EL": {
+        "attribute_set": "FireAlarmPanel",
+        "asset_group": "Fire Alarm Annunciator Panels",
+        "main_asset": "Fire Alarm and Detection Systems",
+        "description": "AUTOCALL 4100 ES",
+        "asset_type": "EL",
+        "type": "EL"
+    },
     "ACU|ME": {
         "attribute_set": "Mechanical",
         "asset_group": "Self Contained Air Conditioners",
@@ -865,7 +873,7 @@ ASSET_DICTIONARY = {
     },
     "UN-|EL": {
         "attribute_set": "FireAlarmPanel",
-        "asset_group": "Fire Alarm Annunciator Panels",
+        "asset_group": "Fire Alarm Control Panels",
         "main_asset": "Fire Alarm and Detection Systems",
         "description": "SIMPLEX",
         "asset_type": "EL",
