@@ -1,6 +1,6 @@
 ﻿# Dashboard Rules
 
-Current documentation refresh: 2026-07-14.
+Current documentation refresh: 2026-08-10.
 
 ## Purpose
 
@@ -95,6 +95,30 @@ The dashboard is the operational control plane for charts, workflow visibility, 
 - Save produces sorted, deterministic JSON output written with `encoding='utf-8'`.
 - The mechanical dictionary file at `dictionary/mechanical_dictionary.py` is the target.
 - The delete-confirmation dialog (`#deleteModal`) and other dictionary-management modals use `modal-dialog modal-dialog-centered` so the dialog renders centered in the viewport rather than clipped at the top.
+- Editing is **modal-based**, not inline: `#assetModal` handles add and edit; `#deleteModal` is a type-to-confirm delete (the reviewer must retype the UBC tag before Delete enables). There is no in-row editing.
+
+### Dictionary Page Design and Filters (2026-08-10)
+
+- The page uses the Dashboard's **"Deep Blue & Clean Slate"** token block (the same `:root` as `dashboard.html`: `--primary-dark #002145`, `--primary-accent #0055b7`, `--secondary-bg`, semantic bg/text pairs, `--card-radius`, `--btn-radius`, shadow scale) with Inter as the only typeface. The former `#0066ff`/`#00ffff` "Tech Innovation" palette and Space Grotesk are gone; do not reintroduce a page-local palette that diverges from the Dashboard shell.
+- **Filter toolbar + chips** sits above the table: global search, UBC Tag text filter, an Asset Type segmented control (Bootstrap `btn-check` radio group, All/ME/EL/BF), Attribute Set and Asset Group multi-selects, and Reset. Below it, active filters render as removable chips with a live `Showing X of Y entries` count. Filterable columns are exactly UBC Tag, Asset Type, Attribute Set and Asset Group; Main Asset, Description and Actions are deliberately not filterable.
+- Attribute Set and Asset Group reuse the shared **`BuildingMultiselect`** component (`Dashboard/static/building-multiselect.js`/`.css`). Consume it only through its documented markup contract and `create(root, {allLabel, emptyLabel})` options and load it with a `?v=` cache-bust — **never fork it** (four-copy byte-identical rule, see `review_apps.rules.md` → "Building Filter Rules").
+- Facet options are computed from the loaded rows against every **other** active filter, with the currently checked values unioned back in so a selection never disappears from its own list; when `setOptions()` reports the selection self-healed, the filter pass re-runs once. Same pattern as the FLS `updatePropertyFilterOptions`.
+- The filter card and its ancestors must stay free of `transform`/`filter`/`will-change`: `.ms-panel` is `position: fixed`, and a transformed ancestor would become its containing block and misplace the dropdown.
+- Sticky `thead` and the sticky Actions column need **opaque** backgrounds for every row state (base, zebra, hover) or cells smear over content during horizontal scroll.
+- Sort headers keep `aria-sort` in sync (`ascending`/`descending`/`none`) alongside the chevron icon.
+- All client-side interpolation goes through `escapeHtml()` — table cells, `data-key` attributes, aria-labels, chip labels and the load-failure alert; toast bodies use `textContent`. Missing values render an em dash, never the string `undefined`.
+- Asset Type is constrained to **ME / EL / BF** both in the modal `<select>` and server-side via `DICTIONARY_ALLOWED_TYPES` (400 on anything else). The old `BP` option was wrong — the platform's backflow code is `BF`.
+- `dictionary_index()` passes `can_edit` (the `dictionary/dictionary` **editor** permission) to the template. Viewers get a read-only page: no Add button, no Actions column, no modals in the DOM. This is a UI affordance only — the `@require_permission` decorators on the API remain the authority.
+- The route also passes `acshell_active='dict'`. The shared `shell.js` `APPS` map has no `dict` entry yet, so the sidebar still falls back to highlighting `Dashboard`; adding that entry is a five-copy `shell.js` change and is tracked separately.
+
+### Dictionary Audit Rules (2026-08-10)
+
+- `POST /api/assets` and `POST /api/assets/delete` write `audit_trail` rows through `_log_dictionary_audit()`.
+- The dictionary is a **file**, not a DB row, so there is no caller transaction to join: the helper opens its own short-lived connection, calls `audit.logger.log_change`, commits, and closes. The whole body is wrapped in `try/except` — the file write has already succeeded by then, so an audit failure is logged and swallowed, never surfaced as a request error.
+- Call shape: `qr_code=None` (a dictionary key is not a QR code), `app_name="dashboard_dictionary"`, `table_name="mechanical_dictionary"`, `record_pk="<TAG|TYPE>"`, `source="human"` (`modified_by` resolves to the logged-in user).
+- `op_type` is `INSERT` / `UPDATE` / `DELETE` only — the `audit_trail` CHECK constraint rejects anything else.
+- Audited fields are `attribute_set`, `asset_group`, `main_asset`, `description`, `asset_type` plus a synthetic `dictionary_key` field. The legacy duplicated `type` key is excluded (it mirrors `asset_type` and would double every row). `dictionary_key` records renames and guarantees an INSERT always writes at least one row.
+- On edit, the previous entry must be snapshotted **before** the legacy-key migration loop in `save_dictionary_asset()` — that pass deletes the original key and the old values become unrecoverable.
 
 ## Photo API Rules
 

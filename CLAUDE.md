@@ -275,8 +275,9 @@ python API_interface_ME_ver00.py <qr_code>
 
 ### Edit Mechanical Dictionary
 
-**Dashboard UI:** Login as Admin → "Dictionary Management" → edit inline
-**Direct file:** `dictionary/mechanical_dictionary.py` (AST-safe)
+**Dashboard UI:** `/dictionary` → "Dictionary Management for Asset Tags". Add/Edit open a modal; delete is type-to-confirm. The toolbar filters UBC Tag, Asset Type, Attribute Set and Asset Group (plus a global search), with removable chips and a live count. Access splits on the `dictionary/dictionary` permission — **viewer** sees a read-only table, **editor** gets CRUD. Asset Type is restricted to ME/EL/BF server-side (`DICTIONARY_ALLOWED_TYPES`); `BP` is not a valid code. Saves and deletes write `audit_trail` rows (`app_name=dashboard_dictionary`).
+
+**Direct file:** `dictionary/mechanical_dictionary.py` (AST-safe). Despite the name it holds all three disciplines.
 
 Both use `ast.literal_eval()` for reads and `json.dumps()` for writes.
 
