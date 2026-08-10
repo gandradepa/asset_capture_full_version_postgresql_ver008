@@ -199,9 +199,12 @@
             box-shadow: 0 0 0 3px rgba(0, 85, 183, 0.12);
         }
 
+        /* Pinned rather than flexible: as a growing item it absorbed all the
+           toolbar's slack and rendered 294-528px depending on viewport. Reset
+           now takes the slack via its margin-left:auto. */
         .filter-field--search {
-            flex: 1 1 18rem;
-            min-width: 14rem;
+            flex: 0 0 6.5rem;
+            min-width: 6.5rem;
         }
 
         .filter-field--tag {
@@ -696,8 +699,9 @@
                 <label for="filter-search">Search all</label>
                 <div class="input-group">
                     <span class="input-group-text"><i data-lucide="search" width="16"></i></span>
-                    <input type="search" id="filter-search" class="form-control"
-                        placeholder="Tag, description, group, attribute set…" autocomplete="off">
+                    <input type="search" id="filter-search" class="form-control" placeholder="Search…"
+                        title="Search across tag, type, attribute set, asset group, main asset and description"
+                        autocomplete="off">
                 </div>
             </div>
 
