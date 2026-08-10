@@ -2547,6 +2547,7 @@ def review(doc_id):
         avg_ai_conf=avg_ai_conf,
         avg_ai_conf_display=avg_ai_conf_display,
         capture_info=_fetch_capture_info(qr, building, "BF"),
+        capture_notes=get_qr_capture_notes().get(qr, ""),
         installation_date=get_installation_date(qrdb, DB_PATH, qr),
         images=images,
         asset_group_options=asset_group_options,
