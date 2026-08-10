@@ -46,6 +46,45 @@ The retry guard above prevents loss but left no trace an operator could find: a 
 - Coverage: `test/_json_sync_guard_probe.py` scenarios **G1–G5** (per reviewer). EL is not yet wired — it has the pass-level guard but no `_record_sync_warning`.
 - Known open item: `_connectable()` is `qrdb.is_postgres() or os.path.exists(DB_PATH)`, i.e. a pure env read under PostgreSQL, so the pass-level pre-check never tests reachability in production. Loss is still prevented by the `SDI_WRITE_FAILED` path. Deliberately deferred — a real probe needs a connect timeout plumbed through the shared `db.py` and would add blocking latency on `before_request`; the new `SDI_WRITE_FAILED` audit rows will show whether retry storms actually occur, and that evidence should drive the decision.
 
+## EL Listing Performance Rules (2026-08-10)
+
+The EL listing pipeline was profiled on the VM and rebuilt around three rules. Measured end to end
+(same routes, byte-identical payloads): landing 5.27s → 0.11s, `/review-all` 12.38s → 0.18s,
+`/review-distribution` 13.13s → 0.21s, single-asset review 5.6s → 0.11s (**≈98% faster**).
+
+- **Connections are pooled, not opened per query.** `review/Asset_dashboard_browser_EL/db.py` holds a
+  lazy per-process `psycopg2.pool.ThreadedConnectionPool` (`minconn=2`, `maxconn=5`); `get_connection()`
+  checks out, and `close()` / `__exit__` commit-or-rollback then **`putconn`**. A fresh PG connect cost
+  ~12ms and the pipeline issued hundreds per request — that was 78% of page time. Rules: `minconn` must
+  cover real nesting depth (psycopg2 only *retains* `minconn` idle conns, and `sld_blueprint` holds two
+  at once); the pool is created on first checkout so it is always **post-fork** (gunicorn runs without
+  `--preload`); a pool inherited across a fork is abandoned, never closed (those sockets belong to the
+  parent); every checkout is liveness-pinged so a PG restart cannot hand out a dead connection; a
+  connection that cannot commit or roll back is returned with `close=True`. `DB_POOL_DISABLED=1`
+  restores connect-per-call for local testing — production rollback is file-restore + HUP.
+  Callers are unchanged: every `get_connection` use stays `with`-scoped or `finally:`-closed, and
+  double-release is idempotent.
+- **Per-item lookups are prefetched once per load, never per row.** `load_json_items` builds
+  `_build_building_process_map()`, `_build_fed_from_amperage_map()` and `_build_qr_locations_map()`
+  in one query each. Parity is load-bearing: the building map keys on the **raw** `Buildings.Code`
+  (the point query it replaces matches `"Code" = ?` exactly, so stripping would resolve buildings the
+  old path rejected) and re-raises the same `BuildingProcessError` → `[WARN] Skipping` → `continue`;
+  the fed-from map mirrors the original WHERE clause and uses `setdefault` for the old unordered
+  `LIMIT 1`. Each builder returns `None` on failure and the per-item path runs unchanged. The listing
+  reads locations from the map rather than the unbounded `lru_cache`, which also **fixes a staleness
+  bug** (an edited Location previously appeared only after a worker recycle); the single-asset review
+  route keeps the cached helper.
+- **One load per process bucket per request.** `get_filtered_data_and_counts` and
+  `_get_card_scope_data` accept `preloaded_items`; `_render_dashboard_view` loads buckets `0/1/2` once
+  and passes each to both consumers. They cannot be derived from one another — the cards include
+  archived rows and ignore the confidence range while the tables do not — so both must read the *same
+  load*, not each other's output. The shared list is shallow-copied on use because
+  `get_filtered_data_and_counts` sorts in place.
+- Dictionary lookups reuse the pre-sorted `MECH_PREFIX_KEYS` instead of re-sorting every key per call,
+  and the `[EL-DICT-*]` traces are gated behind `EL_DICT_DEBUG=1` (they ran up to ~1,500 times per page).
+- **Any change here must be parity-checked, not eyeballed:** hash the sorted `load_json_items` output
+  per bucket before and after, and diff card metrics + row sets across distribution/building scenarios.
+
 ## Approval Rules
 
 - Approval toggles update both the JSON payload and DB state.

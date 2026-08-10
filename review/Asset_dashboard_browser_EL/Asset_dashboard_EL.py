@@ -912,9 +912,19 @@ def _get_entry_asset_type(entry: dict) -> set[str]:
     return normalized
 
 
+# Dictionary lookups run a few times per listed asset (hundreds per page), and
+# each one used to emit two stdout lines into the journal. Opt in when debugging.
+_EL_DICT_DEBUG = os.environ.get("EL_DICT_DEBUG", "").strip().lower() in ("1", "true", "yes")
+
+
+def _dict_debug(message: str) -> None:
+    if _EL_DICT_DEBUG:
+        print(message)
+
+
 def _get_mechanical_entry(tag: str, asset_type: str = None):
     """Look up mechanical dictionary entry with composite key support (Tag|Type).
-    
+
     Priority order:
     1. Exact composite key match (e.g., "PNL-100" matches "PNL-100|EL")
     2. Composite prefix match (e.g., "PNL-100" matches "PNL|EL")
@@ -923,50 +933,54 @@ def _get_mechanical_entry(tag: str, asset_type: str = None):
     current_dict = _get_live_mechanical_dictionary()
     if not tag or not current_dict:
         return None
-    
+
     # Default to EL context
     clean_types = _normalize_asset_type_values(asset_type or "EL")
     current_type = next(iter(clean_types)) if clean_types else "EL"
     clean_tag = tag.strip().upper()
-    
-    print(f"[EL-DICT-LOOKUP] UBC: '{clean_tag}', Type: '{current_type}'")
-    
+
+    _dict_debug(f"[EL-DICT-LOOKUP] UBC: '{clean_tag}', Type: '{current_type}'")
+
     # STEP 1: Try exact composite key match
     composite_key = f"{clean_tag}|{current_type}"
     if composite_key in current_dict:
-        print(f"[EL-DICT-MATCH] Exact composite key: {composite_key}")
+        _dict_debug(f"[EL-DICT-MATCH] Exact composite key: {composite_key}")
         return current_dict[composite_key]
-    
-    # STEP 2: Try composite prefix matching
-    for key in sorted(current_dict.keys(), key=len, reverse=True):
+
+    # STEP 2: Try composite prefix matching.
+    # MECH_PREFIX_KEYS is the same length-desc sort of the same keys, rebuilt by
+    # _get_live_mechanical_dictionary() (called above) whenever the file reloads
+    # — so it is always a consistent pair with current_dict, and re-sorting all
+    # keys on every lookup is pure waste.
+    for key in MECH_PREFIX_KEYS:
         if '|' not in key:
             continue  # Skip simple keys in this pass
-        
+
         try:
             tag_prefix, key_type = key.split('|', 1)
             if clean_tag.startswith(tag_prefix.upper()) and key_type.upper() == current_type:
-                print(f"[EL-DICT-MATCH] Composite prefix: {key} (matched {clean_tag})")
+                _dict_debug(f"[EL-DICT-MATCH] Composite prefix: {key} (matched {clean_tag})")
                 return current_dict[key]
         except ValueError:
             continue  # Skip malformed keys
-    
+
     # STEP 3: Fall back to simple key matching (legacy support)
     for prefix in MECH_PREFIX_KEYS:
         if '|' in prefix:
             continue  # Skip composite keys in legacy matching
-        
+
         if clean_tag.startswith(prefix.upper()):
             entry = current_dict.get(prefix)
             d_types = _get_entry_asset_type(entry)
-            
+
             # Type compatibility check
             if clean_types and d_types and clean_types.isdisjoint(d_types):
                 continue
-            
-            print(f"[EL-DICT-MATCH] Legacy simple key: {prefix} (matched {clean_tag})")
+
+            _dict_debug(f"[EL-DICT-MATCH] Legacy simple key: {prefix} (matched {clean_tag})")
             return entry
-    
-    print(f"[EL-DICT-NO-MATCH] No dictionary match found for UBC: {clean_tag}, Type: {current_type}")
+
+    _dict_debug(f"[EL-DICT-NO-MATCH] No dictionary match found for UBC: {clean_tag}, Type: {current_type}")
     return None
 
 
@@ -1719,6 +1733,127 @@ def _resolve_el_fed_from_amperage_value(building: str, supply_from: str) -> str:
     except Exception:
         return ""
 
+
+# --- listing prefetch maps ---------------------------------------------------
+# The listing pipeline used to issue one point query (and, before pooling, one
+# connection) PER ITEM for the building process, the fed-from amperage and the
+# QR location. These builders fetch the same data in one query each; the lookup
+# helpers below must keep byte-parity with the per-item versions they replace.
+
+def _build_building_process_map() -> dict:
+    """{raw Buildings.Code: raw Process} — one query for legacy_flow.get_building_process.
+
+    Keys are the RAW stored codes (NOT stripped): the point query this replaces
+    matches `"Code" = ?` exactly, so stripping here would resolve buildings the
+    per-item path would have rejected.
+    """
+    mapping = {}
+    if not _connectable():
+        return mapping
+    try:
+        with qrdb.get_connection(sqlite_path=DB_PATH) as conn:
+            cur = conn.execute('SELECT "Code", "Process" FROM "Buildings"')
+            for row in cur.fetchall():
+                code = row[0]
+                if code is None:
+                    continue
+                mapping.setdefault(str(code), row[1])  # first row wins, as LIMIT-less fetchone did
+    except Exception as exc:
+        print(f"[WARN] Building process prefetch failed ({exc}); falling back to per-item lookups.")
+        return None
+    return mapping
+
+
+def _building_process_from_map(process_map: dict, building_code):
+    """Map-backed twin of legacy_flow.get_building_process (same raise contract)."""
+    row_value = process_map.get(str(building_code or ""))
+    value = (row_value if row_value is not None else "").strip()
+    if value in ("Standard", "Legacy"):
+        return value
+    raise el_legacy_flow.BuildingProcessError(building_code)
+
+
+def _build_fed_from_amperage_map() -> dict:
+    """{(UPPER(TRIM(building)), UPPER(TRIM(equipment id))): TRIM(amperage)}.
+
+    Mirrors _get_el_fed_from_amperage_value's WHERE clause. `setdefault` keeps
+    the first row, matching the original unordered `LIMIT 1`.
+    """
+    mapping = {}
+    if not _connectable():
+        return mapping
+    try:
+        with qrdb.get_connection(sqlite_path=DB_PATH) as conn:
+            cur = conn.execute(
+                '''
+                SELECT UPPER(TRIM(COALESCE("Building", ''))),
+                       UPPER(TRIM(COALESCE("Equipment ID", ''))),
+                       TRIM(COALESCE("Amperage Rating", ''))
+                FROM "electrical_building_schema"
+                WHERE TRIM(COALESCE("new_draw", '')) = 'TRUE'
+                '''
+            )
+            for building, equipment_id, amperage in cur.fetchall():
+                mapping.setdefault((building or "", equipment_id or ""), str(amperage or "").strip())
+    except Exception as exc:
+        print(f"[WARN] Fed-from amperage prefetch failed ({exc}); falling back to per-item lookups.")
+        return None
+    return mapping
+
+
+def _fed_from_amperage_from_map(amperage_map: dict, building: str, supply_from: str) -> str:
+    """Map-backed twin of _get_el_fed_from_amperage_value (same guards)."""
+    building_value = str(building or "").strip()
+    supply_from_value = _normalize_el_supply_from_lookup_value(supply_from)
+    if not building_value or not supply_from_value:
+        return ""
+    return amperage_map.get((building_value.upper(), supply_from_value.upper()), "")
+
+
+def _build_qr_locations_map() -> dict:
+    """{QR code: location} in one query (ME's get_qr_locations pattern).
+
+    Also fixes a staleness bug: the listing previously read locations through
+    `_fetch_qr_code_location`'s unbounded lru_cache, so an edited Location only
+    appeared after a worker recycle. The single-asset review route keeps the
+    cached helper.
+    """
+    mapping = {}
+    if not _connectable():
+        return mapping
+    try:
+        qr_col, loc_col = _resolve_qr_codes_columns()
+        if not qr_col or not loc_col:
+            print(f"[WARN] QR_codes lookup missing columns: qr={qr_col}, location={loc_col}")
+            return mapping
+        with qrdb.get_connection(sqlite_path=DB_PATH) as conn:
+            cur = conn.execute(f'SELECT "{qr_col}", "{loc_col}" FROM "{QR_CODES_TABLE}"')
+            for qr_value, location in cur.fetchall():
+                if qr_value is None:
+                    continue
+                mapping.setdefault(str(qr_value).strip(), str(location or "").strip())
+    except Exception as exc:
+        print(f"[WARN] QR location prefetch failed ({exc}); falling back to per-item lookups.")
+        return None
+    return mapping
+
+
+def _apply_qr_location_fallback_from_map(data: dict, qr_code_id: str, locations_map: dict) -> bool:
+    """Map-backed twin of _apply_qr_location_fallback."""
+    if not isinstance(data, dict):
+        return False
+    current_location = str(data.get("Location") or "").strip()
+    if current_location:
+        if data.get("Location") != current_location:
+            data["Location"] = current_location
+            return True
+        return False
+    qr_location = locations_map.get((qr_code_id or "").strip(), "")
+    if not qr_location:
+        return False
+    data["Location"] = qr_location
+    return True
+
 def _get_el_fed_from_amperage_uom_value(fed_from_amperage_value) -> str:
     return "A" if str(fed_from_amperage_value or "").strip() else ""
 
@@ -2396,6 +2531,11 @@ def load_json_items(process_target: str = "0"):
     captured_by_map = get_qr_captured_by()
     if process_map is None:
         process_map = {}
+    # Prefetched once per load, replacing three per-item point queries. A None
+    # here means the prefetch failed; the per-item path is then used unchanged.
+    building_process_map = _build_building_process_map()
+    fed_from_amperage_map = _build_fed_from_amperage_map()
+    locations_map = _build_qr_locations_map()
 
     for filename in os.listdir(JSON_DIR):
         if not filename.endswith(".json") or filename.endswith("_raw_ocr.json"):
@@ -2435,19 +2575,27 @@ def load_json_items(process_target: str = "0"):
             # Non-request/batch path (no Flask request context to flash into):
             # a blank/missing Buildings.Process stops just this record and logs
             # a warning (invariant: no silent default), then moves on.
-            with qrdb.get_connection(sqlite_path=DB_PATH) as _bp_conn:
-                try:
-                    _process = el_legacy_flow.get_building_process(_bp_conn, building)
-                except el_legacy_flow.BuildingProcessError as exc:
-                    print(f"[WARN] Skipping {filename}: {exc}")
-                    continue
+            try:
+                if building_process_map is not None:
+                    _process = _building_process_from_map(building_process_map, building)
+                else:
+                    with qrdb.get_connection(sqlite_path=DB_PATH) as _bp_conn:
+                        _process = el_legacy_flow.get_building_process(_bp_conn, building)
+            except el_legacy_flow.BuildingProcessError as exc:
+                print(f"[WARN] Skipping {filename}: {exc}")
+                continue
 
             amperage_value = _get_el_amperage_value(data)
             (equipment_id_value, equipment_type_value, power_type_value,
              power_rating_value, power_rating_uom, supply_from_value,
              fed_from_equipment_id_value) = _compute_el_upstream_fields(data, _process)
             data["Supply From"] = supply_from_value
-            fed_from_amperage_value = _resolve_el_fed_from_amperage_value(building, data.get("Supply From"))
+            if fed_from_amperage_map is not None:
+                fed_from_amperage_value = _fed_from_amperage_from_map(
+                    fed_from_amperage_map, building, data.get("Supply From"))
+            else:
+                fed_from_amperage_value = _resolve_el_fed_from_amperage_value(
+                    building, data.get("Supply From"))
             fed_from_amperage_uom = _get_el_fed_from_amperage_uom_value(fed_from_amperage_value)
             data["Ampere"] = amperage_value
             data["Equipment ID"] = equipment_id_value
@@ -2494,7 +2642,10 @@ def load_json_items(process_target: str = "0"):
                     el_legacy_flow.apply_legacy_rules(data)
                 else:
                     _apply_dictionary_priority(data, tag_for_group)   # standard path, byte-identical
-            _apply_qr_location_fallback(data, qr)
+            if locations_map is not None:
+                _apply_qr_location_fallback_from_map(data, qr, locations_map)
+            else:
+                _apply_qr_location_fallback(data, qr)
 
             asset_group = data.get("Asset Group")
             tag = tag_for_group
@@ -2514,7 +2665,8 @@ def load_json_items(process_target: str = "0"):
             missing_list = ", ".join(
                 friendly_map[t] for t in required_show if not present_map.get(t, False)
             )
-            space_from_db = _fetch_qr_code_location(qr)
+            space_from_db = (locations_map.get((qr or "").strip(), "")
+                             if locations_map is not None else _fetch_qr_code_location(qr))
             sdi_val = 1 if str(current_status) == "2" else 0
             avg_ai_conf, avg_ai_conf_display = _normalize_avg_ai_conf(_extract_avg_ai_conf(raw))
             comp_score, comp_score_display = _normalize_avg_ai_conf(raw.get("completeness_score"))
@@ -2952,7 +3104,7 @@ def _parse_filter_values(raw):
     return out
 
 
-def get_filtered_data_and_counts(query_args, process_target: str = "0", apply_client_filters: bool = True, distribution_mode: str = None):
+def get_filtered_data_and_counts(query_args, process_target: str = "0", apply_client_filters: bool = True, distribution_mode: str = None, preloaded_items=None):
 
     flagged_filter = query_args.get("flagged")
     modified_filter = query_args.get("modified")
@@ -2984,7 +3136,11 @@ def get_filtered_data_and_counts(query_args, process_target: str = "0", apply_cl
     filter_groups = _parse_filter_values(query_args.get("filter_group"))
     filter_date = (query_args.get("filter_date") or "").strip()
 
-    all_data = load_json_items(process_target)
+    # `preloaded_items` lets one caller share a single load across the several
+    # consumers that used to each re-run the whole pipeline for the same bucket.
+    # Shallow-copied because this function sorts its result list in place, and a
+    # shared load must never be reordered underneath another consumer.
+    all_data = list(preloaded_items) if preloaded_items is not None else load_json_items(process_target)
     if hide_archived:
         archived_qrs = get_archived_qrs()
         base_data = [item for item in all_data if item.get("qr_code") not in archived_qrs]
@@ -3063,8 +3219,8 @@ def get_filtered_data_and_counts(query_args, process_target: str = "0", apply_cl
     data_to_filter.sort(key=lambda x: str(x.get('Capture Date') or ''), reverse=True)
     return data_to_filter, base_data
 
-def _get_card_scope_data(process_target: str, building_filter: str = "", distribution_mode: str = None):
-    data = load_json_items(process_target)
+def _get_card_scope_data(process_target: str, building_filter: str = "", distribution_mode: str = None, preloaded_items=None):
+    data = list(preloaded_items) if preloaded_items is not None else load_json_items(process_target)
     if distribution_mode in ("only", "exclude"):
         dist_groups = get_distribution_asset_groups()
         if distribution_mode == "only":
@@ -3188,13 +3344,21 @@ def _render_dashboard_view(distribution_mode=None, base_route="main.index", page
     selected_building_codes = _parse_filter_values(request.args.get("filter_building") or request.args.get("building"))[:1]
     selected_building_code = selected_building_codes[0] if selected_building_codes else ""
 
-    data_new_filtered, data_new_base = get_filtered_data_and_counts(request.args, "0", apply_client_filters=False, distribution_mode=distribution_mode)
-    data_update_filtered, data_update_base = get_filtered_data_and_counts(request.args, "1", apply_client_filters=False, distribution_mode=distribution_mode)
-    data_manual_filtered, data_manual_base = get_filtered_data_and_counts(request.args, "2", apply_client_filters=False, distribution_mode=distribution_mode)
+    # One load per process bucket, shared by BOTH consumers below. The tables and
+    # the summary cards apply different filters (cards include archived rows and
+    # ignore the confidence range), so they cannot be derived from one another —
+    # but they can read the same underlying load instead of re-running it.
+    items_new = load_json_items("0")
+    items_update = load_json_items("1")
+    items_manual = load_json_items("2")
 
-    card_new = _get_card_scope_data("0", selected_building_code, distribution_mode=distribution_mode)
-    card_update = _get_card_scope_data("1", selected_building_code, distribution_mode=distribution_mode)
-    card_manual = _get_card_scope_data("2", selected_building_code, distribution_mode=distribution_mode)
+    data_new_filtered, data_new_base = get_filtered_data_and_counts(request.args, "0", apply_client_filters=False, distribution_mode=distribution_mode, preloaded_items=items_new)
+    data_update_filtered, data_update_base = get_filtered_data_and_counts(request.args, "1", apply_client_filters=False, distribution_mode=distribution_mode, preloaded_items=items_update)
+    data_manual_filtered, data_manual_base = get_filtered_data_and_counts(request.args, "2", apply_client_filters=False, distribution_mode=distribution_mode, preloaded_items=items_manual)
+
+    card_new = _get_card_scope_data("0", selected_building_code, distribution_mode=distribution_mode, preloaded_items=items_new)
+    card_update = _get_card_scope_data("1", selected_building_code, distribution_mode=distribution_mode, preloaded_items=items_update)
+    card_manual = _get_card_scope_data("2", selected_building_code, distribution_mode=distribution_mode, preloaded_items=items_manual)
     card_items = card_new + card_update + card_manual
     card_total_assets = len(card_items)
     card_pending_review = sum(1 for item in card_items if item.get("Approved") != "True")

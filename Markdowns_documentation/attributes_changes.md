@@ -2,6 +2,40 @@
 
 Current documentation refresh: 2026-08-10.
 
+## 2026-08-10: EL review app — data-loading performance overhaul (≈98% faster)
+
+### Summary
+
+The EL flow (landing → General / Distribution dashboards → single-asset review) was profiled on the
+production VM and rebuilt in four steps. Root cause was **not** file I/O: `db.py.get_connection()`
+opened a fresh PostgreSQL connection per query and closed it on scope exit, and the listing pipeline
+issued hundreds per request — cProfile attributed 4.5s of a 5.8s load to `psycopg2._connect` alone
+(366 connects × ~12ms). On top of that, `_render_dashboard_view` ran `load_json_items` **six times**
+per request (three tabs + three card scopes recomputing identical data), and two per-item N+1s
+(`Buildings.Process` — only 6 distinct values — and the `electrical_building_schema` fed-from lookup)
+each opened their own connection per row.
+
+Changes, all confined to `review/Asset_dashboard_browser_EL/db.py` and `Asset_dashboard_EL.py`:
+(1) a lazy per-process `ThreadedConnectionPool` (minconn 2 / maxconn 5) with post-fork creation,
+checkout liveness ping, commit-then-`putconn` release and a `DB_POOL_DISABLED=1` escape hatch;
+(2) the three per-item lookups (building process, fed-from amperage, QR location) prefetched into
+maps once per load, with per-item fallbacks retained if a prefetch fails; (3) `preloaded_items` on
+`get_filtered_data_and_counts` / `_get_card_scope_data` so each process bucket is loaded once and
+shared by both consumers; (4) dictionary lookups reuse the pre-sorted `MECH_PREFIX_KEYS` and the
+`[EL-DICT-*]` traces are gated behind `EL_DICT_DEBUG=1`.
+
+Measured on the same routes, before vs after, with **identical response payload sizes** (proving
+unchanged output): landing 5.27s → 0.11s, `/review-all` 12.38s → 0.18s, `/review-all?building=217`
+12.60s → 0.18s, `/review-distribution` 13.13s → 0.21s, `+building=217` 12.23s → 0.21s, single-asset
+review 5.6s → 0.11s. Parity verified by sha256 of the sorted `load_json_items` output per bucket
+(identical) and by card-metric + row-set diffs across six distribution/building scenarios
+(identical). Idle pooled connections settle at 6 = 3 workers × minconn 2.
+
+Side effect, deliberate: the listing now reads QR locations from a per-load map instead of an
+unbounded `lru_cache`, so an edited Location shows immediately rather than after a worker recycle.
+No schema, template, UI, API, or write-path changes. Follow-up: roll the pooled `db.py` to
+ME / BF / Dashboard / SDI.
+
 ## 2026-08-10: Fire-alarm tag rules restructured — `fire_alarm_control` family adds Autocall
 
 ### Summary
