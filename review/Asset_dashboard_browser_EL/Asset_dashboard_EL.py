@@ -4064,6 +4064,7 @@ def review(doc_id):
         avg_ai_conf_display=avg_ai_conf_display,
         space=space,
         capture_info=capture_info,
+        capture_notes=get_qr_capture_notes().get(qr, ""),
         installation_date=get_installation_date(qrdb, DB_PATH, qr),
         images=images,
         attribute_options=[],
