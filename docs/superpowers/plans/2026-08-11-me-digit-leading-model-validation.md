@@ -73,7 +73,7 @@ class MeDigitLeadingModelTests(unittest.TestCase):
         self.assertEqual(parsed["Serial Number"], "5340RFS13150043")
 
     def test_relaxed_shape_does_not_accept_ratings_tags_or_numeric_ids(self) -> None:
-        rejected = ("208V", "1200 VAC", "RMD-0045", "118668")
+        rejected = ("208V", "1200 VAC", "HUM 5", "118668")
 
         for value in rejected:
             with self.subTest(value=value):

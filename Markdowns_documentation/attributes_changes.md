@@ -1773,3 +1773,9 @@ All three use `Space Name = -` and `Floor Name = Floor: -`. `Z02Notfound_Room` d
 The Life Cycle Assessment now uses **Installation Date as its only Complete / Incomplete criterion**. A row with an Installation Date moves to the Complete tab even when Make, Space Number, or Serial Number is missing; a row without an Installation Date remains Incomplete. The on-screen hints, missing-value highlighting, XLSX highlighting, and operating documentation follow the same rule.
 
 The redundant **Missing field** filter was removed from the Incomplete tab in the same workstream. Since every Incomplete row is missing Installation Date by definition, the filter offered no additional distinction.
+
+## 2026-08-11: ME digit-leading model-code validation
+
+Mechanical extraction now preserves explicitly labeled, short digit-leading model codes in the bounded `2-5 digits + hyphen + 2-4 letters` form. This fixes QR `0000188207`, whose Honeywell Analytics Model `301-EM` was read correctly by OCR but rejected by the legacy letter-leading short-model gate, leaving the JSON and `sdi_dataset` Model fields blank.
+
+The change is intentionally narrow: the printed hyphen and multi-letter suffix are required, sequence `-0` remains the sole owner of Model, and rating-like or numeric values such as `208V`, `1200 VAC`, and `118668` remain invalid model candidates. Regression coverage verifies both direct validation and parsing of the explicit `Model: 301-EM` label while retaining the existing long-model and Model/Serial collision tests.
