@@ -106,18 +106,74 @@
             z-index: 20;
         }
 
-        /* Thumbnails Strip */
-        .thumbs-strip {
+        /* Thumbnails Strip + Capture Notes rail */
+        .thumbs-footer {
             height: 300px;
             background: #e9ecef;
             border-top: 1px solid #dee2e6;
+            display: flex;
+            align-items: stretch;
+            flex-shrink: 0;
+            min-width: 0;
+        }
+
+        .thumbs-strip {
+            height: 100%;
             display: flex;
             align-items: center;
             padding: 0 20px;
             gap: 15px;
             overflow-x: auto;
-            flex-shrink: 0;
+            flex: 1 1 auto;
+            min-width: 0;
             justify-content: flex-start;
+        }
+
+        .capture-notes-box {
+            width: 260px;
+            margin: 20px 20px 20px 0;
+            padding: 12px 14px;
+            background: #fff;
+            border: 1px solid #cfe8d8;
+            border-left: 4px solid #198754;
+            border-radius: 8px;
+            color: #1f2937;
+            overflow: hidden;
+            flex-shrink: 0;
+            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06);
+            text-align: left;
+        }
+
+        .capture-notes-box.is-empty {
+            border-color: #dee2e6;
+            border-left-color: #adb5bd;
+            color: #6c757d;
+        }
+
+        .capture-notes-title {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            font-size: 0.7rem;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.04em;
+            color: #198754;
+            margin-bottom: 6px;
+        }
+
+        .capture-notes-box.is-empty .capture-notes-title {
+            color: #6c757d;
+        }
+
+        .capture-notes-text {
+            font-size: 0.82rem;
+            line-height: 1.35;
+            max-height: 200px;
+            overflow-y: auto;
+            white-space: pre-line;
+            word-break: break-word;
+            text-align: left;
         }
 
         .thumb {
@@ -569,25 +625,35 @@
                 <div id="map_widget"></div>
             </div>
 
-            <div class="thumbs-strip">
-                {% if images %}
-                {% for tag,label in {'-0':'Asset Plate','-1':'Asset Plate (Opt)','-2':'Main Asset','-3':'Extra Photo'}.items() %}
-                {% set im = images.get(tag) %}
-                <div class="thumb {% if default_tag == tag %}active{% endif %}"
-                    data-url="{{ im.url if im and im.exists else '' }}">
-                    {% if im and im.exists %}
-                    <img src="{{ im.url }}" alt="{{ label }}">
-                    {% else %}
-                    <div
-                        class="d-flex align-items-center justify-content-center h-100 text-muted bg-light small flex-column">
-                        <i class="bi bi-slash-circle mb-1 opacity-50"></i> <span class="opacity-75"
-                            style="font-size: 0.7rem;">Missing</span>
+            <div class="thumbs-footer">
+                <div class="thumbs-strip">
+                    {% if images %}
+                    {% for tag,label in {'-0':'Asset Plate','-1':'Asset Plate (Opt)','-2':'Main Asset','-3':'Extra Photo'}.items() %}
+                    {% set im = images.get(tag) %}
+                    <div class="thumb {% if default_tag == tag %}active{% endif %}"
+                        data-url="{{ im.url if im and im.exists else '' }}">
+                        {% if im and im.exists %}
+                        <img src="{{ im.url }}" alt="{{ label }}">
+                        {% else %}
+                        <div
+                            class="d-flex align-items-center justify-content-center h-100 text-muted bg-light small flex-column">
+                            <i class="bi bi-slash-circle mb-1 opacity-50"></i> <span class="opacity-75"
+                                style="font-size: 0.7rem;">Missing</span>
+                        </div>
+                        {% endif %}
+                        <div class="thumb-label">{{ label }}</div>
                     </div>
+                    {% endfor %}
                     {% endif %}
-                    <div class="thumb-label">{{ label }}</div>
                 </div>
-                {% endfor %}
-                {% endif %}
+                {% set review_capture_note = (capture_notes or '')|trim %}
+                <aside class="capture-notes-box {% if not review_capture_note %}is-empty{% endif %}">
+                    <div class="capture-notes-title">
+                        <i class="bi bi-journal-text"></i>
+                        <span>Capture Notes</span>
+                    </div>
+                    <div class="capture-notes-text">{{- review_capture_note if review_capture_note else 'No capture note' -}}</div>
+                </aside>
             </div>
         </div>
 

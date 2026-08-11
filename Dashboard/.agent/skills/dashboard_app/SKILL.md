@@ -78,13 +78,15 @@ Dashboard/
 
 | Method | Path | Function | Description |
 |--------|------|----------|-------------|
-| GET | `/dictionary` | `dictionary_index()` | Dictionary management page |
-| GET | `/api/dictionary/assets` | `get_dictionary_assets()` | JSON list of dictionary entries |
-| POST | `/api/dictionary/save` | `save_dictionary_asset()` | Create/update dictionary entry |
-| POST | `/api/dictionary/delete` | `delete_dictionary_asset()` | Delete dictionary entry |
-| GET | `/api/dictionary/main-assets` | `get_main_assets_dropdown()` | Dropdown options for Main Asset |
-| GET | `/api/dictionary/asset-groups` | `get_asset_groups_dropdown()` | Dropdown options for Asset Group |
-| GET | `/api/dictionary/attributes` | `get_attributes_dropdown()` | Dropdown options for Attributes |
+| GET | `/dictionary` | `dictionary_index()` | Dictionary management page (passes `can_edit`) |
+| GET | `/api/assets` | `get_dictionary_assets()` | JSON list of dictionary entries |
+| POST | `/api/assets` | `save_dictionary_asset()` | Create/update dictionary entry (audited) |
+| POST | `/api/assets/delete` | `delete_dictionary_asset()` | Delete dictionary entry (audited) |
+| GET | `/api/main-assets` | `get_main_assets_dropdown()` | Dropdown options for Main Asset |
+| GET | `/api/asset-groups` | `get_asset_groups_dropdown()` | Dropdown options for Asset Group |
+| GET | `/api/attributes` | `get_attributes_dropdown()` | Dropdown options for Attributes |
+
+The dictionary API paths are un-namespaced (`/api/assets`, not `/api/dictionary/assets`) — an artifact of the blueprint being registered without a `url_prefix`. Page access needs `dictionary/dictionary` viewer; writes need editor. Asset Type is limited to ME/EL/BF (`DICTIONARY_ALLOWED_TYPES`).
 
 ### Map Routes
 

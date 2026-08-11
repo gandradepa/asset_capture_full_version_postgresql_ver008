@@ -1,6 +1,6 @@
 ﻿# Review App (EL) Agent
 
-Current documentation refresh: 2026-08-04.
+Current documentation refresh: 2026-08-07.
 
 ## Purpose
 Electrical asset review for engineers validating panel, transformer, and distribution data against extracted JSON and source images.
@@ -23,6 +23,7 @@ Electrical asset review for engineers validating panel, transformer, and distrib
 ## Critical Conventions
 - Local and production port: `8005`.
 - The General (`/review-all`) vs Distribution (`/review-distribution`) split is data-driven (2026-08-04): assets whose `Asset Group` has `Asset_Group.elec_dist_setup = 'Y'` belong to Distribution. Loaded by `get_distribution_asset_groups()` (60s TTL cache); the static `EL_DISTRIBUTION_ASSET_GROUPS` frozenset / `sld_blueprint.py` tuple is fallback only. Move groups between views with an audited flag `UPDATE`, never by editing code.
+- The review page renders one of two server-selected form variants (2026-08-07) via `_el_form_variant(asset_group)` — never via the client-supplied `base_route`. **General** assets get the ME-style nameplate form (Manufacturer / Model / Serial Number / Year + Installation Date; Classification card; Location kept; no TSBC, no electrical tech cards) scored against `EL_REVIEW_GENERAL_SCORING_FIELDS`; **Distribution** keeps the electrical tech-card form unchanged. Nameplate values live in `sdi_dataset_EL` columns named after the JSON keys, written only for General rows; Equipment ID / Equipment Type / Power Type stay derived+stored for both variants. The General Identity card also captures the OPTIONAL `Capacity` + `Capacity (UoM)` pair (2026-08-07 follow-up) — stored/packaged like the nameplate fields but deliberately excluded from review scoring and the checklist (`EL_CAPACITY_FIELDS`). The General listing hides Supply From / Amperage Rating / Volts / Location (`generalHiddenColumns`); Distribution keeps its own hidden set. See `rules/review_apps.rules.md` → "EL Review Form Variants".
 - EL derives `Attribute`, `Asset Group`, and `Main Asset` through `_apply_tag_dictionary_first()` with mechanical fallback where required.
 - Approval toggles must not bypass the derived-field pipeline. Persisted JSON and `sdi_dataset_EL` must remain classification-complete after approval changes.
 - Keep tag normalization case-insensitive and process-aware.
@@ -40,7 +41,8 @@ Electrical asset review for engineers validating panel, transformer, and distrib
 - [ ] Image hooks still validate the EL sequence set (`-0..-3`, with `-3` being the optional **Extra Photo** included in `ALL_SHOW` but absent from `REQUIRED`).
 - [ ] The Photo column renders a `+1` chip when seq `-3` is present; the chip never triggers "Missed Photo".
 - [ ] Bulk Manual skips Approved rows, and bulk Approved uncheck skips exported / Planon-locked rows after `/check_sdi/<qr_code>`.
-- [ ] Distribution listing hides Amperage Rating, Volts, and Location only in `dashboard.html`; `review.html` remains complete.
+- [ ] Distribution listing hides Amperage Rating, Volts, and Location only in `dashboard.html`; `review.html` renders every field of the asset's form variant (Distribution assets still show/edit Ampere, Volts, and Location).
+- [ ] A General asset renders the nameplate form and its save populates `Manufacturer` / `Model` / `Serial Number` / `Year` (and, when entered, `Capacity` / `Capacity (UoM)`) on `sdi_dataset_EL`; a Distribution asset's row keeps those columns blank.
 - [ ] Reviewer-entered `Volts` values survive `Save & Next` and remain visible after the next render.
 - [ ] Reviewer-entered non-normalized `Supply From` values survive `Save & Next`; parent lookup uses the normalized `Fed From Equipment ID`.
 - [ ] After editing required EL fields, `completeness_score` / `confidence_scores` / `Avg_ai_conf` are aligned and the scheduled AI checker does not rerun the asset.

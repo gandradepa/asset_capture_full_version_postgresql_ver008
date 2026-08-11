@@ -1,406 +1,674 @@
 <!doctype html>
-<!-- Redesigned with Web Interface Guidelines -->
 <html lang="en">
 
 <head>
     <meta charset="utf-8" />
     <title>Dictionary Management for Asset Tags</title>
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <meta name="theme-color" content="#f4f7fb">
+    <meta name="theme-color" content="#f3f4f6">
     <link rel="icon" href="/static/logos/ubc-facilities_logo.jpg" type="image/jpeg">
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet" />
-    <link
-        href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Space+Grotesk:wght@500;600;700&display=swap"
-        rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="{{ url_for('static', filename='building-multiselect.css') }}?v=20260810-1">
     <script src="https://unpkg.com/lucide@latest"></script>
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="{{ url_for('static', filename='building-multiselect.js') }}?v=20260810-1"></script>
     <style>
         :root {
-            --primary: #0066ff;
-            --primary-strong: #0d47c9;
-            --accent: #00ffff;
-            --bg: #f4f7fb;
-            --surface: #ffffff;
-            --ink: #0f1724;
-            --muted: #6b7280;
-            --border: #d7dce6;
-            --danger: #c1121f;
-            --success: #0f9d58;
+            /* Enterprise Palette - "Deep Blue & Clean Slate" (shared with the Dashboard) */
+            --primary-dark: #002145;
+            --primary-accent: #0055b7;
+            --secondary-bg: #f3f4f6;
+            --card-bg: #ffffff;
+            --text-main: #111827;
+            --text-muted: #6b7280;
+            --border-subtle: #e5e7eb;
+
+            /* Semantic Colors */
+            --success-bg: #ecfdf5;
+            --success-text: #059669;
+            --danger-bg: #fef2f2;
+            --danger-text: #dc2626;
+            --warning-bg: #fffbeb;
+            --warning-text: #d97706;
+
+            /* UI Metrics */
+            --card-radius: 12px;
+            --btn-radius: 6px;
+            --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
+            --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+            --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
+
+            /* Row background states, needed opaque on the sticky Actions column */
+            --row-bg: #ffffff;
+            --row-bg-zebra: #f9fafb;
+            --row-bg-hover: #eff6ff;
         }
 
         body {
-            background: radial-gradient(circle at 15% 20%, #e9f3ff 0, #f4f7fb 26%, #f4f7fb 100%);
-            font-family: 'Inter', sans-serif;
-            color: var(--ink);
-            padding: clamp(1rem, 2vw + 0.5rem, 2rem);
-            min-height: 100vh;
+            background-color: var(--secondary-bg);
+            color: var(--text-main);
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            -webkit-font-smoothing: antialiased;
         }
 
+        .dict-page {
+            padding: 1.5rem 1.75rem 3rem;
+        }
+
+        /* --- Typography --- */
         .page-title {
-            color: var(--ink);
+            color: var(--primary-dark);
             font-weight: 700;
-            font-family: 'Space Grotesk', 'Inter', sans-serif;
-            letter-spacing: -0.01em;
-            font-size: clamp(1.75rem, 2.5vw, 2.25rem);
-            text-wrap: balance;
+            font-size: 2rem;
+            letter-spacing: -0.02em;
+            margin-bottom: 0.25rem;
         }
 
-        .section-title {
-            color: var(--ink);
-            font-weight: 600;
-            font-family: 'Space Grotesk', 'Inter', sans-serif;
-            display: flex;
+        .page-subtitle {
+            color: var(--text-muted);
+            font-size: 1.05rem;
+            font-weight: 400;
+            margin-bottom: 0;
+        }
+
+        /* --- Buttons --- */
+        .ubc-btn {
+            background-color: var(--primary-dark);
+            border: 1px solid transparent;
+            color: white;
+            font-weight: 500;
+            border-radius: var(--btn-radius);
+            padding: 0.5rem 1.25rem;
+            transition: all 0.2s;
+            box-shadow: var(--shadow-sm);
+            display: inline-flex;
             align-items: center;
             gap: 0.5rem;
         }
 
-        .ubc-btn {
-            background: linear-gradient(120deg, var(--primary-strong), var(--primary));
-            color: white;
-            font-weight: 500;
-            border: none;
-            padding: 0.5rem 1rem;
-            border-radius: 6px;
-            box-shadow: 0 8px 20px -10px rgba(0, 102, 255, 0.6);
-            transition: transform 120ms ease, box-shadow 120ms ease;
-            touch-action: manipulation;
-        }
-
-        .ubc-btn:focus-visible {
-            outline: 2px solid var(--primary);
-            outline-offset: 2px;
-        }
-
         .ubc-btn:hover {
-            background: linear-gradient(120deg, var(--primary), var(--accent));
-            color: #0b1020;
-            transform: translateY(-1px);
-            box-shadow: 0 10px 24px -12px rgba(0, 102, 255, 0.7);
+            background-color: var(--primary-accent);
+            color: white;
+            box-shadow: var(--shadow-md);
         }
 
-        .ubc-btn.compact {
-            padding: 0.4rem 0.65rem;
-            border-radius: 999px;
-            font-weight: 600;
-            gap: 0.25rem;
+        .ubc-btn-secondary {
+            background-color: white;
+            border: 1px solid var(--border-subtle);
+            color: var(--text-main);
+            font-weight: 500;
+            border-radius: var(--btn-radius);
+            padding: 0.5rem 1.25rem;
+            transition: all 0.2s;
             display: inline-flex;
             align-items: center;
-            width: auto;
+            gap: 0.5rem;
         }
 
-        .table-container {
-            background-color: var(--surface);
-            border-radius: 8px;
-            border: 1px solid var(--border);
-            overflow-x: auto;
-            overflow-y: hidden;
-            box-shadow: 0 16px 40px -24px rgba(15, 23, 36, 0.35);
-            margin-top: 1rem;
-            content-visibility: auto;
+        .ubc-btn-secondary:hover {
+            background-color: #f9fafb;
+            border-color: var(--text-muted);
+            color: var(--primary-dark);
         }
 
-        table {
-            width: 100%;
-            border-collapse: collapse;
-            min-width: 720px;
+        /* --- KPI chips (header) --- */
+        .kpi-row {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.5rem;
+            margin-top: 0.75rem;
         }
 
-        th {
-            position: sticky;
-            top: 0;
-            background-color: #101624;
-            color: white;
+        .kpi-chip {
+            align-items: baseline;
+            background: #ffffff;
+            border: 1px solid var(--border-subtle);
+            border-radius: 999px;
+            box-shadow: var(--shadow-sm);
+            display: inline-flex;
+            font-size: 0.8rem;
             font-weight: 600;
-            text-transform: uppercase;
-            font-size: 0.85rem;
-            padding: 0.75rem 1rem;
-            border-bottom: 2px solid #0b1020;
-            z-index: 2;
-            cursor: pointer;
-            /* Explicit for sortable headers */
+            gap: 0.4rem;
+            padding: 0.3rem 0.85rem;
         }
 
-        td {
-            padding: 0.75rem 1rem;
-            border-bottom: 1px solid var(--border);
-            vertical-align: middle;
+        .kpi-chip .kpi-label {
+            color: var(--text-muted);
+            font-weight: 600;
+            letter-spacing: 0.04em;
+            text-transform: uppercase;
+            font-size: 0.7rem;
+        }
+
+        .kpi-chip .kpi-value {
+            color: var(--primary-dark);
             font-size: 0.95rem;
             font-variant-numeric: tabular-nums;
+            font-weight: 700;
         }
 
-        tbody tr:nth-child(odd) {
-            background-color: #f7f8fb;
+        .kpi-chip--me .kpi-value {
+            color: var(--primary-accent);
         }
 
-        tbody tr:hover {
-            background-color: #e9f0ff;
+        .kpi-chip--el .kpi-value {
+            color: var(--success-text);
         }
 
-        .action-btn {
-            cursor: pointer;
-            width: 32px;
-            height: 32px;
-            display: inline-flex;
-            justify-content: center;
-            align-items: center;
-            border-radius: 4px;
-            border: 1px solid rgba(0, 102, 255, 0.15);
-            background: rgba(0, 102, 255, 0.08);
-            color: var(--primary);
-            margin-right: 0.5rem;
-            transition: transform 120ms ease, box-shadow 120ms ease;
-            touch-action: manipulation;
+        .kpi-chip--bf .kpi-value {
+            color: var(--warning-text);
         }
 
-        .action-btn:focus-visible {
-            outline: 2px solid var(--primary);
-            outline-offset: 2px;
-        }
-
-        .action-btn.delete {
-            color: var(--danger);
-            background-color: #fff1f3;
-            border-color: #f3c0c6;
-        }
-
-        .action-btn:hover {
-            filter: brightness(0.97);
-            transform: translateY(-1px);
-            box-shadow: 0 6px 14px -10px rgba(0, 0, 0, 0.25);
-        }
-
-        .search-bar {
-            max-width: 300px;
-        }
-
-        .badge-count {
-            background-color: var(--primary);
-            color: white;
-            padding: 0.2rem 0.6rem;
-            border-radius: 12px;
-            font-size: 0.8rem;
-            margin-left: 0.5rem;
-        }
-
-        .dictionary-header,
-        .dictionary-search-card {
+        /* --- Filter toolbar ---
+           Keep this element and its ancestors free of transform/filter: the
+           multiselect panel is position:fixed and a transformed ancestor would
+           become its containing block and misplace it. */
+        .filter-container {
+            background-color: var(--card-bg);
+            border: 1px solid var(--border-subtle);
+            border-radius: var(--card-radius);
+            padding: 1rem;
+            display: flex;
             gap: 1rem;
             flex-wrap: wrap;
+            align-items: flex-end;
+            margin-bottom: 1rem;
+            box-shadow: var(--shadow-sm);
         }
 
-        .status-bar {
-            background: linear-gradient(135deg, #0f1724 0%, #1a2334 55%, #0f1724 100%);
-            color: #e8efff;
-            border: none;
-            box-shadow: 0 18px 50px -28px rgba(0, 0, 0, 0.45);
-        }
-
-        .status-pill {
-            background: rgba(255, 255, 255, 0.08);
-            border: 1px solid rgba(255, 255, 255, 0.16);
-            border-radius: 10px;
-            padding: 0.35rem 0.7rem;
+        .filter-container label {
+            font-size: 0.75rem;
             font-weight: 600;
-            display: inline-flex;
-            align-items: center;
-            gap: 0.4rem;
+            color: var(--text-muted);
+            margin-bottom: 0.25rem;
+            display: block;
+            text-transform: uppercase;
+            white-space: nowrap;
         }
 
-        .status-pill .label {
-            color: #9fb3ff;
+        .filter-container .form-control,
+        .filter-container .form-select {
+            font-size: 0.9rem;
+            border-radius: var(--btn-radius);
+            border-color: var(--border-subtle);
+        }
+
+        .filter-container .form-control:focus {
+            border-color: var(--primary-accent);
+            box-shadow: 0 0 0 3px rgba(0, 85, 183, 0.12);
+        }
+
+        /* Pinned rather than flexible: as a growing item it absorbed all the
+           toolbar's slack and rendered 294-528px depending on viewport. Reset
+           now takes the slack via its margin-left:auto. */
+        .filter-field--search {
+            flex: 0 0 11rem;
+            min-width: 11rem;
+        }
+
+        .filter-field--tag {
+            flex: 0 1 11rem;
+        }
+
+        .filter-field--ms {
+            flex: 0 1 15rem;
+            min-width: 12rem;
+        }
+
+        .filter-field--reset {
+            margin-left: auto;
+        }
+
+        .filter-container .input-group-text {
+            background: #f9fafb;
+            border-color: var(--border-subtle);
+            border-right: 0;
+            color: var(--text-muted);
+        }
+
+        .filter-container .input-group .form-control {
+            border-left: 0;
+            padding-left: 0.25rem;
+        }
+
+        /* Segmented Asset Type control */
+        .type-segment .btn {
+            border-color: var(--border-subtle);
+            color: var(--text-muted);
             font-size: 0.85rem;
-            font-weight: 500;
+            font-weight: 600;
+            padding: 0.375rem 0.85rem;
         }
 
-        .muted {
-            color: var(--muted);
+        .type-segment .btn:hover {
+            background-color: #f9fafb;
+            color: var(--primary-dark);
         }
 
+        .type-segment .btn-check:checked+.btn {
+            background-color: var(--primary-dark);
+            border-color: var(--primary-dark);
+            color: #ffffff;
+        }
+
+        .type-segment .btn-check:focus-visible+.btn {
+            box-shadow: 0 0 0 3px rgba(0, 85, 183, 0.25);
+        }
+
+        /* --- Active filter chips --- */
+        .chip-row {
+            align-items: center;
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.5rem;
+            margin-bottom: 1rem;
+            min-height: 2rem;
+        }
+
+        .chip-row-label {
+            color: var(--text-muted);
+            font-size: 0.75rem;
+            font-weight: 600;
+            letter-spacing: 0.04em;
+            text-transform: uppercase;
+        }
+
+        .chip {
+            align-items: center;
+            background: #eff6ff;
+            border: 1px solid #dbeafe;
+            border-radius: 999px;
+            color: var(--primary-accent);
+            display: inline-flex;
+            font-size: 0.8rem;
+            font-weight: 600;
+            gap: 0.4rem;
+            max-width: 20rem;
+            padding: 0.25rem 0.35rem 0.25rem 0.7rem;
+        }
+
+        .chip .chip-text {
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .chip .chip-remove {
+            align-items: center;
+            background: transparent;
+            border: 0;
+            border-radius: 50%;
+            color: inherit;
+            display: inline-flex;
+            height: 18px;
+            justify-content: center;
+            line-height: 1;
+            padding: 0;
+            width: 18px;
+        }
+
+        .chip .chip-remove:hover {
+            background: rgba(0, 85, 183, 0.15);
+        }
+
+        .result-count {
+            color: var(--text-muted);
+            font-size: 0.85rem;
+            font-variant-numeric: tabular-nums;
+            margin-left: auto;
+        }
+
+        .result-count strong {
+            color: var(--primary-dark);
+        }
+
+        /* --- Table --- */
+        .table-container {
+            background: var(--card-bg);
+            border: 1px solid var(--border-subtle);
+            border-radius: var(--card-radius);
+            box-shadow: var(--shadow-sm);
+            content-visibility: auto;
+            contain-intrinsic-size: 900px;
+            overflow-x: auto;
+        }
+
+        .table-container table {
+            border-collapse: separate;
+            border-spacing: 0;
+            margin: 0;
+            width: 100%;
+        }
+
+        .table-container thead th {
+            background: #f9fafb;
+            border-bottom: 1px solid var(--border-subtle);
+            color: var(--text-muted);
+            font-size: 0.75rem;
+            font-weight: 600;
+            letter-spacing: 0.05em;
+            padding: 0.85rem 1rem;
+            position: sticky;
+            text-align: left;
+            text-transform: uppercase;
+            top: 0;
+            white-space: nowrap;
+            z-index: 3;
+        }
+
+        .table-container th[data-sort] {
+            cursor: pointer;
+            user-select: none;
+        }
+
+        .table-container th[data-sort]:hover {
+            color: var(--primary-dark);
+        }
+
+        .sortable {
+            align-items: center;
+            display: inline-flex;
+            gap: 0.35rem;
+        }
+
+        .sort-icon {
+            height: 14px;
+            opacity: 0.6;
+            width: 14px;
+        }
+
+        th[aria-sort="ascending"] .sort-icon,
+        th[aria-sort="descending"] .sort-icon {
+            opacity: 1;
+        }
+
+        th[aria-sort="ascending"],
+        th[aria-sort="descending"] {
+            color: var(--primary-dark);
+        }
+
+        .table-container tbody td {
+            border-bottom: 1px solid var(--border-subtle);
+            font-size: 0.9rem;
+            padding: 0.7rem 1rem;
+            vertical-align: middle;
+        }
+
+        .table-container tbody tr {
+            background: var(--row-bg);
+        }
+
+        .table-container tbody tr:nth-child(even) {
+            background: var(--row-bg-zebra);
+        }
+
+        .table-container tbody tr:hover {
+            background: var(--row-bg-hover);
+        }
+
+        .cell-tag {
+            color: var(--primary-dark);
+            font-weight: 700;
+            white-space: nowrap;
+        }
+
+        .cell-muted {
+            color: var(--text-muted);
+        }
+
+        /* Sticky Actions column. Backgrounds must be opaque and mirror the row
+           state, otherwise cells smear over content on horizontal scroll. */
         .sticky-actions {
             position: sticky;
             right: 0;
-            z-index: 1;
+            z-index: 2;
         }
 
-        td.sticky-actions {
-            background: linear-gradient(90deg, rgba(255, 255, 255, 0.9) 0%, #ffffff 60%);
+        thead .sticky-actions {
+            background: #f9fafb;
+            box-shadow: inset 1px 0 0 var(--border-subtle);
+            z-index: 4;
         }
 
-        th.sticky-actions {
-            z-index: 3;
-            /* Higher than normal th (2) */
-            background-color: #101624;
-            /* Explicitly match header bg */
+        tbody .sticky-actions {
+            background: var(--row-bg);
+            box-shadow: inset 1px 0 0 var(--border-subtle);
+            white-space: nowrap;
         }
 
-        .table-empty {
+        tbody tr:nth-child(even) .sticky-actions {
+            background: var(--row-bg-zebra);
+        }
+
+        tbody tr:hover .sticky-actions {
+            background: var(--row-bg-hover);
+        }
+
+        /* Type badges */
+        .type-badge {
+            background: var(--secondary-bg);
+            border: 1px solid var(--border-subtle);
+            border-radius: 999px;
+            color: var(--text-muted);
+            display: inline-block;
+            font-size: 0.72rem;
+            font-weight: 700;
+            letter-spacing: 0.03em;
+            min-width: 2.6rem;
+            padding: 0.15rem 0.55rem;
             text-align: center;
-            padding: 2rem 1rem;
-            color: var(--muted);
-            font-weight: 500;
         }
 
-        .table-loading {
+        .type-badge--me {
+            background: #eff6ff;
+            border-color: #dbeafe;
+            color: var(--primary-accent);
+        }
+
+        .type-badge--el {
+            background: var(--success-bg);
+            border-color: #a7f3d0;
+            color: var(--success-text);
+        }
+
+        .type-badge--bf {
+            background: var(--warning-bg);
+            border-color: #fde68a;
+            color: var(--warning-text);
+        }
+
+        /* Row action buttons */
+        .action-btn {
+            align-items: center;
+            background: #eff6ff;
+            border: 1px solid #dbeafe;
+            border-radius: 8px;
+            color: var(--primary-accent);
+            display: inline-flex;
+            height: 32px;
+            justify-content: center;
+            margin: 0 0.15rem;
+            padding: 0;
+            transition: all 0.15s;
+            width: 32px;
+        }
+
+        .action-btn:hover {
+            background: var(--primary-accent);
+            border-color: var(--primary-accent);
+            color: #ffffff;
+        }
+
+        .action-btn.delete {
+            background: var(--danger-bg);
+            border-color: #fecaca;
+            color: var(--danger-text);
+        }
+
+        .action-btn.delete:hover {
+            background: var(--danger-text);
+            border-color: var(--danger-text);
+            color: #ffffff;
+        }
+
+        /* Loading / empty states */
+        .table-state {
+            padding: 3rem 1.5rem !important;
             text-align: center;
-            padding: 2rem 1rem;
-            color: var(--muted);
         }
 
-        /* Modal + form styling (Theme Factory: Tech Innovation) */
+        .table-state-icon {
+            align-items: center;
+            background: #eff6ff;
+            border: 1px solid #dbeafe;
+            border-radius: 50%;
+            color: var(--primary-accent);
+            display: inline-flex;
+            height: 48px;
+            justify-content: center;
+            margin-bottom: 0.75rem;
+            width: 48px;
+        }
+
+        .table-state-title {
+            color: var(--primary-dark);
+            font-size: 1rem;
+            font-weight: 600;
+            margin-bottom: 0.25rem;
+        }
+
+        .table-state-text {
+            color: var(--text-muted);
+            font-size: 0.875rem;
+            margin: 0;
+        }
+
+        /* --- Modals --- */
         .modal-content {
-            border: 1px solid rgba(0, 102, 255, 0.18);
-            box-shadow: 0 18px 46px -28px rgba(15, 23, 36, 0.6);
-            border-radius: 16px;
+            border: none;
+            border-radius: var(--card-radius);
+            box-shadow: var(--shadow-lg);
+            overflow: hidden;
         }
 
         .modal-header {
-            background: linear-gradient(120deg, var(--primary-strong), var(--primary));
-            color: #e8f1ff;
-            border-bottom: none;
-            border-radius: 16px 16px 0 0;
+            background-color: var(--primary-dark);
+            border-bottom: 0;
+            color: #ffffff;
         }
 
-        .modal-body {
-            background: radial-gradient(circle at 15% 20%, rgba(0, 102, 255, 0.04) 0, #ffffff 45%, #ffffff 100%);
+        .modal-title {
+            font-size: 1.05rem;
+            font-weight: 600;
         }
 
         .form-grid {
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
             gap: 1rem 1.25rem;
+            grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
         }
 
         .form-grid .span-2 {
             grid-column: 1 / -1;
         }
 
-        .form-label {
+        .modal-body .form-label {
+            color: var(--text-muted);
+            font-size: 0.75rem;
             font-weight: 600;
-            color: var(--ink);
-            letter-spacing: 0.01em;
+            letter-spacing: 0.03em;
+            text-transform: uppercase;
         }
 
-        .form-control,
-        .form-select {
-            background: #f6f8ff;
-            border: 1px solid rgba(0, 102, 255, 0.18);
-            border-radius: 10px;
-            transition: border-color 120ms ease, box-shadow 120ms ease, background 120ms ease;
+        .modal-body .input-group-text {
+            background: #f9fafb;
+            border-color: var(--border-subtle);
+            color: var(--text-muted);
         }
 
-        .form-control:focus-visible,
-        .form-select:focus-visible {
-            outline: 2px solid var(--primary);
-            outline-offset: 0;
-            background: #fff;
-            border-color: var(--primary);
-            box-shadow: none;
-            /* Replace bootstrap default */
+        .modal-body .form-control,
+        .modal-body .form-select {
+            border-color: var(--border-subtle);
         }
 
-        .form-control:focus,
-        .form-select:focus {
-            background: #fff;
-            border-color: var(--primary);
-            box-shadow: 0 0 0 3px rgba(0, 102, 255, 0.18);
-            outline: none;
-            /* Let focus-visible handle it where supported, or keep fallback */
+        .modal-body .form-control:focus,
+        .modal-body .form-select:focus {
+            border-color: var(--primary-accent);
+            box-shadow: 0 0 0 3px rgba(0, 85, 183, 0.12);
         }
 
-        .form-text {
-            color: var(--muted);
+        .modal-body .form-text {
+            color: var(--text-muted);
+            font-size: 0.78rem;
         }
 
-        .modal-footer {
-            border-top: 1px solid rgba(0, 0, 0, 0.05);
-            padding-top: 0.75rem;
-            padding-bottom: 0.75rem;
+        .delete-target {
+            background: var(--danger-bg);
+            border: 1px solid #fecaca;
+            border-radius: var(--btn-radius);
+            color: var(--danger-text);
+            display: inline-block;
+            font-weight: 700;
+            padding: 0.35rem 0.7rem;
         }
 
-        .srch-wrap {
-            position: relative;
-            width: 100%;
-            max-width: 340px;
-        }
-
-        .clear-btn {
-            position: absolute;
-            right: 0.35rem;
-            top: 50%;
-            transform: translateY(-50%);
-            border: none;
-            background: transparent;
-            color: var(--muted);
-            padding: 0.35rem;
-            border-radius: 4px;
-        }
-
-        .clear-btn:focus-visible {
-            outline: 2px solid var(--primary);
-            background: rgba(0, 0, 0, 0.05);
-        }
-
-        .sortable {
-            cursor: pointer;
-            display: inline-flex;
-            align-items: center;
-            gap: 0.35rem;
-        }
-
-        .sort-icon {
-            color: #cdd5ff;
-        }
-
+        /* --- Toasts --- */
         .toast-container {
-            position: fixed;
             bottom: 1rem;
+            position: fixed;
             right: 1rem;
             z-index: 1080;
         }
 
+        /* --- Focus visibility --- */
+        :focus-visible {
+            outline: 2px solid var(--primary-accent);
+            outline-offset: 2px;
+        }
+
+        /* --- Responsive --- */
         @media (max-width: 768px) {
+            .dict-page {
+                padding: 1rem 1rem 2.5rem;
+            }
+
             .page-title {
-                font-size: 1.55rem;
+                font-size: 1.5rem;
             }
 
-            .ubc-btn {
+            .filter-container {
+                flex-direction: column;
+                align-items: stretch;
+            }
+
+            .filter-field--search,
+            .filter-field--tag,
+            .filter-field--ms,
+            .filter-field--reset {
+                flex: 1 1 auto;
+                margin-left: 0;
+                min-width: 0;
+            }
+
+            .result-count {
+                margin-left: 0;
                 width: 100%;
-                justify-content: center;
             }
 
-            .ubc-btn.compact {
-                width: auto;
-            }
-
-            .search-bar {
-                width: 100%;
-                max-width: none;
-            }
-
-            .table-container {
-                margin-top: 0.75rem;
-            }
-
-            table {
-                min-width: 620px;
-            }
-
-            .modal-dialog {
-                max-width: 95vw;
-                margin: 0.75rem auto;
-            }
-
-            .modal-body {
-                padding: 1rem;
+            .table-container tbody td {
+                font-size: 0.85rem;
             }
         }
 
         @media (prefers-reduced-motion: reduce) {
-            * {
-                animation-duration: 0.01ms !important;
+
+            *,
+            *::before,
+            *::after {
+                animation-duration: 0.001ms !important;
                 animation-iteration-count: 1 !important;
-                transition-duration: 0.01ms !important;
-                scroll-behavior: auto !important;
+                transition-duration: 0.001ms !important;
             }
         }
     </style>
@@ -409,50 +677,101 @@
 
 <body>
 
-    <div class="container-fluid">
-        <div class="d-flex justify-content-between align-items-center mb-4 dictionary-header">
-            <h1 class="display-6 page-title">Dictionary Management for Asset Tags</h1>
+    <div class="container-fluid dict-page">
+        <div class="d-flex justify-content-between align-items-start flex-wrap gap-3 mb-4">
+            <div>
+                <h1 class="page-title">Dictionary Management for Asset Tags</h1>
+                <p class="page-subtitle">UBC tag prefixes that derive Asset Group and Attribute Set during extraction.
+                </p>
+                <div class="kpi-row" id="kpi-row"></div>
+            </div>
+            {% if can_edit %}
+            <button class="btn ubc-btn" id="add-entry-btn" type="button">
+                <i data-lucide="plus" width="18"></i> Add New Entry
+            </button>
+            {% endif %}
         </div>
 
-        <div id="alert-area" class="mb-3"></div>
+        <div id="alert-area"></div>
 
-        <div class="card status-bar mb-3">
-            <div class="card-body d-flex flex-wrap align-items-center gap-3">
-                <div class="status-pill">
-                    <span class="label">Total</span>
-                    <span id="status-total">—</span>
-                </div>
-                <div class="status-pill">
-                    <span class="label">Filtered</span>
-                    <span id="status-filtered">—</span>
-                </div>
-                <div class="status-pill">
-                    <span class="label">Last Sync</span>
-                    <span id="status-sync">—</span>
+        <section class="filter-container" aria-label="Dictionary filters">
+            <div class="filter-field--search">
+                <label for="filter-search">Search all</label>
+                <div class="input-group">
+                    <span class="input-group-text"><i data-lucide="search" width="16"></i></span>
+                    <input type="search" id="filter-search" class="form-control" placeholder="Search…"
+                        title="Search across tag, type, attribute set, asset group, main asset and description"
+                        autocomplete="off">
                 </div>
             </div>
-        </div>
 
-        <div class="card mb-4 border-0 shadow-sm">
-            <div
-                class="card-body d-flex flex-wrap gap-3 justify-content-between align-items-center bg-white rounded dictionary-search-card">
-                <div class="d-flex align-items-center gap-3 flex-wrap">
-                    <h2 class="h5 section-title mb-0">
-                        <i data-lucide="database"></i> UBC Tag Dictionary
-                        <span id="mech-entry-count" class="badge-count">0</span>
-                    </h2>
-                    <button class="btn ubc-btn compact" onclick="openMechanicalModal()">
-                        <i data-lucide="plus"></i> <span class="d-none d-sm-inline">Add New Entry</span>
-                    </button>
-                </div>
-                <div class="srch-wrap ms-sm-auto">
-                    <input type="text" id="mech-search-input" class="form-control search-bar"
-                        placeholder="Search tag, description, asset type, group…" autocomplete="off">
-                    <button class="clear-btn" id="mech-clear-btn" type="button" aria-label="Clear search">
-                        <i data-lucide="x"></i>
-                    </button>
+            <div class="filter-field--tag">
+                <label for="filter-tag">UBC Tag</label>
+                <input type="search" id="filter-tag" class="form-control" placeholder="e.g. AHU" autocomplete="off">
+            </div>
+
+            <div>
+                <label id="filter-type-label">Asset Type</label>
+                <div class="btn-group type-segment" role="group" aria-labelledby="filter-type-label">
+                    <input type="radio" class="btn-check" name="filter-type" id="filter-type-all" value="" checked
+                        autocomplete="off">
+                    <label class="btn" for="filter-type-all">All</label>
+                    {% for code in asset_types|default(['ME', 'EL', 'BF']) %}
+                    <input type="radio" class="btn-check" name="filter-type" id="filter-type-{{ code|lower }}"
+                        value="{{ code }}" autocomplete="off">
+                    <label class="btn" for="filter-type-{{ code|lower }}">{{ code }}</label>
+                    {% endfor %}
                 </div>
             </div>
+
+            <div class="filter-field--ms">
+                <label id="filter-attr-label">Attribute Set</label>
+                <div class="ms" id="filter-attr">
+                    <button type="button" class="ms-toggle" aria-expanded="false" aria-labelledby="filter-attr-label">
+                        <span class="ms-text">All Attribute Sets</span><span class="ms-caret">&#9662;</span>
+                    </button>
+                    <div class="ms-panel" hidden>
+                        <input type="search" class="ms-search" placeholder="Search attribute sets…"
+                            aria-label="Search attribute sets">
+                        <div class="ms-actions">
+                            <button type="button" class="ms-action" data-act="all">Select all</button>
+                            <button type="button" class="ms-action" data-act="none">Clear</button>
+                        </div>
+                        <div class="ms-options"></div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="filter-field--ms">
+                <label id="filter-group-label">Asset Group</label>
+                <div class="ms" id="filter-group">
+                    <button type="button" class="ms-toggle" aria-expanded="false" aria-labelledby="filter-group-label">
+                        <span class="ms-text">All Asset Groups</span><span class="ms-caret">&#9662;</span>
+                    </button>
+                    <div class="ms-panel" hidden>
+                        <input type="search" class="ms-search" placeholder="Search asset groups…"
+                            aria-label="Search asset groups">
+                        <div class="ms-actions">
+                            <button type="button" class="ms-action" data-act="all">Select all</button>
+                            <button type="button" class="ms-action" data-act="none">Clear</button>
+                        </div>
+                        <div class="ms-options"></div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="filter-field--reset">
+                <label aria-hidden="true">&nbsp;</label>
+                <button type="button" class="btn ubc-btn-secondary" id="filter-reset">
+                    <i data-lucide="rotate-ccw" width="16"></i> Reset
+                </button>
+            </div>
+        </section>
+
+        <div class="chip-row">
+            <span class="chip-row-label" id="chip-row-label" hidden>Active</span>
+            <div class="d-flex flex-wrap gap-2" id="active-chips"></div>
+            <span class="result-count" id="result-count" aria-live="polite"></span>
         </div>
 
         <div class="table-container">
@@ -462,10 +781,8 @@
                         <th data-sort="asset_code" role="columnheader" aria-sort="none" tabindex="0"><span
                                 class="sortable">UBC Tag (Key) <i class="sort-icon"
                                     data-lucide="arrow-up-down"></i></span></th>
-                        <th class="text-center" data-sort="asset_type" role="columnheader" aria-sort="none"
-                            tabindex="0"><span class="sortable">Asset Type <i class="sort-icon"
-                                    data-lucide="arrow-up-down"></i></span>
-                        </th>
+                        <th data-sort="asset_type" role="columnheader" aria-sort="none" tabindex="0"><span
+                                class="sortable">Type <i class="sort-icon" data-lucide="arrow-up-down"></i></span></th>
                         <th data-sort="attribute_set" role="columnheader" aria-sort="none" tabindex="0"><span
                                 class="sortable">Attribute Set <i class="sort-icon"
                                     data-lucide="arrow-up-down"></i></span></th>
@@ -478,18 +795,21 @@
                         <th data-sort="description" role="columnheader" aria-sort="none" tabindex="0"><span
                                 class="sortable">Description <i class="sort-icon"
                                     data-lucide="arrow-up-down"></i></span></th>
+                        {% if can_edit %}
                         <th class="text-center sticky-actions">Actions</th>
+                        {% endif %}
                     </tr>
                 </thead>
-                <tbody id="mechanical-table-body"></tbody>
+                <tbody id="dict-table-body"></tbody>
             </table>
         </div>
     </div>
 
+    {% if can_edit %}
     <div class="modal fade" id="assetModal" tabindex="-1" aria-hidden="true">
         <div class="modal-dialog modal-dialog-centered">
             <div class="modal-content">
-                <div class="modal-header" style="background-color: var(--ubc-blue); color: white;">
+                <div class="modal-header">
                     <h5 class="modal-title" id="modalTitle">Edit Entry</h5>
                     <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"
                         aria-label="Close"></button>
@@ -498,82 +818,73 @@
                     <form id="assetForm" class="form-grid">
                         <input type="hidden" id="inputOriginalKey">
 
-                        <div class="mb-3">
-                            <label for="inputCode" class="form-label fw-bold">UBC Tag (Key) *</label>
+                        <div>
+                            <label for="inputCode" class="form-label">UBC Tag (Key) *</label>
                             <div class="input-group">
-                                <span class="input-group-text bg-light text-muted border-end-0"><i data-lucide="hash"
-                                        width="18"></i></span>
-                                <input type="text" class="form-control border-start-0 ps-2" id="inputCode" required
-                                    autocomplete="off" placeholder="e.g. AHU">
+                                <span class="input-group-text"><i data-lucide="hash" width="18"></i></span>
+                                <input type="text" class="form-control" id="inputCode" required autocomplete="off"
+                                    placeholder="e.g. AHU">
                             </div>
                             <div class="form-text">Unique identifier for the asset tag.</div>
                         </div>
 
-                        <div class="mb-3">
+                        <div>
                             <label for="inputAssetType" class="form-label">Asset Type *</label>
                             <div class="input-group">
-                                <span class="input-group-text bg-light text-muted border-end-0"><i data-lucide="layers"
-                                        width="18"></i></span>
-                                <select class="form-select border-start-0 ps-2" id="inputAssetType" required>
+                                <span class="input-group-text"><i data-lucide="layers" width="18"></i></span>
+                                <select class="form-select" id="inputAssetType" required>
                                     <option value="">Select Asset Type…</option>
                                     <option value="ME">ME (Mechanical)</option>
                                     <option value="EL">EL (Electrical)</option>
-                                    <option value="BP">BP (Backflow/Plumbing)</option>
+                                    <option value="BF">BF (Backflow)</option>
                                 </select>
                             </div>
                         </div>
 
-                        <div class="mb-3">
+                        <div>
                             <label for="inputAttrSet" class="form-label">Attribute Set *</label>
                             <div class="input-group">
-                                <span class="input-group-text bg-light text-muted border-end-0"><i
-                                        data-lucide="settings-2" width="18"></i></span>
-                                <select class="form-select border-start-0 ps-2" id="inputAttrSet" required>
+                                <span class="input-group-text"><i data-lucide="settings-2" width="18"></i></span>
+                                <select class="form-select" id="inputAttrSet" required>
                                     <option value="">Loading…</option>
                                 </select>
                             </div>
                         </div>
 
-                        <div class="mb-3">
+                        <div>
                             <label for="inputGroup" class="form-label">Asset Group *</label>
                             <div class="input-group">
-                                <span class="input-group-text bg-light text-muted border-end-0"><i data-lucide="folder"
-                                        width="18"></i></span>
-                                <input class="form-control border-start-0 ps-2" list="assetGroupOptions" id="inputGroup"
+                                <span class="input-group-text"><i data-lucide="folder" width="18"></i></span>
+                                <input class="form-control" list="assetGroupOptions" id="inputGroup"
                                     placeholder="Type to search…" required autocomplete="off">
-                                <datalist id="assetGroupOptions">
-                                </datalist>
+                                <datalist id="assetGroupOptions"></datalist>
                             </div>
-                            <div class="invalid-feedback">
-                                Please select a valid option from the list.
-                            </div>
+                            <div class="invalid-feedback">Please select a valid option from the list.</div>
                         </div>
 
-                        <div class="mb-3">
+                        <div>
                             <label for="inputMain" class="form-label">Main Asset</label>
                             <div class="input-group">
-                                <span class="input-group-text bg-light text-muted border-end-0"><i data-lucide="link"
-                                        width="18"></i></span>
-                                <select class="form-select border-start-0 ps-2" id="inputMain">
+                                <span class="input-group-text"><i data-lucide="link" width="18"></i></span>
+                                <select class="form-select" id="inputMain">
                                     <option value="">Loading…</option>
                                 </select>
                             </div>
                         </div>
-                        <div class="mb-3 span-2">
+
+                        <div class="span-2">
                             <label for="inputDesc" class="form-label">Description *</label>
                             <div class="input-group">
-                                <span class="input-group-text bg-light text-muted border-end-0"><i
-                                        data-lucide="file-text" width="18"></i></span>
-                                <input type="text" class="form-control border-start-0 ps-2" id="inputDesc" required
-                                    autocomplete="off" placeholder="Brief description of the asset">
+                                <span class="input-group-text"><i data-lucide="file-text" width="18"></i></span>
+                                <input type="text" class="form-control" id="inputDesc" required autocomplete="off"
+                                    placeholder="Brief description of the asset">
                             </div>
                         </div>
                     </form>
                 </div>
                 <div class="modal-footer">
-                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
-                    <button type="button" class="btn ubc-btn" id="saveAssetBtn" onclick="saveMechanicalAsset()">Save
-                        Changes</button>
+                    <button type="button" class="btn ubc-btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="button" class="btn ubc-btn" id="saveAssetBtn">Save Changes</button>
                 </div>
             </div>
         </div>
@@ -582,126 +893,65 @@
     <div class="modal fade" id="deleteModal" tabindex="-1" aria-hidden="true">
         <div class="modal-dialog modal-dialog-centered">
             <div class="modal-content">
-                <div class="modal-header border-0">
-                    <h5 class="modal-title">Confirm Delete</h5>
-                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                <div class="modal-header">
+                    <h5 class="modal-title">Delete dictionary entry</h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"
+                        aria-label="Close"></button>
                 </div>
                 <div class="modal-body">
-                    <p class="mb-2">Type the asset code to confirm deletion.</p>
-                    <p class="fw-semibold" id="delete-asset-label"></p>
-                    <input type="text" id="delete-confirm-input" class="form-control" placeholder="Enter asset code">
-                    <div class="form-text text-danger" id="delete-warning" hidden>Code does not match.</div>
+                    <p class="mb-2">Extraction stops deriving Asset Group and Attribute Set from this tag. Type the
+                        UBC tag to confirm.</p>
+                    <p class="mb-3"><span class="delete-target" id="delete-asset-label"></span></p>
+                    <label for="delete-confirm-input" class="form-label">Confirm UBC tag</label>
+                    <input type="text" id="delete-confirm-input" class="form-control" placeholder="Enter the UBC tag"
+                        autocomplete="off">
+                    <div class="form-text text-danger" id="delete-warning" hidden>Tag does not match.</div>
                 </div>
-                <div class="modal-footer border-0">
-                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
-                    <button type="button" class="btn btn-danger" id="delete-confirm-btn" disabled>Delete</button>
+                <div class="modal-footer">
+                    <button type="button" class="btn ubc-btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="button" class="btn btn-danger" id="delete-confirm-btn" disabled>Delete entry</button>
                 </div>
             </div>
         </div>
     </div>
+    {% endif %}
 
     <div class="toast-container" id="toast-container"></div>
 
     <script>
-        const mechanicalModal = new bootstrap.Modal(document.getElementById('assetModal'));
-        const deleteModal = new bootstrap.Modal(document.getElementById('deleteModal'));
+        const CAN_EDIT = {{ can_edit | default(false) | tojson }};
+        const COLUMN_COUNT = CAN_EDIT ? 7 : 6;
 
-        let mechanicalAssets = [];
+        const assetModal = CAN_EDIT ? new bootstrap.Modal(document.getElementById('assetModal')) : null;
+        const deleteModal = CAN_EDIT ? new bootstrap.Modal(document.getElementById('deleteModal')) : null;
+
+        let allAssets = [];
         let validAssetGroups = [];
+        let attrMs = null;
+        let groupMs = null;
         let isEditingDictionary = false;
         let pendingDeleteKey = null;
+
+        const filterState = { search: '', tag: '', type: '', attrSets: [], groups: [] };
         const state = {
             filtered: [],
             loading: true,
             error: '',
-            sort: { field: 'asset_code', dir: 'asc' },
-            lastUpdated: null
+            sort: { field: 'asset_code', dir: 'asc' }
         };
 
         document.addEventListener('DOMContentLoaded', () => {
             lucide.createIcons();
+            initMultiselects();
             attachEvents();
             initData();
         });
 
-        function attachEvents() {
-            document.getElementById('mech-search-input').addEventListener('input', debounce(handleMechanicalSearch, 180));
-            document.getElementById('mech-clear-btn').addEventListener('click', clearSearch);
-            document.getElementById('mechanical-table-body').addEventListener('click', handleTableActions);
-            document.querySelectorAll('th[data-sort]').forEach(th => {
-                th.addEventListener('click', () => handleSort(th.dataset.sort));
-                th.addEventListener('keydown', (e) => {
-                    if (e.key === 'Enter' || e.key === ' ') {
-                        e.preventDefault();
-                        handleSort(th.dataset.sort);
-                    }
-                });
-            });
-            document.getElementById('delete-confirm-input').addEventListener('input', validateDeleteInput);
-            document.getElementById('delete-confirm-btn').addEventListener('click', confirmDelete);
-        }
-
-        async function initData() {
-            await Promise.all([loadMechanicalAssets(), loadMainAssetsDropdown(), loadAssetGroupsDropdown(), loadAttributeSetsDropdown()]);
-            state.loading = false;
-            render();
-        }
-
-        function render() {
-            renderStatus();
-            renderMechanicalTable(state.filtered);
-            renderAlert();
-            lucide.createIcons();
-        }
-
-        function renderStatus() {
-            document.getElementById('status-total').textContent = mechanicalAssets.length || '0';
-            document.getElementById('status-filtered').textContent = state.filtered.length || '0';
-            document.getElementById('status-sync').textContent = state.lastUpdated ? formatTime(state.lastUpdated) : '—';
-            document.getElementById('mech-entry-count').textContent = state.filtered.length || 0;
-        }
-
-        function renderAlert() {
-            const container = document.getElementById('alert-area');
-            container.innerHTML = state.error ? `<div class="alert alert-danger alert-dismissible fade show" role="alert">
-                <strong>Load failed.</strong> ${state.error}
-                <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
-            </div>` : '';
-        }
-
-        function renderMechanicalTable(data) {
-            const tbody = document.getElementById('mechanical-table-body');
-            tbody.innerHTML = '';
-
-            if (state.loading) {
-                tbody.innerHTML = `<tr><td colspan="7" class="table-loading"><div class="spinner-border text-primary me-2" role="status"></div>Loading dictionary…</td></tr>`;
-                return;
-            }
-
-            if (!data.length) {
-                tbody.innerHTML = `<tr><td colspan="7" class="table-empty">
-                    <i data-lucide="inbox" class="me-2"></i> No entries found. Adjust filters or add a dictionary entry.
-                </td></tr>`;
-                return;
-            }
-
-            data.forEach(asset => {
-                const actionKey = asset.unique_key || `${asset.asset_code}|${asset.asset_type || ''}` || asset.asset_code;
-                const row = document.createElement('tr');
-                row.innerHTML = `
-                    <td class="fw-bold" style="color: var(--primary);">${asset.asset_code}</td>
-                    <td class="text-center">${asset.asset_type || ''}</td>
-                    <td>${asset.attribute_set}</td>
-                    <td>${asset.asset_group}</td>
-                    <td>${asset.main_asset}</td>
-                    <td>${asset.description}</td>
-                    <td class="text-center sticky-actions">
-                        <button class="action-btn" data-action="edit" data-key="${actionKey}" aria-label="Edit ${asset.asset_code}" title="Edit"><i data-lucide="edit-2" width="16"></i></button>
-                        <button class="action-btn delete" data-action="delete" data-key="${actionKey}" aria-label="Delete ${asset.asset_code}" title="Delete"><i data-lucide="trash-2" width="16"></i></button>
-                    </td>
-                `;
-                tbody.appendChild(row);
-            });
+        // --- Utilities ---
+        function escapeHtml(value) {
+            return String(value ?? '').replace(/[&<>"']/g, ch => ({
+                '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+            })[ch]);
         }
 
         function debounce(fn, delay) {
@@ -710,6 +960,75 @@
                 clearTimeout(t);
                 t = setTimeout(() => fn(...args), delay);
             };
+        }
+
+        function sortedUnique(values) {
+            return Array.from(new Set(values))
+                .filter(v => v !== '' && v != null)
+                .sort((a, b) => String(a).localeCompare(String(b), undefined, { sensitivity: 'base' }));
+        }
+
+        // --- Setup ---
+        function initMultiselects() {
+            if (!window.BuildingMultiselect) return;
+            attrMs = BuildingMultiselect.create(document.getElementById('filter-attr'), {
+                allLabel: 'All Attribute Sets', emptyLabel: 'No attribute sets'
+            });
+            groupMs = BuildingMultiselect.create(document.getElementById('filter-group'), {
+                allLabel: 'All Asset Groups', emptyLabel: 'No asset groups'
+            });
+            if (attrMs) attrMs.onChange(() => { filterState.attrSets = attrMs.values(); applyFilters(); });
+            if (groupMs) groupMs.onChange(() => { filterState.groups = groupMs.values(); applyFilters(); });
+        }
+
+        function attachEvents() {
+            document.getElementById('filter-search').addEventListener('input', debounce(e => {
+                filterState.search = e.target.value.trim().toLowerCase();
+                applyFilters();
+            }, 180));
+
+            document.getElementById('filter-tag').addEventListener('input', debounce(e => {
+                filterState.tag = e.target.value.trim().toLowerCase();
+                applyFilters();
+            }, 180));
+
+            document.querySelectorAll('input[name="filter-type"]').forEach(radio => {
+                radio.addEventListener('change', e => {
+                    filterState.type = e.target.value;
+                    applyFilters();
+                });
+            });
+
+            document.getElementById('filter-reset').addEventListener('click', resetFilters);
+            document.getElementById('active-chips').addEventListener('click', handleChipRemove);
+
+            document.querySelectorAll('th[data-sort]').forEach(th => {
+                th.addEventListener('click', () => handleSort(th.dataset.sort));
+                th.addEventListener('keydown', e => {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault();
+                        handleSort(th.dataset.sort);
+                    }
+                });
+            });
+
+            if (CAN_EDIT) {
+                document.getElementById('add-entry-btn').addEventListener('click', () => openAssetModal());
+                document.getElementById('dict-table-body').addEventListener('click', handleTableActions);
+                document.getElementById('saveAssetBtn').addEventListener('click', saveAsset);
+                document.getElementById('delete-confirm-input').addEventListener('input', validateDeleteInput);
+                document.getElementById('delete-confirm-btn').addEventListener('click', confirmDelete);
+            }
+        }
+
+        async function initData() {
+            const loaders = [loadAssets()];
+            if (CAN_EDIT) {
+                loaders.push(loadMainAssetsDropdown(), loadAssetGroupsDropdown(), loadAttributeSetsDropdown());
+            }
+            await Promise.all(loaders);
+            state.loading = false;
+            applyFilters();
         }
 
         // --- Data loaders ---
@@ -722,41 +1041,33 @@
             return res.json();
         }
 
-        async function loadMechanicalAssets() {
+        async function loadAssets() {
             state.loading = true;
             try {
                 state.error = '';
-                const data = await request('/api/assets');
-                mechanicalAssets = data;
-                state.lastUpdated = new Date();
-                applyFiltersAndSort();
+                allAssets = await request('/api/assets');
             } catch (err) {
                 state.error = err.message;
-            } finally { state.loading = false; }
+            } finally {
+                state.loading = false;
+            }
         }
 
         async function loadMainAssetsDropdown() {
             try {
-                state.error = '';
                 const options = await request('/api/main-assets');
                 const select = document.getElementById('inputMain');
                 select.innerHTML = '<option value="">Select Main Asset…</option>';
-                options.forEach(opt => {
-                    const option = document.createElement('option');
-                    option.value = opt; option.textContent = opt;
-                    select.appendChild(option);
-                });
+                options.forEach(opt => select.appendChild(new Option(opt, opt)));
             } catch (err) {
-                state.error = "Main assets list unavailable";
+                state.error = 'Main assets list unavailable';
             }
         }
 
         async function loadAssetGroupsDropdown() {
             try {
-                state.error = '';
                 const options = await request('/api/asset-groups');
                 validAssetGroups = options;
-
                 const datalist = document.getElementById('assetGroupOptions');
                 datalist.innerHTML = '';
                 options.forEach(opt => {
@@ -765,36 +1076,106 @@
                     datalist.appendChild(option);
                 });
             } catch (err) {
-                state.error = "Asset groups unavailable";
+                state.error = 'Asset groups unavailable';
             }
         }
 
         async function loadAttributeSetsDropdown() {
             try {
-                state.error = '';
                 const options = await request('/api/attributes');
                 const select = document.getElementById('inputAttrSet');
                 select.innerHTML = '<option value="">Select Attribute Set…</option>';
-                options.forEach(opt => {
-                    const option = document.createElement('option');
-                    option.value = opt;
-                    option.textContent = opt;
-                    select.appendChild(option);
-                });
+                options.forEach(opt => select.appendChild(new Option(opt, opt)));
             } catch (err) {
-                state.error = "Attribute sets unavailable";
+                state.error = 'Attribute sets unavailable';
             }
         }
 
-        // --- Filtering & sorting ---
-        function handleMechanicalSearch(e) {
-            applyFiltersAndSort(e.target.value);
+        // --- Filtering ---
+        function matchesFilters(asset, opts) {
+            opts = opts || {};
+            if (filterState.search) {
+                const haystack = [asset.asset_code, asset.asset_type, asset.attribute_set,
+                asset.asset_group, asset.main_asset, asset.description];
+                if (!haystack.some(v => String(v ?? '').toLowerCase().includes(filterState.search))) return false;
+            }
+            if (filterState.tag && !String(asset.asset_code ?? '').toLowerCase().includes(filterState.tag)) return false;
+            if (filterState.type && String(asset.asset_type ?? '').toUpperCase() !== filterState.type) return false;
+            if (!opts.ignoreAttrSets && filterState.attrSets.length
+                && !filterState.attrSets.includes(asset.attribute_set ?? '')) return false;
+            if (!opts.ignoreGroups && filterState.groups.length
+                && !filterState.groups.includes(asset.asset_group ?? '')) return false;
+            return true;
         }
 
-        function clearSearch() {
-            const input = document.getElementById('mech-search-input');
-            input.value = '';
-            applyFiltersAndSort('');
+        function applyFilters(opts) {
+            const filtered = allAssets.filter(a => matchesFilters(a));
+            const { field, dir } = state.sort;
+            filtered.sort((a, b) => {
+                const av = String(a[field] ?? '').toLowerCase();
+                const bv = String(b[field] ?? '').toLowerCase();
+                if (av === bv) return 0;
+                return dir === 'asc' ? av.localeCompare(bv) : bv.localeCompare(av);
+            });
+            state.filtered = filtered;
+
+            // Facets may drop a checked value that no longer exists. When that
+            // happens the filter set changed underneath us, so re-run once.
+            if (updateFacets() && !(opts && opts.noRefacet)) {
+                applyFilters({ noRefacet: true });
+                return;
+            }
+
+            renderTable();
+            renderChips();
+            renderCounts();
+            renderAlert();
+            updateSortIndicators();
+            lucide.createIcons();
+        }
+
+        // Options are faceted against every OTHER active filter, with the
+        // currently checked values unioned back in so a selection never vanishes
+        // from its own list. Mirrors the FLS Devices property filter.
+        function updateFacets() {
+            let changed = false;
+            if (attrMs) {
+                const values = sortedUnique(
+                    allAssets.filter(a => matchesFilters(a, { ignoreAttrSets: true }))
+                        .map(a => a.attribute_set ?? '')
+                        .concat(filterState.attrSets)
+                );
+                if (attrMs.setOptions(values.map(v => ({ value: v, label: v })))) {
+                    filterState.attrSets = attrMs.values();
+                    changed = true;
+                }
+            }
+            if (groupMs) {
+                const values = sortedUnique(
+                    allAssets.filter(a => matchesFilters(a, { ignoreGroups: true }))
+                        .map(a => a.asset_group ?? '')
+                        .concat(filterState.groups)
+                );
+                if (groupMs.setOptions(values.map(v => ({ value: v, label: v })))) {
+                    filterState.groups = groupMs.values();
+                    changed = true;
+                }
+            }
+            return changed;
+        }
+
+        function resetFilters() {
+            filterState.search = '';
+            filterState.tag = '';
+            filterState.type = '';
+            filterState.attrSets = [];
+            filterState.groups = [];
+            document.getElementById('filter-search').value = '';
+            document.getElementById('filter-tag').value = '';
+            document.getElementById('filter-type-all').checked = true;
+            if (attrMs) attrMs.clear();
+            if (groupMs) groupMs.clear();
+            applyFilters();
         }
 
         function handleSort(field) {
@@ -803,78 +1184,212 @@
             } else {
                 state.sort = { field, dir: 'asc' };
             }
-            applyFiltersAndSort(document.getElementById('mech-search-input').value);
-        }
-
-        function applyFiltersAndSort(term = '') {
-            const t = (term || '').trim().toLowerCase();
-            const filtered = mechanicalAssets.filter(a => {
-                if (!t) return true;
-                return [
-                    a.asset_code,
-                    a.description,
-                    a.asset_group,
-                    a.asset_type,
-                    a.attribute_set,
-                    a.main_asset
-                ].filter(Boolean).some(v => v.toLowerCase().includes(t));
-            });
-
-            filtered.sort((a, b) => {
-                const { field, dir } = state.sort;
-                const av = (a[field] || '').toString().toLowerCase();
-                const bv = (b[field] || '').toString().toLowerCase();
-                if (av === bv) return 0;
-                return dir === 'asc' ? av.localeCompare(bv) : bv.localeCompare(av);
-            });
-
-            state.filtered = filtered;
-            updateSortIndicators();
-            render();
+            applyFilters();
         }
 
         function updateSortIndicators() {
             document.querySelectorAll('th[data-sort]').forEach(th => {
                 const icon = th.querySelector('.sort-icon');
-                const field = th.dataset.sort;
-                if (field === state.sort.field) {
+                const active = th.dataset.sort === state.sort.field;
+                if (active) {
+                    th.setAttribute('aria-sort', state.sort.dir === 'asc' ? 'ascending' : 'descending');
                     icon.setAttribute('data-lucide', state.sort.dir === 'asc' ? 'chevron-up' : 'chevron-down');
                 } else {
+                    th.setAttribute('aria-sort', 'none');
                     icon.setAttribute('data-lucide', 'arrow-up-down');
                 }
             });
         }
 
-        // --- Table actions ---
+        // --- Rendering ---
+        function typeBadge(type) {
+            const code = String(type ?? '').toUpperCase();
+            if (!code) return '<span class="cell-muted">—</span>';
+            const known = ['ME', 'EL', 'BF'].includes(code) ? ` type-badge--${code.toLowerCase()}` : '';
+            return `<span class="type-badge${known}">${escapeHtml(code)}</span>`;
+        }
+
+        function cellText(value) {
+            const text = String(value ?? '').trim();
+            return text ? escapeHtml(text) : '<span class="cell-muted">—</span>';
+        }
+
+        function renderTable() {
+            const tbody = document.getElementById('dict-table-body');
+
+            if (state.loading) {
+                tbody.innerHTML = `<tr><td colspan="${COLUMN_COUNT}" class="table-state">
+                    <div class="spinner-border text-primary mb-2" role="status"></div>
+                    <p class="table-state-text">Loading dictionary…</p>
+                </td></tr>`;
+                return;
+            }
+
+            if (!state.filtered.length) {
+                const filtersActive = activeChips().length > 0;
+                tbody.innerHTML = `<tr><td colspan="${COLUMN_COUNT}" class="table-state">
+                    <div class="table-state-icon"><i data-lucide="${filtersActive ? 'filter-x' : 'inbox'}"></i></div>
+                    <p class="table-state-title">${filtersActive ? 'No entries match your filters' : 'No dictionary entries yet'}</p>
+                    <p class="table-state-text">${filtersActive
+                        ? 'Clear a filter or reset to see the full dictionary.'
+                        : 'Add a tag prefix to start deriving Asset Group and Attribute Set.'}</p>
+                </td></tr>`;
+                return;
+            }
+
+            tbody.innerHTML = state.filtered.map(asset => {
+                const actionKey = asset.unique_key || `${asset.asset_code ?? ''}|${asset.asset_type ?? ''}`;
+                const safeKey = escapeHtml(actionKey);
+                const safeCode = escapeHtml(asset.asset_code ?? '');
+                const actions = CAN_EDIT ? `
+                    <td class="text-center sticky-actions">
+                        <button class="action-btn" data-action="edit" data-key="${safeKey}" aria-label="Edit ${safeCode}" title="Edit"><i data-lucide="edit-2" width="16"></i></button>
+                        <button class="action-btn delete" data-action="delete" data-key="${safeKey}" aria-label="Delete ${safeCode}" title="Delete"><i data-lucide="trash-2" width="16"></i></button>
+                    </td>` : '';
+                return `<tr>
+                    <td class="cell-tag">${cellText(asset.asset_code)}</td>
+                    <td>${typeBadge(asset.asset_type)}</td>
+                    <td>${cellText(asset.attribute_set)}</td>
+                    <td>${cellText(asset.asset_group)}</td>
+                    <td>${cellText(asset.main_asset)}</td>
+                    <td>${cellText(asset.description)}</td>
+                    ${actions}
+                </tr>`;
+            }).join('');
+        }
+
+        function renderCounts() {
+            const total = allAssets.length;
+            const counts = {};
+            allAssets.forEach(a => {
+                const code = String(a.asset_type ?? '').toUpperCase() || '—';
+                counts[code] = (counts[code] || 0) + 1;
+            });
+
+            const chips = [`<span class="kpi-chip"><span class="kpi-label">Total</span><span class="kpi-value">${total}</span></span>`];
+            ['ME', 'EL', 'BF'].forEach(code => {
+                chips.push(`<span class="kpi-chip kpi-chip--${code.toLowerCase()}"><span class="kpi-label">${code}</span><span class="kpi-value">${counts[code] || 0}</span></span>`);
+                delete counts[code];
+            });
+            Object.keys(counts).sort().forEach(code => {
+                chips.push(`<span class="kpi-chip"><span class="kpi-label">${escapeHtml(code)}</span><span class="kpi-value">${counts[code]}</span></span>`);
+            });
+            document.getElementById('kpi-row').innerHTML = chips.join('');
+
+            document.getElementById('result-count').innerHTML =
+                `Showing <strong>${state.filtered.length}</strong> of <strong>${total}</strong> entries`;
+        }
+
+        function activeChips() {
+            const chips = [];
+            if (filterState.search) chips.push({ kind: 'search', value: '', label: `Search: ${filterState.search}` });
+            if (filterState.tag) chips.push({ kind: 'tag', value: '', label: `Tag: ${filterState.tag}` });
+            if (filterState.type) chips.push({ kind: 'type', value: '', label: `Type: ${filterState.type}` });
+            filterState.attrSets.forEach(v => chips.push({ kind: 'attr', value: v, label: `Attribute Set: ${v}` }));
+            filterState.groups.forEach(v => chips.push({ kind: 'group', value: v, label: `Asset Group: ${v}` }));
+            return chips;
+        }
+
+        function renderChips() {
+            const chips = activeChips();
+            document.getElementById('chip-row-label').hidden = chips.length === 0;
+            document.getElementById('active-chips').innerHTML = chips.map(chip => `
+                <span class="chip">
+                    <span class="chip-text" title="${escapeHtml(chip.label)}">${escapeHtml(chip.label)}</span>
+                    <button type="button" class="chip-remove" data-chip-kind="${escapeHtml(chip.kind)}"
+                        data-chip-value="${escapeHtml(chip.value)}" aria-label="Remove filter ${escapeHtml(chip.label)}">&times;</button>
+                </span>`).join('');
+        }
+
+        function handleChipRemove(event) {
+            const btn = event.target.closest('[data-chip-kind]');
+            if (!btn) return;
+            const kind = btn.dataset.chipKind;
+            const value = btn.dataset.chipValue;
+
+            if (kind === 'search') {
+                filterState.search = '';
+                document.getElementById('filter-search').value = '';
+            } else if (kind === 'tag') {
+                filterState.tag = '';
+                document.getElementById('filter-tag').value = '';
+            } else if (kind === 'type') {
+                filterState.type = '';
+                document.getElementById('filter-type-all').checked = true;
+            } else if (kind === 'attr' && attrMs) {
+                filterState.attrSets = filterState.attrSets.filter(v => v !== value);
+                attrMs.setValues(filterState.attrSets);
+            } else if (kind === 'group' && groupMs) {
+                filterState.groups = filterState.groups.filter(v => v !== value);
+                groupMs.setValues(filterState.groups);
+            }
+            applyFilters();
+        }
+
+        function renderAlert() {
+            const container = document.getElementById('alert-area');
+            if (!state.error) {
+                container.innerHTML = '';
+                return;
+            }
+            container.innerHTML = `<div class="alert alert-danger alert-dismissible fade show" role="alert">
+                <strong>Load failed.</strong> ${escapeHtml(state.error)}
+                <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+            </div>`;
+        }
+
+        function showToast(message, variant = 'info') {
+            const container = document.getElementById('toast-container');
+            const wrapper = document.createElement('div');
+            wrapper.className = `toast align-items-center text-bg-${variant} border-0 mb-2`;
+            wrapper.setAttribute('role', 'alert');
+            wrapper.setAttribute('aria-live', 'assertive');
+            wrapper.setAttribute('aria-atomic', 'true');
+
+            const flex = document.createElement('div');
+            flex.className = 'd-flex';
+            const body = document.createElement('div');
+            body.className = 'toast-body';
+            body.textContent = message;
+            const close = document.createElement('button');
+            close.type = 'button';
+            close.className = 'btn-close btn-close-white me-2 m-auto';
+            close.setAttribute('data-bs-dismiss', 'toast');
+            close.setAttribute('aria-label', 'Close');
+            flex.append(body, close);
+            wrapper.appendChild(flex);
+
+            container.appendChild(wrapper);
+            const toast = new bootstrap.Toast(wrapper, { delay: 2600 });
+            toast.show();
+            wrapper.addEventListener('hidden.bs.toast', () => wrapper.remove());
+        }
+
+        // --- Table actions (editor only) ---
         function handleTableActions(event) {
             const actionBtn = event.target.closest('[data-action]');
             if (!actionBtn) return;
             const uniqueKey = actionBtn.dataset.key;
-            const action = actionBtn.dataset.action;
-            if (action === 'edit') openMechanicalModal(uniqueKey);
-            else if (action === 'delete') openDeleteModal(uniqueKey);
+            if (actionBtn.dataset.action === 'edit') openAssetModal(uniqueKey);
+            else if (actionBtn.dataset.action === 'delete') openDeleteModal(uniqueKey);
         }
 
         function findAsset(uniqueKey) {
             const target = (uniqueKey || '').trim().toUpperCase();
             if (!target) return null;
-            const byExactUnique = mechanicalAssets.find(a => (a.unique_key || '').toUpperCase() === target);
-            if (byExactUnique) return byExactUnique;
-            const byComposite = mechanicalAssets.find(a => {
-                const composite = `${(a.asset_code || '').toUpperCase()}|${(a.asset_type || '').toUpperCase()}`;
-                return composite === target;
-            });
-            if (byComposite) return byComposite;
-            const byCode = mechanicalAssets.find(a => (a.asset_code || '').toUpperCase() === target);
-            return byCode || null;
+            return allAssets.find(a => String(a.unique_key ?? '').toUpperCase() === target)
+                || allAssets.find(a => `${String(a.asset_code ?? '').toUpperCase()}|${String(a.asset_type ?? '').toUpperCase()}` === target)
+                || allAssets.find(a => String(a.asset_code ?? '').toUpperCase() === target)
+                || null;
         }
 
-        async function openMechanicalModal(uniqueKey = null) {
-            document.getElementById('assetForm').reset();
-            const title = document.getElementById('modalTitle');
+        async function openAssetModal(uniqueKey = null) {
+            const form = document.getElementById('assetForm');
+            form.reset();
             document.getElementById('inputGroup').classList.remove('is-invalid');
             isEditingDictionary = Boolean(uniqueKey);
 
+            const title = document.getElementById('modalTitle');
             const originalKeyInput = document.getElementById('inputOriginalKey');
             const codeInput = document.getElementById('inputCode');
             const typeSelect = document.getElementById('inputAssetType');
@@ -886,36 +1401,35 @@
             if (uniqueKey) {
                 let asset = findAsset(uniqueKey);
                 if (!asset) {
-                    await loadMechanicalAssets();
+                    await loadAssets();
                     asset = findAsset(uniqueKey);
                 }
                 if (!asset) {
                     showToast(`Unable to open entry for edit (missing data for "${uniqueKey}")`, 'danger');
                     return;
                 }
-                title.textContent = "Edit Entry";
-
-                originalKeyInput.value = asset.unique_key;
-                codeInput.value = asset.asset_code;
-                typeSelect.value = asset.asset_type || "ME";
-                attrSelect.value = asset.attribute_set || "";
-                groupInput.value = asset.asset_group || "";
-                mainSelect.value = asset.main_asset || "";
-                descInput.value = asset.description || "";
+                title.textContent = 'Edit Entry';
+                originalKeyInput.value = asset.unique_key || '';
+                codeInput.value = asset.asset_code || '';
+                typeSelect.value = asset.asset_type || 'ME';
+                attrSelect.value = asset.attribute_set || '';
+                groupInput.value = asset.asset_group || '';
+                mainSelect.value = asset.main_asset || '';
+                descInput.value = asset.description || '';
             } else {
-                title.textContent = "Add New Entry";
-                originalKeyInput.value = "";
-                codeInput.value = "";
-                typeSelect.value = "ME";
-                attrSelect.value = "";
-                groupInput.value = "";
-                mainSelect.value = "";
-                descInput.value = "";
+                title.textContent = 'Add New Entry';
+                originalKeyInput.value = '';
+                codeInput.value = '';
+                typeSelect.value = 'ME';
+                attrSelect.value = '';
+                groupInput.value = '';
+                mainSelect.value = '';
+                descInput.value = '';
             }
-            mechanicalModal.show();
+            assetModal.show();
         }
 
-        async function saveMechanicalAsset() {
+        async function saveAsset() {
             const saveBtn = document.getElementById('saveAssetBtn');
             saveBtn.disabled = true;
             const groupInputEl = document.getElementById('inputGroup');
@@ -929,32 +1443,34 @@
             const desc = document.getElementById('inputDesc').value.trim();
 
             if (!code || !type || !attr || !group || !desc) {
-                showToast("All fields are mandatory.", 'warning');
+                showToast('All fields except Main Asset are mandatory.', 'warning');
                 saveBtn.disabled = false;
                 return;
             }
 
             if (!validAssetGroups.includes(group)) {
                 groupInputEl.classList.add('is-invalid');
-                showToast("Invalid Asset Group. Please select a value from the list.", 'danger');
+                showToast('Invalid Asset Group. Please select a value from the list.', 'danger');
                 saveBtn.disabled = false;
                 return;
-            } else {
-                groupInputEl.classList.remove('is-invalid');
             }
+            groupInputEl.classList.remove('is-invalid');
 
-            const duplicate = mechanicalAssets.find(a =>
-                (a.asset_code || '').toUpperCase() === code &&
-                (a.asset_type || '').toUpperCase() === type &&
-                !isEditingDictionary
-            );
+            // Exclude the entry being edited from the duplicate check; the server
+            // 409 remains the authority.
+            const targetKey = `${code}|${type}`;
+            const duplicate = allAssets.find(a => {
+                const key = String(a.unique_key ?? `${a.asset_code ?? ''}|${a.asset_type ?? ''}`).toUpperCase();
+                if (isEditingDictionary && key === String(originalKey).toUpperCase()) return false;
+                return key === targetKey;
+            });
             if (duplicate) {
-                showToast("Duplicate code detected. Use a unique UBC Tag.", 'danger');
+                showToast(`"${code}" already exists for type ${type}. Use a unique UBC tag.`, 'danger');
                 saveBtn.disabled = false;
                 return;
             }
 
-            const data = {
+            const payload = {
                 asset_code: code,
                 asset_type: type,
                 attribute_set: attr,
@@ -967,20 +1483,20 @@
 
             try {
                 const result = await request('/api/assets', {
-                    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data)
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
                 });
-
                 if (result.success) {
-                    mechanicalModal.hide();
-                    showToast("Saved successfully.", 'success');
-                    await loadMechanicalAssets();
-                    state.loading = false;
-                    applyFiltersAndSort(document.getElementById('mech-search-input').value);
+                    assetModal.hide();
+                    showToast('Entry saved.', 'success');
+                    await loadAssets();
+                    applyFilters();
                 } else {
-                    showToast(result.message || "Error saving dictionary entry.", 'danger');
+                    showToast(result.message || 'Error saving dictionary entry.', 'danger');
                 }
             } catch (err) {
-                showToast(err.message || "Error saving dictionary entry.", 'danger');
+                showToast(err.message || 'Error saving dictionary entry.', 'danger');
             } finally {
                 saveBtn.disabled = false;
             }
@@ -988,8 +1504,9 @@
 
         function openDeleteModal(uniqueKey) {
             pendingDeleteKey = uniqueKey;
-            const asset = mechanicalAssets.find(a => a.unique_key === uniqueKey) || { asset_code: uniqueKey, asset_type: '' };
-            document.getElementById('delete-asset-label').textContent = `${asset.asset_code} ${asset.asset_type ? '(' + asset.asset_type + ')' : ''}`;
+            const asset = findAsset(uniqueKey) || { asset_code: uniqueKey, asset_type: '' };
+            document.getElementById('delete-asset-label').textContent =
+                `${asset.asset_code}${asset.asset_type ? ' (' + asset.asset_type + ')' : ''}`;
             document.getElementById('delete-confirm-input').value = '';
             document.getElementById('delete-confirm-btn').disabled = true;
             document.getElementById('delete-warning').hidden = true;
@@ -997,56 +1514,33 @@
         }
 
         function validateDeleteInput() {
-            const asset = mechanicalAssets.find(a => a.unique_key === pendingDeleteKey);
-            const code = asset ? asset.asset_code : '';
-            const match = document.getElementById('delete-confirm-input').value.trim().toUpperCase() === code.toUpperCase();
+            const asset = findAsset(pendingDeleteKey);
+            const code = asset ? String(asset.asset_code ?? '') : '';
+            const typed = document.getElementById('delete-confirm-input').value.trim();
+            const match = Boolean(code) && typed.toUpperCase() === code.toUpperCase();
             document.getElementById('delete-confirm-btn').disabled = !match;
-            document.getElementById('delete-warning').hidden = match;
+            document.getElementById('delete-warning').hidden = match || !typed;
         }
 
         async function confirmDelete() {
             if (!pendingDeleteKey) return;
             try {
                 const result = await request('/api/assets/delete', {
-                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ unique_key: pendingDeleteKey })
                 });
                 if (result.success) {
-                    showToast("Entry deleted.", 'success');
                     deleteModal.hide();
-                    await loadMechanicalAssets();
-                    state.loading = false;
-                    applyFiltersAndSort(document.getElementById('mech-search-input').value);
+                    showToast('Entry deleted.', 'success');
+                    await loadAssets();
+                    applyFilters();
                 } else {
-                    showToast(result.message || "Error deleting asset.", 'danger');
+                    showToast(result.message || 'Error deleting entry.', 'danger');
                 }
             } catch (err) {
-                showToast(err.message || "Error deleting asset.", 'danger');
+                showToast(err.message || 'Error deleting entry.', 'danger');
             }
-        }
-
-        // --- Utilities ---
-        function formatTime(date) {
-            return new Intl.DateTimeFormat('en-US', {
-                month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit'
-            }).format(date);
-        }
-
-        function showToast(message, variant = 'info') {
-            const container = document.getElementById('toast-container');
-            const wrapper = document.createElement('div');
-            wrapper.className = `toast align-items-center text-bg-${variant} border-0 mb-2`;
-            wrapper.setAttribute('role', 'alert');
-            wrapper.setAttribute('aria-live', 'assertive');
-            wrapper.setAttribute('aria-atomic', 'true');
-            wrapper.innerHTML = `<div class="d-flex">
-                <div class="toast-body">${message}</div>
-                <button type="button" class="btn-close btn-close-white me-2 m-auto" data-bs-dismiss="toast" aria-label="Close"></button>
-            </div>`;
-            container.appendChild(wrapper);
-            const toast = new bootstrap.Toast(wrapper, { delay: 2600 });
-            toast.show();
-            wrapper.addEventListener('hidden.bs.toast', () => wrapper.remove());
         }
     </script>
 </body>

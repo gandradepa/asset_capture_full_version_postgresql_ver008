@@ -118,11 +118,12 @@ Current documentation refresh: 2026-07-08.
 
 ## ME Long-Model and Model/Serial Collision Defense
 
-Current documentation refresh: 2026-07-23.
+Current documentation refresh: 2026-08-11.
 
 ME model codes are not universally short. Trane fan-coil nameplates can carry dense 40-character configuration strings; incident QR `0000186301` has Model `BCHC090H1A0A2AF7P000000B0000000000000000` and Serial Number `T03M77537`.
 
 - `_is_model_code_candidate()` accepts bounded, code-like alphanumeric model values up to 64 compact characters. Values longer than the legacy 32-character envelope must contain at least two letters and eight digits, use only model-code separators, and contain no more than four whitespace-delimited groups.
+- Short digit-leading model codes are accepted only in the bounded `2-5 digits + hyphen + 2-4 letters` form. Incident QR `0000188207` uses Honeywell Analytics Model `301-EM`; the printed hyphen is required, while rating-like values such as `208V` and `1200 VAC` remain excluded.
 - Label-aware model regexes cover the same 64-character bound. Fast OCR may consider a fallback model only from text immediately following `MODEL`, `MODEL NO.`, `UNIT MODEL`, `TYPE`, `CATALOG`, or `ITEM`; the presence of a model label elsewhere in a full OCR block does not authorize unrelated tokens.
 - `_has_model_label_evidence()` requires a label-local parsed match. A serial appearing elsewhere on the same plate is not model evidence.
 - Production simple mode reads upright grayscale before thresholded OCR variants so tightly printed trailing zeroes survive. If label-local OCR differs only by one or two trailing zeroes, it corroborates the longer zero-padded Model.
@@ -135,6 +136,19 @@ ME model codes are not universally short. Trane fan-coil nameplates can carry de
 - `sdi_dataset` is for ME and BF.
 - `sdi_dataset_EL` is for EL.
 - `Avg_ai_conf` must be preserved through sync when present.
+
+## ME Label-Authoritative Model Values
+
+Current documentation refresh: 2026-08-11.
+
+Mechanical Model values printed on the sequence `-0` nameplate are format-authoritative when the value is directly attached to an explicit `Model`, `Model No.`, `Model Number`, `Unit Model`, `Type`, `Catalog`, or `Item` label. The value may be alphabetic-only, numeric-only, mixed, spaced, or punctuated; normalization preserves printable punctuation and does not require a manufacturer allowlist.
+
+- Explicitly labeled values must contain at least one alphanumeric character, contain no control or newline characters, and be at most 64 characters.
+- Capture stops at a line break or the next known field label. Adjacent Serial, Rating, Date, Product, Voltage, and similar fields cannot leak into Model.
+- The targeted sequence-`0` Model reread, label-aware text parser, and label-bounded OCR carry explicit-label provenance through the UI-parity merge and final confidence path.
+- Unlabeled values still use `_is_model_code_candidate()`'s existing strict model-shape, rating, date, tag, prose, and manufacturer gates. A raw multi-image response does not gain label provenance merely because the image contains a Model label elsewhere.
+- Compact-identical Model and Serial Number values remain invalid. The parser and final save guard blank the Model collision rather than storing duplicate identity fields.
+- Incident QR `0000188234`: the Critical Environment Technologies Canada Inc. plate clearly prints `Model: QCC-M`, but the former generic gate required a digit and discarded both the primary and targeted reads. `QCC-M` now survives only when it is read from the explicit sequence-`0` Model field.
 
 ## Siemens Nameplate Extraction Rules
 

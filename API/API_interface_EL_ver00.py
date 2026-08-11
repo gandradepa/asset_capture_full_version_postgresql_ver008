@@ -100,10 +100,29 @@ try:
         normalize_supply_from,
         normalize_el_supply_from_tag,
         normalize_ubc_tag,
+        normalize_manufacturer,
+        normalize_model,
+        normalize_serial,
+        normalize_year,
+        looks_like_date_misread_serial,
         completeness_score,
     )
 except ImportError:
     logging.warning("validators_shared module not found. Using local fallbacks.")
+    def normalize_manufacturer(name):
+        # Fallback: no whitelist available; light cleanup only.
+        return re.sub(r"[^A-Za-z& ]+", "", str(name or "")).strip().title()
+    def normalize_model(model):
+        s = str(model or "").strip()
+        return re.sub(r"[^\w\s\-\.]", "", s).upper() if s else ""
+    def normalize_serial(serial):
+        s = str(serial or "").strip()
+        return re.sub(r"[^\w\-]", "", s)[:64] if s else ""
+    def normalize_year(year_str, min_year=1950, max_year=2026):
+        m = re.search(r"\b(19\d{2}|20\d{2})\b", str(year_str or ""))
+        return m.group(1) if m and min_year <= int(m.group(1)) <= max_year else ""
+    def looks_like_date_misread_serial(serial, year_hint=""):
+        return False
     def normalize_ampere(v):
         s = (v or "").strip().upper()
         m = re.search(r"(\d{1,4})(?:\s*A|AMP|AMPS)?", s)
@@ -311,7 +330,17 @@ class Config:
     )
 
     # --- Fields ---
-    STRUCTURED_FIELDS = ["UBC Asset Tag", "Branch Panel", "Ampere", "Power Rating", "Power Rating (UoM)", "Supply From", "Volts", "Location"]
+    STRUCTURED_FIELDS = ["UBC Asset Tag", "Branch Panel", "Ampere", "Power Rating", "Power Rating (UoM)", "Supply From", "Volts", "Location", "Manufacturer", "Model", "Serial Number", "Year", "Capacity", "Capacity (UoM)"]
+    # ME-style nameplate fields (2026-08-07; Capacity pair added the same day),
+    # read from the EL-0 Asset Plate for
+    # ALL EL assets: General vs Distribution cannot be classified before
+    # extraction (every tag-derivable group is a Distribution group), so the
+    # values are always stored in the JSON and only the General review form /
+    # DB sync surfaces them. Deliberately NOT part of any scoring tuple:
+    # completeness math, retry/fallback gates, and flag thresholds are
+    # unchanged, and their confidences are projected only when non-blank so
+    # existing JSONs are never mass-flagged stale (no rule-version bump).
+    EL_NAMEPLATE_FIELDS = ("Manufacturer", "Model", "Serial Number", "Year", "Capacity", "Capacity (UoM)")
     EL_TRANSFORMER_ASSET_GROUP = "Interior Distribution Transformers"
     EL_UNKNOWN_ASSET_GROUP = "Unknown"
     EL_BASE_SCORING_FIELDS = ("UBC Asset Tag", "Volts")
@@ -444,6 +473,12 @@ class ELConfidenceScores(BaseModel):
     fed_from: int = Field(default=0, alias="Fed From")
     volts: int = Field(default=0, alias="Volts")
     location: int = Field(default=0, alias="Location")
+    manufacturer: int = Field(default=0, alias="Manufacturer")
+    model: int = Field(default=0, alias="Model")
+    serial_number: int = Field(default=0, alias="Serial Number")
+    year: int = Field(default=0, alias="Year")
+    capacity: int = Field(default=0, alias="Capacity")
+    capacity_uom: int = Field(default=0, alias="Capacity (UoM)")
 
 
 class ELStructuredExtraction(BaseModel):
@@ -461,6 +496,12 @@ class ELStructuredExtraction(BaseModel):
     fed_from: str = Field(default="", alias="Fed From")
     volts: str = Field(default="", alias="Volts")
     location: str = Field(default="", alias="Location")
+    manufacturer: str = Field(default="", alias="Manufacturer")
+    model: str = Field(default="", alias="Model")
+    serial_number: str = Field(default="", alias="Serial Number")
+    year: str = Field(default="", alias="Year")
+    capacity: str = Field(default="", alias="Capacity")
+    capacity_uom: str = Field(default="", alias="Capacity (UoM)")
     confidence_scores: ELConfidenceScores = Field(
         default_factory=ELConfidenceScores,
         alias="Confidence Scores",
@@ -547,7 +588,9 @@ Rules:
 - Ampere: NEVER take a value from a manufacturer nameplate's winding-current table (the column headed `COURANT CURRENT (A)`, or any `%`-tap row such as `100% 69.4`, or an `H.T.`/`B.T.`/`H.V.`/`L.V.` winding row). Those are per-tap per-winding currents, not the asset's amperage. Leave Ampere blank in that case.
 - Nameplate Text: if EL-0 shows a MANUFACTURER nameplate (an engraved or stamped metal data plate, e.g. ABB / Westinghouse / Square D, carrying KVA, H.V./L.V. voltages, serial number), transcribe ALL of it verbatim, table cells row by row, preserving line breaks as \\n. Leave blank when EL-0 is not a manufacturer nameplate.
 - Nameplate Text vs Label Text: keep them strictly separate. `Label Text` is the BLACK LAMACOID plate(s) only; manufacturer-nameplate text must NEVER be merged into it. Do not copy nameplate figures into Volts or Ampere -- transcribe them into Nameplate Text and let post-processing decide.
-- Source precedence: EL-1 (lamacoid) is the PRIMARY source for identity and for any printed Volts/Ampere; EL-0 (Asset Plate, optional) is SECONDARY and supplies manufacturer-nameplate technical specs only. Never use the blue QR sticker text for any field.
+- Source precedence: EL-1 (lamacoid) is the PRIMARY source for identity and for any printed Volts/Ampere; EL-0 (Asset Plate, optional) is SECONDARY and supplies manufacturer-nameplate technical specs only. A manufacturer data plate visible in the EL-1 frame may supply the nameplate identity fields when EL-0 lacks one (see the rule below). Never use the blue QR sticker text for any field.
+- Manufacturer / Model / Serial Number / Year: read from the EL-0 manufacturer nameplate (preferred; the same plate transcribed into Nameplate Text). If EL-0 is missing or shows no manufacturer plate, you may read them from the EL-1 photo ONLY when it clearly shows a manufacturer nameplate or data plate — never from the engraved lamacoid text itself. Branding and a model designation printed by the equipment maker on the unit's own face (e.g. a fire alarm control panel front showing `Simplex` and `4100ES`) also count as a manufacturer source for Manufacturer / Model. Manufacturer is the brand (e.g., `ABB`, `WESTINGHOUSE`, `SQUARE D`); Model is the catalog/type designation; Serial Number is the printed serial exactly as shown; Year is the 4-digit year of manufacture only. Leave all four blank when neither photo shows a manufacturer plate. Never source them from the lamacoid or the blue QR sticker.
+- Capacity: an explicitly printed capacity/output rating on the same manufacturer plate used above — EL-0 preferred, EL-1 under the same fallback rule (e.g., `75 KVA`, `15 KW`, `5 HP`). Return the number only in `Capacity` and the unit exactly as printed in `Capacity (UoM)`. Leave both blank when no capacity rating is printed. Never build Capacity from voltage strings or the winding-current table.
 """
 
 # Fields scored for legacy completeness / manual-review thresholds. Separate
@@ -659,6 +702,12 @@ class ELLegacyConfidenceScores(BaseModel):
     volts: int = Field(default=0, alias="Volts")
     ampere: int = Field(default=0, alias="Ampere")
     nameplate_text: int = Field(default=0, alias="Nameplate Text")
+    manufacturer: int = Field(default=0, alias="Manufacturer")
+    model: int = Field(default=0, alias="Model")
+    serial_number: int = Field(default=0, alias="Serial Number")
+    year: int = Field(default=0, alias="Year")
+    capacity: int = Field(default=0, alias="Capacity")
+    capacity_uom: int = Field(default=0, alias="Capacity (UoM)")
 
 
 class ELLegacyStructuredExtraction(BaseModel):
@@ -680,13 +729,21 @@ class ELLegacyStructuredExtraction(BaseModel):
     # EL-0 manufacturer nameplate, kept out of label_text so the lamacoid
     # parse stays uncontaminated (see legacy_flow.legacy_nameplate_specs).
     nameplate_text: str = Field(default="", alias="Nameplate Text")
+    # EL-0 nameplate identity fields (2026-08-07); verbatim here, normalized
+    # by _normalize_el_nameplate_fields after legacy composition.
+    manufacturer: str = Field(default="", alias="Manufacturer")
+    model: str = Field(default="", alias="Model")
+    serial_number: str = Field(default="", alias="Serial Number")
+    year: str = Field(default="", alias="Year")
+    capacity: str = Field(default="", alias="Capacity")
+    capacity_uom: str = Field(default="", alias="Capacity (UoM)")
     confidence_scores: ELLegacyConfidenceScores = Field(
         default_factory=ELLegacyConfidenceScores,
         alias="Confidence Scores",
         description="Per-field confidence 0-100.",
     )
 
-    @field_validator("label_text", "ubc_asset_tag", "supply_from", "volts", "ampere", "nameplate_text", mode="before")
+    @field_validator("label_text", "ubc_asset_tag", "supply_from", "volts", "ampere", "nameplate_text", "manufacturer", "model", "serial_number", "year", "capacity", "capacity_uom", mode="before")
     @classmethod
     def _coerce_to_string(cls, value: Any) -> str:
         if value is None:
@@ -1122,6 +1179,16 @@ def _project_el_confidence_scores(
         else:
             projected[field] = 0
 
+    # Nameplate fields join the projection ONLY when non-blank. Load-bearing:
+    # _existing_el_output_needs_rescore compares stored confidence_scores to
+    # this projection, and pre-2026-08-07 JSONs have no nameplate keys -- an
+    # unconditional entry (or a blank-keyed 0) would mismatch every stored
+    # payload and trigger a corpus-wide billable re-extraction on the next
+    # ai_check cycle. Do not "simplify" this into the loop above.
+    for field in Config.EL_NAMEPLATE_FIELDS:
+        if str(normalized_data.get(field, "") or "").strip():
+            projected[field] = _normalize_el_confidence_score(normalized_conf.get(field, 0))
+
     return projected
 
 
@@ -1135,6 +1202,237 @@ def _normalize_el_power_rating_fields(
     if _classify_el_asset_group(tag) != Config.EL_TRANSFORMER_ASSET_GROUP:
         return "", ""
     return normalize_explicit_power_rating_pair(value, uom, source_text, ocr_context)
+
+
+def _clean_raw_manufacturer(raw: str) -> str:
+    """Light cleanup for manufacturer strings that miss the shared whitelist.
+
+    validators_shared.normalize_manufacturer only recognizes the BF backflow
+    brands and returns '' for everything else -- wired raw it would blank
+    every electrical brand (Square D, Eaton, Siemens, ...); see
+    INCIDENT_2026-07-08_me_manufacturer_whitelist_vm_drift.md for the failure
+    class. A non-empty read is therefore never blanked, only tidied.
+    """
+    s = str(raw or "").strip()
+    if not s:
+        return ""
+    s = re.sub(r"[^A-Za-z0-9&./'\- ]+", " ", s)
+    s = re.sub(r"\s+", " ", s).strip()
+    return s[:80]
+
+
+_EL_CAPACITY_SPLIT_RE = re.compile(r"^([0-9]+(?:[.,][0-9]+)?)\s*([A-Za-z/%°]+(?:[·.\-][A-Za-z]+)*)$")
+
+
+def _normalize_el_capacity_pair(value: str, uom: str) -> tuple[str, str]:
+    """Normalize the optional Capacity pair: bare value, unit in the UoM slot.
+
+    Capacity units vary by equipment (kVA, kW, HP, A, BTU, ...) so there is
+    deliberately NO unit whitelist -- the unit is kept as printed. When the
+    model returns a combined reading ("75 kVA") and the UoM slot is blank,
+    the trailing unit token is split off the value per the EL rating storage
+    convention (bare value + unit in the "(UoM)" column). A unit with no
+    value is dropped: a bare unit is not a capacity reading.
+    """
+    value = str(value or "").strip()
+    uom = str(uom or "").strip()
+    if value and not uom:
+        match = _EL_CAPACITY_SPLIT_RE.match(value)
+        if match:
+            value, uom = match.group(1), match.group(2)
+    if not value:
+        uom = ""
+    return value, uom
+
+
+def _normalize_el_nameplate_fields(candidate: Dict[str, Any], conf: Dict[str, Any]) -> None:
+    """Normalize the EL-0 nameplate fields in place (2026-08-07).
+
+    Mirrors the ME wiring: shared validators first, with the whitelist-miss
+    fallback for Manufacturer, and the date-shaped-serial rejection (incl.
+    upside-down misreads) used by the ME/BF serial gates. Zeroes the matching
+    confidence entry whenever a value normalizes to blank, following the
+    Ampere/Power Rating pattern. Also handles the optional Capacity pair
+    (same-day follow-up).
+    """
+    raw_year = str(candidate.get("Year", "") or "")
+    year = normalize_year(raw_year)
+    raw_serial = str(candidate.get("Serial Number", "") or "")
+    serial = normalize_serial(raw_serial)
+    # Check the RAW value first: normalize_serial strips the / . separators
+    # that the date detector's unconditional branch keys on ("8102/90" ->
+    # "810290" would only be caught when Year corroborates). ME preserves
+    # separators for this guard (_clean_serial_preserving_separators); the
+    # normalized-value check keeps the compact+year-hint path.
+    if serial and (
+        looks_like_date_misread_serial(raw_serial.strip(), year)
+        or looks_like_date_misread_serial(serial, year)
+    ):
+        logging.info(
+            "Rejected date-shaped Serial Number %r (year hint %r) from EL nameplate.",
+            raw_serial.strip(), year,
+        )
+        serial = ""
+    raw_manufacturer = str(candidate.get("Manufacturer", "") or "")
+    manufacturer = normalize_manufacturer(raw_manufacturer) or _clean_raw_manufacturer(raw_manufacturer)
+    model = normalize_model(str(candidate.get("Model", "") or ""))
+    capacity, capacity_uom = _normalize_el_capacity_pair(
+        candidate.get("Capacity", ""), candidate.get("Capacity (UoM)", "")
+    )
+
+    candidate["Manufacturer"] = manufacturer
+    candidate["Model"] = model
+    candidate["Serial Number"] = serial
+    candidate["Year"] = year
+    candidate["Capacity"] = capacity
+    candidate["Capacity (UoM)"] = capacity_uom
+    if isinstance(conf, dict):
+        for field, value in (
+            ("Manufacturer", manufacturer),
+            ("Model", model),
+            ("Serial Number", serial),
+            ("Year", year),
+            ("Capacity", capacity),
+            ("Capacity (UoM)", capacity_uom),
+        ):
+            if not value:
+                conf[field] = 0
+
+
+class fire_alarm_control:
+    """Fire-alarm control panels get a deterministic maker-derived tag (2026-08-08/10).
+
+    Fire-alarm control panels carry no UBC lamacoid; anything the model reads
+    as a tag off the panel face is junk. Each maker subclass keys off the
+    extracted Manufacturer and derives the tag from the extracted Model:
+
+      Simplex  -> "UN-<Model>" (e.g. "UN-4100ES"; bare "UN-" while no model
+                  is known, capped below the manual-review threshold so the
+                  placeholder still flags for human review)
+      Autocall -> "<Model>"    (e.g. "4100ES"; Manufacturer canonicalized to
+                  "AUTOCALL"; tag left untouched while no model is known so
+                  the asset keeps flagging for review)
+
+    The dictionary entries "UN-|EL" and "4100|EL" then derive the fire-alarm
+    Asset Group / Attribute downstream. Config.ABBREVIATIONS must NOT gain a
+    "UN" (or "4100") entry — it would mangle raw tags starting with those
+    characters; instead the standard flow RE-APPLIES these rules after its
+    post-loop _resolve_el_asset_tag + _apply_tag_formatting step, which would
+    otherwise rewrite the tags to "PNL-UN-<MODEL>" / "PNL-<MODEL>" and promote
+    the synthesized single-token tag into Branch Panel. Subclass apply() must
+    therefore stay IDEMPOTENT: it re-derives everything from Manufacturer and
+    Model, which persist across the re-application.
+
+    When a rule fires it also re-syncs the tag-derived companions so the
+    stored identity is internally consistent: Branch Panel is cleared (a fire
+    panel has no branch identifier; whatever was read is junk), and — in the
+    legacy flow, whose composition runs before this rule — Equipment ID
+    follows the new tag while Equipment Type / Power Type / Description are
+    recomposed for the maker-derived tag. Feeder fields (Supply From / Fed
+    From Equipment ID) are deliberately left alone: a fed-from reading can be
+    legitimate for a fire panel.
+    """
+
+    MAKERS = ()  # precedence order (Simplex wins over Autocall); bound below
+
+    # -- subclass contract --------------------------------------------------
+    @classmethod
+    def matches(cls, manufacturer: str) -> bool:
+        raise NotImplementedError
+
+    @classmethod
+    def apply(cls, candidate: Dict[str, Any], conf: Dict[str, Any]) -> None:
+        raise NotImplementedError
+
+    # -- shared helpers -----------------------------------------------------
+    @staticmethod
+    def _model_of(candidate: Dict[str, Any]) -> str:
+        return re.sub(r"\s+", "", str(candidate.get("Model", "") or "")).upper()
+
+    @staticmethod
+    def _set_tag(candidate: Dict[str, Any], conf: Dict[str, Any],
+                 new_tag: str, brand: str, tag_confidence) -> None:
+        """Overwrite the tag and re-sync its companions (see class docstring)."""
+        old_tag = str(candidate.get("UBC Asset Tag", "") or "").strip()
+        candidate["UBC Asset Tag"] = new_tag
+        candidate["Branch Panel"] = ""
+        if "Equipment ID" in candidate:
+            candidate["Equipment ID"] = new_tag
+        if "Equipment Type" in candidate:
+            candidate["Equipment Type"] = ""
+        if "Power Type" in candidate:
+            candidate["Power Type"] = ""
+        if "Description" in candidate:
+            candidate["Description"] = f"{brand} - {new_tag}"
+        if isinstance(conf, dict):
+            conf["Branch Panel"] = 0
+            if tag_confidence is not None:
+                conf["UBC Asset Tag"] = tag_confidence
+        if old_tag != new_tag:
+            logging.info(
+                "%s rule: UBC Asset Tag %r -> %r (Manufacturer=%r, Model=%r).",
+                brand, old_tag, new_tag,
+                candidate.get("Manufacturer", ""), candidate.get("Model", ""),
+            )
+
+
+class Simplex(fire_alarm_control):
+    """Simplex panels: tag is ALWAYS overwritten with "UN-" + Model."""
+
+    @classmethod
+    def matches(cls, manufacturer: str) -> bool:
+        return "simplex" in manufacturer.lower()
+
+    @classmethod
+    def apply(cls, candidate: Dict[str, Any], conf: Dict[str, Any]) -> None:
+        model = cls._model_of(candidate)
+        new_tag = f"UN-{model}" if model else "UN-"
+        tag_confidence = None
+        if isinstance(conf, dict):
+            source_confs = [_normalize_el_confidence_score(conf.get("Manufacturer", 0))]
+            if model:
+                source_confs.append(_normalize_el_confidence_score(conf.get("Model", 0)))
+            else:
+                source_confs.append(max(int(Config.MANUAL_REVIEW_MIN_CONFIDENCE) - 1, 0))
+            tag_confidence = min(source_confs)
+        cls._set_tag(candidate, conf, new_tag, "SIMPLEX", tag_confidence)
+
+
+class Autocall(fire_alarm_control):
+    """Autocall panels: tag becomes the model number itself (e.g. "4100ES")."""
+
+    @classmethod
+    def matches(cls, manufacturer: str) -> bool:
+        return "autocall" in manufacturer.lower()
+
+    @classmethod
+    def apply(cls, candidate: Dict[str, Any], conf: Dict[str, Any]) -> None:
+        candidate["Manufacturer"] = "AUTOCALL"
+        model = cls._model_of(candidate)
+        if not model:
+            # No model read yet: no deterministic tag is derivable. Leave the
+            # tag untouched (usually blank -> confidence already 0) so the
+            # asset keeps flagging for manual review.
+            return
+        tag_confidence = None
+        if isinstance(conf, dict):
+            tag_confidence = min(
+                _normalize_el_confidence_score(conf.get("Manufacturer", 0)),
+                _normalize_el_confidence_score(conf.get("Model", 0)),
+            )
+        cls._set_tag(candidate, conf, model, "AUTOCALL", tag_confidence)
+
+
+fire_alarm_control.MAKERS = (Simplex, Autocall)
+
+
+def _apply_el_fire_alarm_control_rules(candidate: Dict[str, Any], conf: Dict[str, Any]) -> None:
+    """Apply the first matching fire_alarm_control maker rule (Simplex wins)."""
+    manufacturer = str(candidate.get("Manufacturer", "") or "")
+    for maker in fire_alarm_control.MAKERS:
+        if maker.matches(manufacturer):
+            maker.apply(candidate, conf)
+            return
 
 
 def _normalize_el_confidence_scores(scores: Dict[str, Any]) -> Dict[str, int]:
@@ -1814,10 +2112,19 @@ class AssetProcessor:
 
         projected_conf = _project_el_confidence_scores(structured, confidence_scores or {})
         for field, conf in projected_conf.items():
+            # Nameplate fields (2026-08-07) never drive retry/fallback
+            # escalation -- the projection now carries them when non-blank,
+            # and letting them trip this gate would add billable attempts the
+            # pre-nameplate pipeline never made. They still flag for manual
+            # review via _build_manual_review_metadata's scoring loop rules.
+            if field in Config.EL_NAMEPLATE_FIELDS:
+                continue
             if str(structured.get(field, "") or "").strip() and conf < Config.MANUAL_REVIEW_MIN_CONFIDENCE:
                 return True
 
         for field in Config.STRUCTURED_FIELDS:
+            if field in Config.EL_NAMEPLATE_FIELDS:
+                continue
             if "?" in str(structured.get(field, "")):
                 return True
         return False
@@ -2081,6 +2388,13 @@ Rules:
 - Location: Room/Area from EL-2 only.
 - Location: if EL-2 does not explicitly show room/area text for the panel, leave `Location` blank.
 - Location: ignore location-like text from EL-0 and EL-1.
+- Manufacturer / Model / Serial Number / Year: read from the EL-0 Asset Plate photo (preferred source: manufacturer nameplate or data sticker). If EL-0 is missing or shows no manufacturer plate, you may read them from the EL-1 photo ONLY when it clearly shows a manufacturer nameplate or data sticker. Leave all four blank when neither photo shows one.
+- Manufacturer / Model / Serial Number / Year: never source these from facility-made text in any photo — the printed panel label / engraved lamacoid, the blue QR sticker, or the EL-2 panel schedule. A manufacturer plate is the equipment maker's own plate or sticker; a panel label naming the panel is not one.
+- Manufacturer / Model: branding and a model designation printed by the equipment maker on the unit's own face also count as a manufacturer source (e.g. a fire alarm control panel front showing `Simplex` and `4100ES`) — that text is manufacturer-made, unlike the facility-made text above.
+- Manufacturer: the brand name only (e.g., `SQUARE D`, `EATON`, `SIEMENS`), not slogans or addresses.
+- Serial Number: copy the printed serial exactly as shown; leave blank when only a date is printed where a serial would be.
+- Year: the 4-digit year of manufacture only (e.g., from `MFG DATE` or a date code). Never the installation or inspection date.
+- Capacity: an explicitly printed capacity/output rating on the same manufacturer plate used above — EL-0 preferred, EL-1 under the same fallback rule (e.g., `75 kVA`, `15 kW`, `5 HP`, `100 A`). Return the number only in `Capacity` and the unit exactly as printed in `Capacity (UoM)`. Leave both blank when no capacity rating is printed. Never derive Capacity from voltage strings like `600V` or `208Y/120V`, and never reuse the transformer Power Rating rules for it.
 """
                         content = self._build_multimodal_content(prompt, ordered, ocr_context)
 
@@ -2140,6 +2454,8 @@ Rules:
                             conf["Power Rating (UoM)"] = 0
                         if not candidate.get("UBC Asset Tag"):
                             conf["UBC Asset Tag"] = 0
+                        _normalize_el_nameplate_fields(candidate, conf)
+                        _apply_el_fire_alarm_control_rules(candidate, conf)
                         score = _el_completeness_score(candidate)
                         logging.info(
                             "[%s] Extraction completed: completeness=%.0f%%, missing_fields=%s (model=%s, role=%s, profile=%s).",
@@ -2223,6 +2539,15 @@ Rules:
             
         final_tag = _apply_tag_formatting(raw_tag)
         final_data["UBC Asset Tag"] = final_tag
+        # Re-apply the fire_alarm_control rules on the finalized tag: the
+        # formatting above turns the in-loop "UN-<MODEL>" into "PNL-UN-<MODEL>"
+        # and the Autocall "<MODEL>" into "PNL-<MODEL>" (no "UN"/"4100"
+        # abbreviation by design) and _resolve_el_asset_tag can promote the
+        # synthesized single-token tag into Branch Panel. Re-applying restores
+        # the deterministic tag, clears the leaked branch, and lets the
+        # description/dictionary lookups below see the maker-derived tag.
+        _apply_el_fire_alarm_control_rules(final_data, final_confidence)
+        final_tag = str(final_data.get("UBC Asset Tag", "") or "")
         supply_from_raw = (final_data.get("Supply From") or "").strip()
         if supply_from_raw:
             final_data["Supply From"] = normalize_el_supply_from_tag(supply_from_raw)
@@ -2477,6 +2802,15 @@ Rules:
                 raw_payload = parsed.model_dump(by_alias=True)
                 conf = raw_payload.pop("Confidence Scores", {}) or {}
                 candidate = el_legacy_flow.legacy_structured_from_raw(raw_payload)
+                # Nameplate identity fields (2026-08-07) ride alongside the
+                # legacy composition: copied from the raw transcription and
+                # normalized here, deliberately without touching the shared
+                # legacy_flow module (deploy-skew hazard, see module docstring)
+                # or the legacy scoring fields.
+                for _np_field in Config.EL_NAMEPLATE_FIELDS:
+                    candidate[_np_field] = str(raw_payload.get(_np_field) or "").strip()
+                _normalize_el_nameplate_fields(candidate, conf)
+                _apply_el_fire_alarm_control_rules(candidate, conf)
                 score = completeness_score(candidate, list(_el_legacy_scoring_fields(candidate)))
                 logging.info(
                     "[%s] Legacy extraction completed: completeness=%.0f%% (model=%s, role=%s).",
@@ -2504,6 +2838,16 @@ Rules:
         final_data = best_raw
         scoring_fields = _el_legacy_scoring_fields(final_data)
         conf_scores = _el_legacy_conf_scores(final_data, best_conf, scoring_fields)
+        # Non-blank nameplate confidences join the stored scores (and thus the
+        # average), mirroring the standard flow's non-blank-only projection.
+        # _el_legacy_conf_scores only iterates scoring_fields, so these must
+        # be merged explicitly; reason-code thresholds above stay
+        # scoring-field-only.
+        for _np_field in Config.EL_NAMEPLATE_FIELDS:
+            if str(final_data.get(_np_field, "") or "").strip():
+                conf_scores[_np_field] = _normalize_el_confidence_score(
+                    (best_conf or {}).get(_np_field, 0)
+                )
         score = completeness_score(final_data, list(scoring_fields))
         avg_conf = _avg_ai_conf_from_scores(conf_scores)
 

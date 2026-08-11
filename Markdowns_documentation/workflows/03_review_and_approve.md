@@ -16,7 +16,7 @@ All three review sheets also expose optional **Installation Date** from `QR_code
 
 ## Main Steps
 
-1. Open the correct review app for the discipline. (For Electrical, choose 'General' or 'Distribution' scope first on the landing page; an asset belongs to the Distribution scope when its `Asset Group` has `elec_dist_setup = 'Y'` in the `Asset_Group` lookup — see `special_processes/04_database_topography.md`).
+1. Open the correct review app for the discipline. (For Electrical, choose 'General' or 'Distribution' scope first on the landing page; an asset belongs to the Distribution scope when its `Asset Group` has `elec_dist_setup = 'Y'` in the `Asset_Group` lookup — see `special_processes/04_database_topography.md`. The EL review page renders a variant matched to the asset's group (2026-08-07): General assets get the ME-style nameplate form (Manufacturer / Model / Serial Number / Year, plus the optional Capacity + UoM pair that never counts toward completeness), Distribution assets keep the electrical tech-card form — see `rules/review_apps.rules.md` → "EL Review Form Variants".)
 2. Let the `before_request` sync reconcile new JSON and image state into the DB.
 3. Use the dashboard tabs to select New, Update (hidden in Electrical), or Manual Entry assets.
 4. Open the review page, compare the JSON against the photos, and edit values as needed.
@@ -78,7 +78,7 @@ The ME, BF, and EL review dashboards expose a master checkbox in the **Manual** 
 
 ## EL Distribution listing view
 
-The "Review Electrical Assets - Distribution" dashboard keeps the same data model as the general EL dashboard but hides three listing-table columns for scanability: **Amperage Rating**, **Volts**, and **Location**. The hide is frontend-only and scoped to `/review-distribution`; `review.html`, `/review-all`, JSON, DB rows, SDI packaging, and Planon export still carry the fields.
+Both EL dashboards hide fixed listing-table columns for scanability (frontend-only; `review.html`, JSON, DB rows, SDI packaging, and Planon export still carry every field). "Review Electrical Assets - Distribution" (`/review-distribution`) hides **Amperage Rating**, **Volts**, and **Location**; the general "Review Electrical Assets" (`/review-all`, 2026-08-07) hides **Supply From**, **Amperage Rating**, **Volts**, and **Location**.
 
 Which assets appear here is data-driven (2026-08-04): the view lists assets whose `Asset Group` matches an `Asset_Group` row with `elec_dist_setup = 'Y'`; all other groups stay in `/review-all`. The set refreshes within ~60 seconds of a flag change (see `rules/review_apps.rules.md`).
 
@@ -97,7 +97,7 @@ The single-asset review page for ME, BF, and EL carries two header buttons that 
 ### What the sheet shows
 
 - Header: QR code, **building Name** (`Buildings."Name"`, not the code), location/space, AI confidence, approval badge, UBC logo.
-- EL: Description, Identity, Technical Details (Amperage / Voltage / Power Rating / Supply From / Fed From / Equipment ID / Equipment Type / Power Type), the SLD strip (if any), Asset Photos, and the User Activity Log (captured-by / date / hour / GPS). ME and BF show the equivalent nameplate fields (ME: Manufacturer / Model / Serial / Year + TSBC; BF: Manufacturer / Model / Serial / Diameter + Application) and omit the SLD section. All three put **Description first**, above Identity.
+- EL: Description, Identity, then by form variant (2026-08-07) either Technical Details (Amperage / Voltage / Power Rating / Supply From / Fed From / Equipment ID / Equipment Type / Power Type — Distribution assets) or Nameplate (Manufacturer / Model / Serial Number / Year — General assets), the SLD strip (if any), Asset Photos, and the User Activity Log (captured-by / date / hour / GPS). ME and BF show the equivalent nameplate fields (ME: Manufacturer / Model / Serial / Year + TSBC; BF: Manufacturer / Model / Serial / Diameter + Application) and omit the SLD section. All three put **Description first**, above Identity.
 - All three also render two read-only QR-level values (2026-07-10): **Installation Date** (`QR_codes.installation_date`, `DD/MM/YYYY`) below Year (ME Identity / BF Classification) or below Main Asset in EL's Identity, and a **Capture Notes** section (`QR_codes.capture_notes`) between the two-column block (Identity/Classification for ME/BF; Identity/Technical Details for EL) and the next section ("No capture note" when blank).
 - **EL SLD strip:** when the asset appears in `electrical_building_schema` (`new_draw='TRUE'`), the sheet renders the asset's **end-to-end branch** (upstream lineage + the asset + its full downstream subtree; siblings excluded) as an inline SVG ladder, with a **red flag = Current Asset** and **blue flag = Supply From**, equipment-type icons, and a legend. When the asset is on no diagram, a short "No Single Line Diagram available for this asset." note is shown. The strip is reconstructed from the SLD table — it is not a crop of the source PDF. Node rating lines always render display units (`V`/`A`): `_sld_rating_text()` maps Planon UoM codes (`VLT`/`AMP`) carried by rows copied from the SDI side (2026-07-09).
 

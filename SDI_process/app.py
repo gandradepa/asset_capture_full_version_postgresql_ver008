@@ -146,6 +146,13 @@ PACKAGE_ONLY_COLS = [
     "Power Type",
     "Power Rating",
     "Power Rating (UoM)",
+    # EL General optional capacity pair (2026-08-07). The punctuation-
+    # insensitive template match lands "Capacity (UoM)" in the Planon
+    # "Capacity UoM" column; no COLUMN_RENAME_MAP entry needed. No UoM
+    # default-fill at export: capacity units vary (kVA, kW, HP, ...) unlike
+    # the hardcoded AMP/VLT codes, so values export exactly as stored.
+    "Capacity",
+    "Capacity (UoM)",
 ]
 PRINT_OUT_COLS = MASTER_COLS + PACKAGE_ONLY_COLS + ["print_out", "date", "time"]
 COLUMN_RENAME_MAP: Dict[str, str] = {
@@ -550,6 +557,16 @@ def _ensure_package_amperage_columns(conn: sqlite3.Connection, table_name: str) 
             )
         cur.execute(f'ALTER TABLE "{table_name}" ADD COLUMN "{GPS_COORDINATES_COL}" TEXT')
         existing_cols.add(GPS_COORDINATES_COL)
+    for capacity_col in ("Capacity", "Capacity (UoM)"):
+        if capacity_col not in existing_cols:
+            if qrdb.is_postgres():
+                raise RuntimeError(
+                    f'Missing "{capacity_col}" on {table_name}. '
+                    "Run scripts/migrations/2026-08-07_el_capacity_columns.sql "
+                    "as the PostgreSQL table owner before creating SDI packages."
+                )
+            cur.execute(f'ALTER TABLE "{table_name}" ADD COLUMN "{capacity_col}" TEXT')
+            existing_cols.add(capacity_col)
     if "Equipment ID" not in existing_cols:
         cur.execute(f'ALTER TABLE "{table_name}" ADD COLUMN "Equipment ID" TEXT')
         existing_cols.add("Equipment ID")
@@ -894,6 +911,13 @@ def build_sdi_dataset(building_code: str = None) -> pd.DataFrame:
 
         if "UBC Asset Tag" in el.columns and "UBC Tag" not in el.columns:
             el = el.rename(columns={"UBC Asset Tag": "UBC Tag"})
+        # sdi_dataset_EL stores the General-asset serial under its JSON key
+        # "Serial Number" (2026-08-07 nameplate columns); the package/master
+        # column is "Serial" (renamed back to "Serial Number" only at Planon
+        # export). Without this rename the EL serial is silently dropped at
+        # the PRINT_OUT_COLS projection in export_to_sdi.
+        if "Serial Number" in el.columns and "Serial" not in el.columns:
+            el = el.rename(columns={"Serial Number": "Serial"})
         el = _normalize_equipment_type_column(_normalize_equipment_id_column(el))
 
         return pd.concat([me, el], ignore_index=True)

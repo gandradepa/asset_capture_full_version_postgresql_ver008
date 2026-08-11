@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import os
 import sqlite3 as _sqlite3
+import threading
 
 # Cross-backend exception tuple so callers can write a single
 # `except db.IntegrityError:` regardless of backend. Includes
@@ -40,6 +41,109 @@ except ImportError:
 
 _DEFAULT_SQLITE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "QR_codes.db")
 _DEFAULT_PG_DSN = "host=127.0.0.1 port=5433 dbname=qr_code_db user=developer"
+
+# --- PostgreSQL connection pool ---------------------------------------------
+# Opening a PG connection costs ~12ms (measured on the VM). The listing pipeline
+# issues hundreds of short queries per request, so connect/close churn dominated
+# page-load time. A per-process pool turns each of those into a checkout.
+#
+# minconn matters more than maxconn here: psycopg2's pool only RETAINS minconn
+# idle connections and closes anything returned beyond that, so minconn must
+# cover the app's real nesting depth (sld_blueprint holds two at once).
+_POOL_MINCONN = int(os.environ.get("DB_POOL_MINCONN", "2"))
+_POOL_MAXCONN = int(os.environ.get("DB_POOL_MAXCONN", "5"))
+
+_pool = None
+_pool_pid = None
+_pool_dsn = None
+_pool_lock = threading.Lock()
+
+
+def pool_enabled() -> bool:
+    """Escape hatch: DB_POOL_DISABLED=1 restores connect-per-call behavior."""
+    return os.environ.get("DB_POOL_DISABLED", "").strip().lower() not in ("1", "true", "yes")
+
+
+def _get_pool(dsn: str):
+    """Lazy per-process pool. Created on first checkout, i.e. always AFTER the
+    gunicorn fork (the app is imported per worker; there is no --preload)."""
+    global _pool, _pool_pid, _pool_dsn
+    pid = os.getpid()
+    with _pool_lock:
+        if _pool is not None and (_pool_pid != pid or _pool_dsn != dsn):
+            # Inherited across a fork, or the DSN changed. Abandon the reference
+            # WITHOUT closing it: those sockets belong to the parent process.
+            _pool = None
+        if _pool is None:
+            from psycopg2.pool import ThreadedConnectionPool
+            _pool = ThreadedConnectionPool(_POOL_MINCONN, _POOL_MAXCONN, dsn)
+            _pool_pid, _pool_dsn = pid, dsn
+        return _pool
+
+
+def _is_alive(raw) -> bool:
+    """Cheap liveness probe so a PG restart can't hand out dead connections."""
+    if raw.closed:
+        return False
+    try:
+        cur = raw.cursor()
+        try:
+            cur.execute("SELECT 1")
+        finally:
+            cur.close()
+        raw.rollback()  # discard the txn the ping opened
+        return True
+    except Exception:
+        return False
+
+
+def _checkout(dsn: str):
+    """Return (pool, raw_connection), discarding and retrying once if stale."""
+    pool = _get_pool(dsn)
+    last_exc = None
+    for _ in range(2):
+        raw = pool.getconn()
+        if _is_alive(raw):
+            return pool, raw
+        try:
+            pool.putconn(raw, close=True)
+        except Exception as exc:  # pragma: no cover - defensive
+            last_exc = exc
+    import psycopg2
+    raise psycopg2.OperationalError(
+        f"could not obtain a live pooled connection: {last_exc}"
+    )
+
+
+def _release(pool, raw, close: bool = False) -> None:
+    """Return a connection to the pool (or hard-close it when unpooled/broken)."""
+    if pool is None:
+        try:
+            raw.close()
+        except Exception:
+            pass
+        return
+    try:
+        pool.putconn(raw, close=close or raw.closed)
+    except Exception:
+        try:
+            raw.close()
+        except Exception:
+            pass
+
+
+def close_pool() -> None:
+    """Close every pooled connection (test teardown / explicit shutdown)."""
+    global _pool, _pool_pid, _pool_dsn
+    with _pool_lock:
+        if _pool is not None:
+            try:
+                _pool.closeall()
+            except Exception:
+                pass
+        _pool = None
+        _pool_pid = None
+        _pool_dsn = None
 
 
 def backend() -> str:
@@ -108,10 +212,15 @@ class _PGConnection:
     subsequent cursors return rows that support both index AND key access (via
     psycopg2.extras.RealDictCursor)."""
 
-    def __init__(self, raw):
+    def __init__(self, raw, pool=None):
         # Bypass __setattr__ here so these don't trigger the row_factory branch.
         object.__setattr__(self, "_raw", raw)
         object.__setattr__(self, "_cursor_factory", None)
+        # When _pool is set, close()/__exit__ RETURN the connection instead of
+        # closing it. _released makes that idempotent: callers that both use a
+        # `with` block and a `finally: conn.close()` must not putconn twice.
+        object.__setattr__(self, "_pool", pool)
+        object.__setattr__(self, "_released", False)
 
     def __setattr__(self, name, value):
         if name == "row_factory" and value is not None:
@@ -142,23 +251,41 @@ class _PGConnection:
     def rollback(self):
         self._raw.rollback()
 
+    def _finish(self, close: bool = False):
+        """Release the underlying connection exactly once."""
+        if self._released:
+            return
+        object.__setattr__(self, "_released", True)
+        if self._pool is not None:
+            _release(self._pool, self._raw, close=close)
+        else:
+            try:
+                self._raw.close()
+            except Exception:
+                pass
+
     def close(self):
-        self._raw.close()
+        self._finish()
 
     def __enter__(self):
         return self
 
     def __exit__(self, exc_type, exc, tb):
         # Mirror the `with sqlite3.connect() as conn:` idiom (commit/rollback), and ALSO
-        # close — each `with` block opens a fresh connection, so closing here prevents
-        # PG connection-pool exhaustion (sqlite3's __exit__ commits but does not close).
+        # release the handle — each `with` block checks out a connection, so releasing
+        # here prevents pool exhaustion (sqlite3's __exit__ commits but does not close).
+        broken = False
         try:
             if exc_type is None:
                 self._raw.commit()
             else:
                 self._raw.rollback()
+        except Exception:
+            # A connection we can neither commit nor roll back must not go back
+            # into the pool.
+            broken = True
         finally:
-            self._raw.close()
+            self._finish(close=broken)
         return False
 
 
@@ -174,8 +301,11 @@ def get_connection(sqlite_path: str | None = None, timeout: float | None = None)
                is ignored.
     """
     if is_postgres():
-        import psycopg2
         dsn = os.environ.get("QR_PG_DSN", _DEFAULT_PG_DSN)
+        if pool_enabled():
+            pool, raw = _checkout(dsn)
+            return _PGConnection(raw, pool=pool)
+        import psycopg2
         return _PGConnection(psycopg2.connect(dsn))
 
     import sqlite3

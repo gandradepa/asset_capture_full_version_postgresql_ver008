@@ -1,4 +1,4 @@
-# SDI Process Rules
+﻿# SDI Process Rules
 
 Current documentation refresh: 2026-06-23.
 
@@ -21,6 +21,8 @@ The SDI Process app stages approved assets for packaging and Planon export.
 - Approved source rows are necessary but not sufficient for SDI packaging.
 - `sdi_dataset` carries ME and BF.
 - `sdi_dataset_EL` carries EL.
+- EL nameplate columns (2026-08-07): `sdi_dataset_EL` stores General-asset `Manufacturer`, `Model`, `Serial Number`, `Year` (blank on Distribution rows). `Manufacturer`/`Model`/`Year` flow into packages unchanged because they are already `MASTER_COLS` package columns; `build_sdi_dataset()` renames the EL `Serial Number` column to the package column name `Serial` (next to the `UBC Asset Tag` -> `UBC Tag` rename) — without that rename the EL serial is silently dropped at the `PRINT_OUT_COLS` projection. Export renames `Serial` back to Planon `Serial Number` as before; archive/retrieve transfer the four values via the existing `PRINT_OUT_COLS` list with no schema change.
+- EL Capacity pair (2026-08-07 follow-up): `sdi_dataset_EL`, `sdi_print_out`, and `sdi_print_out_arch` carry `Capacity` + `Capacity (UoM)` (owner-run migration `2026-08-07_el_capacity_columns.sql`; `_ensure_package_amperage_columns` raises with that migration name if a package table is missing them on PostgreSQL). The pair is in `PACKAGE_ONLY_COLS`, so packaging, archive, and retrieve carry it automatically; ME/BF rows fill blank. Export lands the values in the Planon template columns `Capacity` (CH) / `Capacity UoM` (CI) via the punctuation-insensitive header match — no `COLUMN_RENAME_MAP` entry. `ATTRIBUTE_SETS.py` lists `Capacity` and `Capacity UoM` under `Electrical` so the attribute-set filter keeps them for EL rows (that file mirrors Planon's configuration). No UoM default-fill at export: capacity units vary (kVA, kW, HP, ...) unlike the hardcoded `AMP`/`VLT`, so values export exactly as stored.
 - Once a QR exists in `sdi_print_out` or `sdi_print_out_arch`, it is considered in the SDI process. Review sync must preserve/coerce source approval to `"1"` and review JSON approval to `"True"`; package tables do not carry their own `Approved` column.
 
 ## Unpackaged-Asset Rules

@@ -1,6 +1,91 @@
 # Attribute Changes
 
-Current documentation refresh: 2026-08-04.
+Current documentation refresh: 2026-08-10.
+
+## 2026-08-10: EL review app — data-loading performance overhaul (≈98% faster)
+
+### Summary
+
+The EL flow (landing → General / Distribution dashboards → single-asset review) was profiled on the
+production VM and rebuilt in four steps. Root cause was **not** file I/O: `db.py.get_connection()`
+opened a fresh PostgreSQL connection per query and closed it on scope exit, and the listing pipeline
+issued hundreds per request — cProfile attributed 4.5s of a 5.8s load to `psycopg2._connect` alone
+(366 connects × ~12ms). On top of that, `_render_dashboard_view` ran `load_json_items` **six times**
+per request (three tabs + three card scopes recomputing identical data), and two per-item N+1s
+(`Buildings.Process` — only 6 distinct values — and the `electrical_building_schema` fed-from lookup)
+each opened their own connection per row.
+
+Changes, all confined to `review/Asset_dashboard_browser_EL/db.py` and `Asset_dashboard_EL.py`:
+(1) a lazy per-process `ThreadedConnectionPool` (minconn 2 / maxconn 5) with post-fork creation,
+checkout liveness ping, commit-then-`putconn` release and a `DB_POOL_DISABLED=1` escape hatch;
+(2) the three per-item lookups (building process, fed-from amperage, QR location) prefetched into
+maps once per load, with per-item fallbacks retained if a prefetch fails; (3) `preloaded_items` on
+`get_filtered_data_and_counts` / `_get_card_scope_data` so each process bucket is loaded once and
+shared by both consumers; (4) dictionary lookups reuse the pre-sorted `MECH_PREFIX_KEYS` and the
+`[EL-DICT-*]` traces are gated behind `EL_DICT_DEBUG=1`.
+
+Measured on the same routes, before vs after, with **identical response payload sizes** (proving
+unchanged output): landing 5.27s → 0.11s, `/review-all` 12.38s → 0.18s, `/review-all?building=217`
+12.60s → 0.18s, `/review-distribution` 13.13s → 0.21s, `+building=217` 12.23s → 0.21s, single-asset
+review 5.6s → 0.11s. Parity verified by sha256 of the sorted `load_json_items` output per bucket
+(identical) and by card-metric + row-set diffs across six distribution/building scenarios
+(identical). Idle pooled connections settle at 6 = 3 workers × minconn 2.
+
+Side effect, deliberate: the listing now reads QR locations from a per-load map instead of an
+unbounded `lru_cache`, so an edited Location shows immediately rather than after a worker recycle.
+No schema, template, UI, API, or write-path changes. Follow-up: roll the pooled `db.py` to
+ME / BF / Dashboard / SDI.
+
+## 2026-08-10: Fire-alarm tag rules restructured — `fire_alarm_control` family adds Autocall
+
+### Summary
+
+The 2026-08-08 Simplex rule in `API/API_interface_EL_ver00.py` is restructured into a class family: base `fire_alarm_control` with subclasses `Simplex` and `Autocall` (user-specified naming), applied through `_apply_el_fire_alarm_control_rules` at the same three call sites (standard in-loop, standard post-loop re-application, legacy). Both subclasses trigger on the extracted **Manufacturer** (Simplex checked first). Simplex behavior is unchanged (`UN-<Model>`, bare-`UN-` confidence cap). New **Autocall** rule: Manufacturer containing "Autocall" (any casing) canonicalizes `Manufacturer` to `AUTOCALL` and overwrites `UBC Asset Tag` with the whitespace-stripped uppercased model number itself — e.g. Autocall + 4100ES → tag `4100ES` (no `UN-` prefix; with no model read the tag is left untouched so the asset keeps flagging for review). Tag confidence = min(Manufacturer, Model). Companion re-syncs and the post-loop re-application contract are shared with Simplex (`_apply_tag_formatting` would otherwise ship `PNL-<Model>`); subclass `apply()` is idempotent by contract. Never add `UN` **or `4100`** to `Config.ABBREVIATIONS`. Downstream classification is dictionary data: the user-created `4100|EL` entry (description `AUTOCALL 4100 ES`) derives Asset Group `Fire Alarm Annunciator Panels` / Attribute `FireAlarmPanel` / Main Asset `Fire Alarm and Detection Systems`; the VM's `UN-|EL` entry maps Simplex panels to `Fire Alarm Control Panels` (both General groups → nameplate form variant; repo dictionary copy synced from the VM). A side benefit of the prefix-free Autocall tag: `derive_electrical_power_type("4100ES")` returns blank (no hyphen), avoiding the spurious `ES` Power Type that `UN-4100ES` produces. **No rule-version bump** — new extractions only. Reference asset: QR 0000184491 (building 217). No schema, review-app, SDI, or validator changes.
+
+## 2026-08-08: EL landing page — pending-count cards + design refresh
+
+### Summary
+
+The EL landing page (`/`, `landing.html`) now shows the count of QRs pending review inside each scope card, and was visually refreshed per the frontend-design pass (user-approved mock). Counts come from the new `_landing_pending_counts()` in `Asset_dashboard_EL.py`: New-process JSON items, archived QRs excluded, Pending = `Approved != "True"`, split by `Asset_Group.elec_dist_setup` membership — identical semantics to the dashboards' default Pending view. Counting failures degrade to a muted em dash (the landing page never 500s). The refresh replaces the marketing-hero styling (animated mesh, glass blur, gradient text, glow hovers, staggered fade-ups) with a compact masthead and a single-line-diagram bus motif feeding two worklist cards (blue = General, gold = Distribution); kickers read "General Electrical Assets" / "Electrical Distribution Systems" (title case, user-specified). Scope links, embedded-iframe behavior, and the logout dropdown are unchanged. No DB, extraction, or SDI changes.
+
+## 2026-08-08: Simplex fire-alarm panels — deterministic `UN-<Model>` UBC Asset Tag
+
+### Summary
+
+New post-processing rule in `API/API_interface_EL_ver00.py` (both flows): when the captured Manufacturer contains "Simplex" (case-insensitive; covers SimplexGrinnell), `_apply_el_simplex_tag_rule` **always overwrites** `UBC Asset Tag` with `UN-` + the whitespace-stripped uppercased Model (bare `UN-` while no model is read) — e.g. Simplex + 4100ES → `UN-4100ES`. Simplex fire-alarm control panels carry no UBC lamacoid, so any tag the AI reads off the panel face is junk. Confidence = min of the Manufacturer/Model confidences; a bare `UN-` is capped below the manual-review threshold so placeholder records flag for review. The rule also re-syncs tag-derived companions when it fires (`Branch Panel` cleared in both flows; legacy `Equipment ID` follows the new tag, `Equipment Type`/`Power Type` clear, `Description` recomposes as `SIMPLEX - <tag>`; feeder fields untouched), and the standard flow **re-applies the rule after its post-loop tag formatting** — adversarial review caught that `_apply_tag_formatting` would otherwise rewrite the tag to `PNL-UN-<Model>` and leak the synthesized tag into `Branch Panel`. Both prompts also now state that maker-printed branding + model designation on the equipment's own face (e.g. a fire panel front) is a valid Manufacturer/Model source — manufacturer-made, unlike facility-made text. The pre-existing dictionary entry `UN-|EL` (description SIMPLEX) then derives Asset Group `Fire Alarm Annunciator Panels` (General form variant), Attribute `FireAlarmPanel`, and Main Asset `Fire Alarm and Detection Systems` — no dictionary change needed. **No rule-version bump** — new extractions only. No schema, review-app, SDI, or validator changes.
+
+## 2026-08-08: EL nameplate extraction — `-1` photo allowed as manufacturer-plate fallback
+
+### Summary
+
+Prompt-only change in `API/API_interface_EL_ver00.py` (standard + legacy flows). Manufacturer / Model / Serial Number / Year / Capacity+UoM are still read from the `-0` Asset Plate as the preferred source, but when `-0` is missing or shows no manufacturer plate, the model may now read them from the `-1` photo **only when it clearly shows a manufacturer nameplate/data plate** — the field tech sometimes captures the maker's plate in that frame. The prohibition is content-based: facility-made text (printed panel label, engraved lamacoid, blue QR sticker, `-2` panel schedule) is never a source, in any photo. Legacy `Nameplate Text` stays a `-0`-only transcription (guards the lamacoid/nameplate separation that feeds `legacy_nameplate_specs`). **No rule-version bump** — applies to newly extracted assets only; the existing corpus is not re-extracted. No schema, review-app, SDI, or normalization changes.
+
+## 2026-08-07 (follow-up): EL General Capacity field + General listing column drop
+
+### Summary
+
+Two follow-ups to the EL General nameplate form shipped earlier the same day. (1) The General review form's Identity card gains an optional `Capacity` + `Capacity (UoM)` pair (bare value, unit as printed — no fixed code list unlike `AMP`/`VLT`), captured by AI from the `-0` Asset Plate for all EL assets, stored for General rows only, and exported through SDI packaging to the Planon template columns `Capacity` (CH) / `Capacity UoM` (CI). Capacity is deliberately **excluded** from review completeness scoring, the hover checklist, and the traffic light. (2) The General "Review Electrical Assets" listing (`/review-all`) now hides the Supply From, Amperage Rating, Volts, and Location columns (DataTables `visible:false, searchable:true`, same mechanism the Distribution listing already used for Amperage/Volts/Location); the Distribution listing and the dashboard XLSX export are unchanged.
+
+### Scope
+
+- **DB:** owner-run migration `scripts/migrations/2026-08-07_el_capacity_columns.sql` adds `Capacity`, `Capacity (UoM)` (`TEXT`) to `sdi_dataset_EL`, `sdi_print_out`, and `sdi_print_out_arch` (packaging INSERTs every `PRINT_OUT_COLS` column). `_ensure_package_amperage_columns` raises with the migration name if a package table misses them on PostgreSQL.
+- **Review app:** `EL_CAPACITY_FIELDS` constant (NOT part of `EL_NAMEPLATE_FIELDS` — scoring unchanged); DB sync writes the pair for General rows, `''` for Distribution; `keep_blank` additions; General Identity card input pair (modeled on the Distribution Power Rating pair); review sheet Nameplate section shows Capacity as value+UoM joined.
+- **AI extraction:** `Capacity`/`Capacity (UoM)` added to `STRUCTURED_FIELDS`, both schema families, and the API-side `Config.EL_NAMEPLATE_FIELDS` (inherits the retry/fallback-gate exclusions, legacy raw-copy, and non-blank-only confidence projection). `_normalize_el_capacity_pair` splits a combined "75 kVA" reading into value+unit; no unit whitelist. **No rule-version bump** — existing JSONs are not re-extracted.
+- **SDI\Planon:** pair added to `PACKAGE_ONLY_COLS`; `ATTRIBUTE_SETS.py` lists `Capacity`/`Capacity UoM` under `Electrical` so the attribute-set filter keeps them for EL rows (the file mirrors Planon's configuration). The punctuation-insensitive template header match lands `Capacity (UoM)` in `Capacity UoM` with no rename entry. No UoM default-fill at export.
+- **Listing:** `generalHiddenColumns = [Supply From (7), Amperage Rating (8), Volts (9), Location (10)]`; view-selected via `hiddenColumns` alongside the existing `distributionHiddenColumns` (8/9/10).
+
+## 2026-08-07: EL General nameplate review form (ME-style) + Planon nameplate flow
+
+### Summary
+
+General "Electrical Assets" (`elec_dist_setup='N'` groups) now review through an ME-style nameplate form instead of the electrical tech-card form. `review.html` renders one of two server-selected variants via the new `_el_form_variant(asset_group)` (data-driven off `get_distribution_asset_groups()`; the client-supplied `base_route` stays pagination-only; blank/unknown group → Distribution). The General variant captures Manufacturer, Model, Serial Number, Year (+ Installation Date) with a Classification card (UBC Asset Tag / Asset Group / readonly Attribute / Main Asset), keeps Location and auto-Description, and drops TSBC and all electrical tech cards; Equipment ID / Equipment Type / Power Type are still derived server-side and stored. The Distribution variant is byte-identical to the previous form.
+
+### Scope
+
+- **DB:** owner-run migration `scripts/migrations/2026-08-07_sdi_dataset_el_nameplate_columns.sql` adds `Manufacturer`, `Model`, `Serial Number`, `Year` (`TEXT`, JSON-key names) to `sdi_dataset_EL`. The sync writes them only for General rows; Distribution rows stay blank by contract.
+- **Review app:** variant-aware review scoring (`EL_REVIEW_GENERAL_SCORING_FIELDS` = UBC Asset Tag + the four nameplate fields; stored group beats tag-derived group), General entries in the dashboard hover checklist, variant-aware print/export sheet (Nameplate column replaces Technical Details for General). The hidden `form_variant` input is a diagnostic echo in `ignored_form_fields` — save derivations never branch on it. Same change fixes a pre-existing leak: `nav_prev`/`nav_next` no longer merge into `structured_data`.
+- **AI extraction:** `API_interface_EL_ver00.py` reads the four fields from the `-0` Asset Plate for ALL EL assets (standard + legacy flows) — General cannot be classified pre-extraction. Normalizers: `normalize_year` / `normalize_serial` (+ `looks_like_date_misread_serial` rejection) / `normalize_model`; `normalize_manufacturer` falls back to `_clean_raw_manufacturer` because the shared validator is a BF whitelist that would blank electrical brands. **No `EXTRACTION_RULE_VERSION` / `EL_LEGACY_RULE_VERSION` bump**, and confidences project only when non-blank — both deliberate, to avoid mass-flagging the existing corpus stale (a corpus-wide billable re-extraction). Backfill of existing General assets is targeted per-QR `FORCE_REPROCESS`. Note: `Avg_ai_conf` on newly extracted EL JSONs now includes nameplate confidences whenever a plate is read.
+- **SDI/Planon:** Manufacturer/Model/Year already flow through packaging (`MASTER_COLS`); `build_sdi_dataset()` gained the EL-only `Serial Number` → `Serial` rename so the serial survives the `PRINT_OUT_COLS` projection. EL General rows now export Make (J), Model (K), Serial Number (M), Date Of Manufacture Or Construction (AN, via `format_year_to_date`). No package-table schema change; archive/retrieve unchanged.
 
 ## 2026-08-04: EL General/Distribution split driven by `Asset_Group.elec_dist_setup` — deployed same day
 
@@ -1688,3 +1773,15 @@ All three use `Space Name = -` and `Floor Name = Floor: -`. `Z02Notfound_Room` d
 The Life Cycle Assessment now uses **Installation Date as its only Complete / Incomplete criterion**. A row with an Installation Date moves to the Complete tab even when Make, Space Number, or Serial Number is missing; a row without an Installation Date remains Incomplete. The on-screen hints, missing-value highlighting, XLSX highlighting, and operating documentation follow the same rule.
 
 The redundant **Missing field** filter was removed from the Incomplete tab in the same workstream. Since every Incomplete row is missing Installation Date by definition, the filter offered no additional distinction.
+
+## 2026-08-11: ME digit-leading model-code validation
+
+Mechanical extraction now preserves explicitly labeled, short digit-leading model codes in the bounded `2-5 digits + hyphen + 2-4 letters` form. This fixes QR `0000188207`, whose Honeywell Analytics Model `301-EM` was read correctly by OCR but rejected by the legacy letter-leading short-model gate, leaving the JSON and `sdi_dataset` Model fields blank.
+
+The change is intentionally narrow: the printed hyphen and multi-letter suffix are required, sequence `-0` remains the sole owner of Model, and rating-like or numeric values such as `208V`, `1200 VAC`, and `118668` remain invalid model candidates. Regression coverage verifies both direct validation and parsing of the explicit `Model: 301-EM` label while retaining the existing long-model and Model/Serial collision tests.
+
+## 2026-08-11: ME label-authoritative Model values
+
+Mechanical extraction now treats a bounded value directly attached to a supported Model-field label on sequence `-0` as authoritative regardless of whether it is alphabetic-only, numeric-only, mixed, spaced, or punctuated. The explicit-label contract is capped at 64 characters, rejects controls and Model/Serial collisions, stops at neighboring fields, and preserves printable punctuation. Generic unlabeled candidates retain the former strict shape gates.
+
+The provenance is carried through label parsing, targeted nameplate reread, label-bounded OCR, model-evidence checks, UI-parity merge, and confidence assignment. This fixes production QR `0000188234`, whose clear `Model: QCC-M` value was previously erased because the generic validator required at least one digit.

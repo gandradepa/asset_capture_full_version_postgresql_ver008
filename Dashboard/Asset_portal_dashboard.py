@@ -57,6 +57,15 @@ else:
 from auth_model import db, bcrypt, User, UserAccess, ensure_user_name_column, ensure_user_access_table, ensure_user_active_column, ensure_user_is_admin_column, has_permission, is_admin as rbac_is_admin, require_permission, access_denied_response
 import db as qrdb  # backend-agnostic QR_codes DB layer (aliased: 'db' above is Flask-SQLAlchemy from auth_model)
 from auth_controller import login_manager
+
+# Shared audit facility. Optional at import time so a dev box without the audit
+# package (or without an audit_trail table) can still run the Dashboard.
+try:
+    from audit.logger import log_change as _audit_log_change
+except Exception as _audit_import_exc:  # pragma: no cover - environment dependent
+    _audit_log_change = None
+    print(f"WARNING: audit logger unavailable, dictionary edits will not be audited: {_audit_import_exc}")
+
 try:
     from app_registry import get_registry, is_valid_item
 except ImportError:
@@ -335,6 +344,14 @@ if possible_dict_path.parent.exists():
 else:
     DICTIONARY_FILE_PATH = Path("/home/developer/dictionary/mechanical_dictionary.py")
 
+# Discipline codes the dictionary accepts. These match the platform-wide codes
+# used by the review apps, the extraction API and the SDI process.
+DICTIONARY_ALLOWED_TYPES = ("ME", "EL", "BF")
+
+# Fields audited on dictionary writes. The legacy duplicated "type" key mirrors
+# "asset_type", so auditing it would double every row.
+_DICT_AUDIT_FIELDS = ("attribute_set", "asset_group", "main_asset", "description", "asset_type")
+
 # --- Path to captured asset photos (QR images) ---
 _photo_dir_candidates = [
     Path("/home/developer/Capture_photos_upload"),
@@ -419,6 +436,40 @@ def save_dictionary(new_data):
     except Exception as e:
         print(f"Error saving dictionary: {e}")
         return False
+
+def _log_dictionary_audit(op_type, storage_key, field_changes, description):
+    """Record a dictionary file write in audit_trail.
+
+    The dictionary is a FILE, not a DB row, so there is no caller transaction to
+    join: this opens its own short-lived connection and commits it. The file has
+    already been written by the time we get here, so an audit failure must never
+    fail the request - it is logged and swallowed.
+    """
+    if _audit_log_change is None or not field_changes:
+        return
+    conn = None
+    try:
+        conn = qrdb.get_connection(sqlite_path=DB_PATH)
+        _audit_log_change(
+            conn,
+            qr_code=None,                        # a dictionary key is not a QR code
+            app_name="dashboard_dictionary",
+            table_name="mechanical_dictionary",  # logical name of the file-backed store
+            record_pk=storage_key,               # e.g. "AHU|ME"
+            op_type=op_type,                     # INSERT / UPDATE / DELETE only
+            field_changes=field_changes,
+            source="human",                      # modified_by resolves to current_user
+            description=description,
+        )
+        conn.commit()
+    except Exception as exc:
+        print(f"[audit] dictionary audit failed ({op_type} {storage_key}): {exc}")
+    finally:
+        if conn is not None:
+            try:
+                conn.close()
+            except Exception:
+                pass
 
 # ------------------ Runner helpers (RESTORED FULLY) ------------------
 def _windows_detached_flags() -> int:
@@ -1796,7 +1847,16 @@ def api_admin_permissions_delete(username):
 def dictionary_index():
     if not has_permission(current_user, "dictionary", "dictionary", "viewer"):
         return access_denied_response("Dictionary")
-    return render_template('index_dictionary.html')
+    # Viewers get a read-only page: no Add button, no Actions column. The API
+    # decorators remain the authority - this only stops the UI offering actions
+    # that would fail.
+    can_edit = has_permission(current_user, "dictionary", "dictionary", "editor")
+    return render_template(
+        'index_dictionary.html',
+        can_edit=can_edit,
+        asset_types=DICTIONARY_ALLOWED_TYPES,
+        acshell_active='dict',
+    )
 
 @main_bp.route('/api/assets', methods=['GET'])
 @login_required
@@ -1843,20 +1903,31 @@ def save_dictionary_asset():
     
     new_tag = raw_key.upper()
     new_type = raw_type.upper()
+
+    if new_type not in DICTIONARY_ALLOWED_TYPES:
+        return jsonify({
+            'success': False,
+            'message': f'Invalid asset type "{new_type}". Allowed types: {", ".join(DICTIONARY_ALLOWED_TYPES)}.'
+        }), 400
+
     storage_key = f"{new_tag}|{new_type}"
-    
+
     is_edit = bool(asset.get('is_edit'))
     original_key = asset.get('original_key')
-    
+
     log(f"--- START SAVE ---")
     log(f"Target: {storage_key}")
     log(f"Mode: {'EDIT' if is_edit else 'ADD'}")
-    
+
     # 2. LOAD DATA
     current_data = read_dictionary()
     if current_data is None:
         current_data = {}
-    
+
+    # Snapshot the entry being edited BEFORE the migration loop below drops it -
+    # after that pass the original key is gone and the old values unrecoverable.
+    old_entry = current_data.get(original_key) if (is_edit and original_key) else None
+
     # 3. MIGRATION & CLEANUP
     canonical_data = {}
     
@@ -1893,7 +1964,7 @@ def save_dictionary_asset():
         return jsonify({'success': False, 'message': f'Error: The tag "{new_tag}" with type "{new_type}" already exists.', 'debug': logs}), 409
     
     # 5. SAVE NEW ENTRY
-    current_data[storage_key] = {
+    saved_entry = {
         "attribute_set": asset.get('attribute_set', ''),
         "asset_group": asset.get('asset_group', ''),
         "main_asset": asset.get('main_asset', ''),
@@ -1901,13 +1972,30 @@ def save_dictionary_asset():
         "asset_type": new_type,
         "type": new_type
     }
-    
+    current_data[storage_key] = saved_entry
+
     log(f"Saving to dictionary file...")
-    
+
     if save_dictionary(current_data):
         log("Save Successful.")
+
+        # 6. AUDIT. The logger drops unchanged pairs, so an edit records only the
+        # fields that actually moved. "dictionary_key" carries renames and
+        # guarantees an INSERT always writes at least one row.
+        op_type = "UPDATE" if old_entry is not None else "INSERT"
+        if old_entry is not None:
+            field_changes = {f: (old_entry.get(f), saved_entry.get(f)) for f in _DICT_AUDIT_FIELDS}
+            field_changes["dictionary_key"] = (original_key, storage_key)
+        else:
+            field_changes = {f: (None, saved_entry.get(f)) for f in _DICT_AUDIT_FIELDS}
+            field_changes["dictionary_key"] = (None, storage_key)
+        _log_dictionary_audit(
+            op_type, storage_key, field_changes,
+            f"Dictionary entry {'updated' if old_entry is not None else 'added'} via Dashboard: {storage_key}"
+        )
+
         return jsonify({'success': True, 'message': 'Asset saved successfully', 'debug': logs})
-    
+
     log("Save Failed (File I/O Error).")
     return jsonify({'success': False, 'message': 'Failed to write to file', 'debug': logs}), 500
 
@@ -1921,8 +2009,15 @@ def delete_dictionary_asset():
         return jsonify({'success': False, 'message': 'Failed to read dictionary file'}), 500
     
     if key in data:
+        old_entry = data.get(key) or {}
         del data[key]
         if save_dictionary(data):
+            field_changes = {f: (old_entry.get(f), None) for f in _DICT_AUDIT_FIELDS}
+            field_changes["dictionary_key"] = (key, None)
+            _log_dictionary_audit(
+                "DELETE", key, field_changes,
+                f"Dictionary entry deleted via Dashboard: {key}"
+            )
             return jsonify({'success': True, 'message': 'Asset deleted successfully'})
         return jsonify({'success': False, 'message': 'Failed to save changes to dictionary file'}), 500
     return jsonify({'success': False, 'message': f'Asset not found in dictionary (key: {key})'}), 404

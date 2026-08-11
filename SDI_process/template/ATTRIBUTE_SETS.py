@@ -132,6 +132,8 @@ Attribute_Set = {
     'Electrical': [
         'Amperage Rating',
         'Amperage Rating (UoM)',
+        'Capacity',
+        'Capacity UoM',
         'CCT Quantity',
         'Equipment ID',
         'Equipment Type',

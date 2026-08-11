@@ -46,6 +46,45 @@ The retry guard above prevents loss but left no trace an operator could find: a 
 - Coverage: `test/_json_sync_guard_probe.py` scenarios **G1–G5** (per reviewer). EL is not yet wired — it has the pass-level guard but no `_record_sync_warning`.
 - Known open item: `_connectable()` is `qrdb.is_postgres() or os.path.exists(DB_PATH)`, i.e. a pure env read under PostgreSQL, so the pass-level pre-check never tests reachability in production. Loss is still prevented by the `SDI_WRITE_FAILED` path. Deliberately deferred — a real probe needs a connect timeout plumbed through the shared `db.py` and would add blocking latency on `before_request`; the new `SDI_WRITE_FAILED` audit rows will show whether retry storms actually occur, and that evidence should drive the decision.
 
+## EL Listing Performance Rules (2026-08-10)
+
+The EL listing pipeline was profiled on the VM and rebuilt around three rules. Measured end to end
+(same routes, byte-identical payloads): landing 5.27s → 0.11s, `/review-all` 12.38s → 0.18s,
+`/review-distribution` 13.13s → 0.21s, single-asset review 5.6s → 0.11s (**≈98% faster**).
+
+- **Connections are pooled, not opened per query.** `review/Asset_dashboard_browser_EL/db.py` holds a
+  lazy per-process `psycopg2.pool.ThreadedConnectionPool` (`minconn=2`, `maxconn=5`); `get_connection()`
+  checks out, and `close()` / `__exit__` commit-or-rollback then **`putconn`**. A fresh PG connect cost
+  ~12ms and the pipeline issued hundreds per request — that was 78% of page time. Rules: `minconn` must
+  cover real nesting depth (psycopg2 only *retains* `minconn` idle conns, and `sld_blueprint` holds two
+  at once); the pool is created on first checkout so it is always **post-fork** (gunicorn runs without
+  `--preload`); a pool inherited across a fork is abandoned, never closed (those sockets belong to the
+  parent); every checkout is liveness-pinged so a PG restart cannot hand out a dead connection; a
+  connection that cannot commit or roll back is returned with `close=True`. `DB_POOL_DISABLED=1`
+  restores connect-per-call for local testing — production rollback is file-restore + HUP.
+  Callers are unchanged: every `get_connection` use stays `with`-scoped or `finally:`-closed, and
+  double-release is idempotent.
+- **Per-item lookups are prefetched once per load, never per row.** `load_json_items` builds
+  `_build_building_process_map()`, `_build_fed_from_amperage_map()` and `_build_qr_locations_map()`
+  in one query each. Parity is load-bearing: the building map keys on the **raw** `Buildings.Code`
+  (the point query it replaces matches `"Code" = ?` exactly, so stripping would resolve buildings the
+  old path rejected) and re-raises the same `BuildingProcessError` → `[WARN] Skipping` → `continue`;
+  the fed-from map mirrors the original WHERE clause and uses `setdefault` for the old unordered
+  `LIMIT 1`. Each builder returns `None` on failure and the per-item path runs unchanged. The listing
+  reads locations from the map rather than the unbounded `lru_cache`, which also **fixes a staleness
+  bug** (an edited Location previously appeared only after a worker recycle); the single-asset review
+  route keeps the cached helper.
+- **One load per process bucket per request.** `get_filtered_data_and_counts` and
+  `_get_card_scope_data` accept `preloaded_items`; `_render_dashboard_view` loads buckets `0/1/2` once
+  and passes each to both consumers. They cannot be derived from one another — the cards include
+  archived rows and ignore the confidence range while the tables do not — so both must read the *same
+  load*, not each other's output. The shared list is shallow-copied on use because
+  `get_filtered_data_and_counts` sorts in place.
+- Dictionary lookups reuse the pre-sorted `MECH_PREFIX_KEYS` instead of re-sorting every key per call,
+  and the `[EL-DICT-*]` traces are gated behind `EL_DICT_DEBUG=1` (they ran up to ~1,500 times per page).
+- **Any change here must be parity-checked, not eyeballed:** hash the sorted `load_json_items` output
+  per bucket before and after, and diff card metrics + row sets across distribution/building scenarios.
+
 ## Approval Rules
 
 - Approval toggles update both the JSON payload and DB state.
@@ -81,7 +120,7 @@ The retry guard above prevents loss but left no trace an operator could find: a 
 - `Avg AI Conf` display and coloring should use the same value the backend exposes.
 - `Package Number` is display-only on ME / BF / EL listing tables (New / Update / Manual). It appears immediately before `AI Status` (between `Main Asset` and `AI Status` in ME), displays the row's `package_id` from `sdi_print_out.id_print_out` or `sdi_print_out_arch.id_print_out`, and stays blank when no package exists.
 - The styled XLSX review export (`excel_export.py` → `build_workbook`, shared identical copy in each review app) carries a matching `Package Number` column for ME / BF / EL, keyed on the same `package_id` and placed immediately before `Avg AI Conf`. Keep the export column in sync whenever the listing-table column changes.
-- ME listing tables expose `QR_codes.capture_notes` as a display-only `Notes` icon immediately after `Capture Date`: green when a nonblank note exists and muted/faint when empty. The per-asset ME review page shows the same QR-level note in a read-only box beside the thumbnail strip. This is not posted back to JSON, SDI, Planon, or audit tables.
+- ME, BF, and EL listing tables expose `QR_codes.capture_notes` as a display-only `Notes` icon immediately after `Capture Date`: green when a nonblank note exists and muted/faint when empty. All three per-asset review pages (ME, BF, EL) show the same QR-level note in a read-only box beside the thumbnail strip — on EL this card lives in the shared visual panel, so it renders for **both** form variants (General and Distribution). The card carries no `name` attribute and no input, so it never enters the review POST payload. This is not posted back to JSON, SDI, Planon, or audit tables.
 - In the EL dashboards, the global building selector is page scope and **single-select** (one building at a time). The filter `Reset` button must preserve the current `building` / `filter_building` parameters while clearing table-level filters so users stay on the same building scope and route. See "Building Filter Rules" below.
 
 ## Building Filter Rules (searchable dropdown; ME/BF multi-select, EL single-select)
@@ -169,17 +208,18 @@ The review-app listing pages (`review_asset_templates/dashboard.html`) may hide 
 Current hidden nameplate columns (0-based DataTables column index on the listing tables):
 
 - **ME listing tables** — Manufacturer (6), Model (7), Serial Number (8), Technical Safety BC (10)
-- **EL Distribution listing only** (`/review-distribution`) — Amperage Rating (7), Volts (8), Location (9)
+- **EL Distribution listing** (`/review-distribution`) — Amperage Rating (8), Volts (9), Location (10)
+- **EL General listing** (`/review-all`, 2026-08-07) — Supply From (7), Amperage Rating (8), Volts (9), Location (10)
 
 Mechanism:
 
 - ME uses the table `initComplete` callback to hide its fixed listing columns.
-- EL Distribution gates the hide with `isDistributionDashboard`, adds the three columns to DataTables `columnDefs`, corrects restored state in `stateLoadParams`, then forces `table.column(idx).visible(false, false)` after initialization. This keeps a previously saved browser DataTables state from restoring the columns.
+- EL picks the hidden set per view — `hiddenColumns = isDistributionDashboard ? distributionHiddenColumns : generalHiddenColumns` — then applies it three ways: DataTables `columnDefs`, restored-state correction in `stateLoadParams`, and a forced `table.column(idx).visible(false, false)` after initialization. This keeps a previously saved browser DataTables state from restoring the columns on either view.
 
 Constraints to preserve:
 
 - The `<th>` and `<td>` markup for the hidden columns must stay in place; only their display is suppressed. Removing the cells would shift every downstream column index (`colTag`, `colApproved`, `colAction`, etc.) and break search / filter / bulk-action logic that references those indices.
-- The per-asset review page (opened via the row's Review button) is a separate template and must continue to render every field. In particular, EL `review.html` still shows and edits `Ampere` / Amperage Rating, `Volts`, and `Location`.
+- The per-asset review page (opened via the row's Review button) is a separate template and must continue to render every field of its variant. Since 2026-08-07 EL `review.html` renders one of two server-selected variants (see "EL Review Form Variants" below): the **Distribution** variant still shows and edits `Ampere` / Amperage Rating, `Volts`, and `Location`; the **General** variant replaces the electrical tech cards with the ME-style nameplate fields and keeps `Location`.
 - EL `Ampere` is the editable amperage source. `Amperage Rating` is the Planon-facing alias synchronized from `Ampere`; helper logic must prefer `Ampere` when both keys are present, and a submitted blank `Ampere` must clear both keys instead of falling back to a stale alias.
 - EL tag-derived voltage is a default, not an override for human review. When a reviewer saves a non-derived `Volts` value, `volts_manual_override=1` preserves that value through JSON render/save and `sdi_dataset_EL` sync.
 - EL rating values are stored bare (`208/120`, `100`) with the unit in the `(UoM)` columns (2026-07-08). `VLT`/`AMP` are the intentional Planon UoM codes on `sdi_dataset_EL` — do not change them; `electrical_building_schema` stores display units `V`/`A` (2026-07-09). Save paths strip unit letters from values; display layers append/map the units.
@@ -187,8 +227,29 @@ Constraints to preserve:
 - EL `Fed From Amperage Rating` (+ UoM) is SLD-derived display/export data, not reviewer-editable input (2026-06-12). It resolves from the building's active SLD rows (`electrical_building_schema`, `new_draw='TRUE'`) by matching the normalized `Supply From` against the SLD `Equipment ID`; it stays blank when the building has no SLD data, with no fallback to sibling captured assets. The dashboard required-fields hover checklist counts both fields only for buildings that have active SLD data.
 - EL Distribution review shows an advisory amperage warning when both ratings are valid and `Amperage Rating` is greater than `Fed From Amperage Rating`. The warning recalculates live, renders below the positioned amperage input wrapper so it cannot overlap the UoM pill, does not block save/approval, and must not write the generic `Flagged` field or any derived warning state to JSON/DB. The EL review XLSX and SLD Switch Over XLSX red-highlight the Amperage cell for affected rows without exporting a separate flag column; the SLD worksheet also hides gridlines. ME/BF export behavior remains unchanged.
 - EL review saves must keep top-level JSON quality metadata (`completeness_score`, `confidence_scores`, `Avg_ai_conf`) aligned with reviewer edits. If this metadata remains stale after a required-field edit, the EL AI checker can reprocess the JSON and erase the human correction.
-- The EL General listing (`/review-all`) must continue to show those three fields unless a separate requirement changes that view.
+- The EL General listing (`/review-all`) hides Supply From, Amperage Rating, Volts, and Location (2026-08-07; previously it showed all four). The values still render into the hidden cells and stay searchable, and the dashboard XLSX export intentionally keeps every column.
 - If a listing-table column order changes, update the DataTables index variables and hidden-column arrays in the same change.
+
+## EL Landing Page (2026-08-08)
+
+- The EL landing page (`/`, `landing.html`) shows the two scope cards ("Electrical Assets" / "Electrical Assets - Distribution") with a **pending-review count** each, computed by `_landing_pending_counts()`: New-process items only (`load_json_items("0")`), archived QRs excluded, Pending = `Approved != "True"`, scope split by `get_distribution_asset_groups()`. This is byte-for-byte the dashboards' default view, so the landing number always matches what the reviewer sees after clicking through.
+- **Never-500 contract:** any counting failure degrades to `None` counts and the template renders a muted em dash — the landing page must always load.
+- Design (2026-08-08 refresh): compact masthead + a single-line-diagram bus motif feeding the two worklist cards (blue drop = General, gold drop = Distribution). User-specified copy, all title case: bus label "Review the Captured Assets", card kickers "General Electrical Assets" / "Electrical Distribution Systems", General tag chip "Standard Form". Scope links, embedded-iframe behavior (`?embedded=true` propagation + postMessage), and the logout dropdown are unchanged.
+
+## EL Review Form Variants (2026-08-07)
+
+EL `review.html` is one template that renders one of two server-selected form variants. The variant is decided by `_el_form_variant(asset_group)` in `Asset_dashboard_EL.py`: **General** when the asset's resolved `Asset Group` is non-blank and not in `get_distribution_asset_groups()` (`Asset_Group.elec_dist_setup='Y'`, 60s TTL cache); **Distribution** otherwise. Blank/unknown groups default to Distribution (the pre-split behavior; the tag heuristics always land on a Distribution group anyway). The client-supplied `base_route` param stays pagination-only and never selects the variant.
+
+- **Distribution variant** — byte-identical to the pre-2026-08-07 form: QR Code, Identity (UBC Asset Tag / Asset Group / Attribute / Main Asset / Installation Date), Technical Details tech cards (Ampere+UoM, Volts, Power Rating pair, Supply From, Fed From, derived Equipment ID / Power Type), Location, Description, User Activity Log.
+- **General variant** — ME-style nameplate form: QR Code, **Identity** (Manufacturer, Model, Serial Number, Year, Capacity + Capacity (UoM), Installation Date), **Classification** (UBC Asset Tag, Asset Group select, readonly `Electrical` Attribute, Main Asset), Location, Description, User Activity Log. No Technical Safety BC (EL has no TSBC photo sequence) and no electrical tech cards.
+- The hidden `form_variant` input (`general|distribution`) is a render-time echo only: `save_review` never branches on it, and it is in `ignored_form_fields` (with `nav_prev`/`nav_next`) so it can never merge into `structured_data`.
+- Equipment ID / Equipment Type / Power Type are **still derived server-side and stored** for General assets (canonical Planon fields); the General form just doesn't display them. All save-path derivations run identically for both variants — `merge_form_into_structured` never clears keys absent from the POST, so a reclassified asset keeps its other-variant values in JSON.
+- Nameplate storage: `sdi_dataset_EL` columns `Manufacturer`, `Model`, `Serial Number`, `Year` (migration `2026-08-07_sdi_dataset_el_nameplate_columns.sql`; names match the JSON keys — do not copy ME's `Serial Number`->`Serial` DB rename). The DB sync writes them **only for General rows**; Distribution rows stay blank by contract (JSON keeps the values either way).
+- Review scoring is variant-aware: General assets score `("UBC Asset Tag", "Manufacturer", "Model", "Serial Number", "Year")` (`EL_REVIEW_GENERAL_SCORING_FIELDS`); Distribution keeps the transformer/non-transformer sets. The stored `Asset Group` takes precedence over the tag-derived group when picking the set. The dashboard hover checklist likewise adds the nameplate fields for General groups.
+- EL AI extraction reads the four nameplate fields from the `-0` Asset Plate (preferred) for **all** EL assets (standard + legacy flows) — General cannot be classified before extraction. Since 2026-08-08 the `-1` photo is an allowed **fallback** source, but only when it clearly shows a manufacturer nameplate/data plate: facility-made text (printed panel label, engraved lamacoid, blue QR sticker, `-2` panel schedule) is never a source in any photo. Legacy `Nameplate Text` remains a `-0`-only transcription (loosening it risks lamacoid/nameplate cross-contamination). They are not in any extraction scoring/flag tuple, and their confidences are projected **only when non-blank** so pre-existing JSONs are never mass-flagged stale (no `EXTRACTION_RULE_VERSION` / `EL_LEGACY_RULE_VERSION` bump — a bump re-extracts the whole corpus). `normalize_manufacturer` is a BF whitelist: the EL wiring falls back to a light cleanup (`_clean_raw_manufacturer`) and must never blank a non-empty read.
+- SDI/Planon: Manufacturer / Model / Year flow into the package automatically (already in `MASTER_COLS`); `build_sdi_dataset` renames EL `Serial Number` -> `Serial` (package column name) next to the `UBC Asset Tag` -> `UBC Tag` rename. See `sdi_process.rules.md`.
+- **Fire-alarm panel tag rules — `fire_alarm_control` family (2026-08-08, restructured 2026-08-10)** — fire-alarm control panels carry no UBC lamacoid, so any read tag is junk. The API's `fire_alarm_control` class (subclasses `Simplex`, `Autocall`; precedence Simplex first) keys off the extracted **Manufacturer** in both standard and legacy flows via `_apply_el_fire_alarm_control_rules`: **Simplex** (any casing, incl. SimplexGrinnell) **always overwrites** `UBC Asset Tag` with `UN-<Model>` (whitespace-stripped, uppercased; bare `UN-` while no model is read, capped below `MANUAL_REVIEW_MIN_CONFIDENCE` so the placeholder still flags); **Autocall** canonicalizes `Manufacturer` to `AUTOCALL` and overwrites the tag with the model number itself (e.g. `4100ES`; with no model read the tag is left untouched so the asset keeps flagging). Tag confidence = min of the Manufacturer/Model confidences. When a rule fires it also re-syncs tag-derived companions: `Branch Panel` cleared in both flows, and in the legacy flow `Equipment ID` follows the new tag while `Equipment Type`/`Power Type` clear and `Description` recomposes as `<BRAND> - <tag>` (feeder fields are left alone). Do NOT add `UN` (or `4100`) to the API `Config.ABBREVIATIONS` (it would mangle raw tags starting with those characters); instead the **standard flow re-applies the rules after its post-loop `_resolve_el_asset_tag` + `_apply_tag_formatting` step** — without that re-application the tags would ship as `PNL-UN-<Model>` / `PNL-<Model>` and the synthesized tag would leak into `Branch Panel` (subclass `apply()` is idempotent by contract: it re-derives everything from Manufacturer/Model). The dictionary entries then classify downstream: `UN-|EL` (description SIMPLEX) → Asset Group `Fire Alarm Control Panels`, `4100|EL` (description AUTOCALL 4100 ES) → Asset Group `Fire Alarm Annunciator Panels` — both General groups → nameplate form variant, Attribute `FireAlarmPanel`, Main Asset `Fire Alarm and Detection Systems`. Group/attribute changes for these assets are dictionary data edits, not code.
+- **Capacity pair (2026-08-07 follow-up, OPTIONAL field)** — the General Identity card also captures `Capacity` + `Capacity (UoM)` (bare value, unit as printed; no fixed code list unlike `AMP`/`VLT`). Storage: `sdi_dataset_EL` columns of the same names (migration `2026-08-07_el_capacity_columns.sql`, which also adds them to `sdi_print_out`/`sdi_print_out_arch`), General rows only, blank on Distribution rows by contract. The review app's `EL_CAPACITY_FIELDS` is deliberately **excluded** from `EL_NAMEPLATE_FIELDS`, so completeness scoring, the hover checklist, and the traffic light are unchanged — do not fold Capacity into any review scoring tuple. Extraction reads it from the same manufacturer-plate source rule as the nameplate fields (`-0` preferred, `-1` fallback since 2026-08-08) under the same no-rule-version-bump / non-blank-only-confidence rules (the API-side `Config.EL_NAMEPLATE_FIELDS` DOES include the pair so it inherits the retry/fallback-gate exclusions). SDI: carried via `PACKAGE_ONLY_COLS`, exported to the Planon template columns `Capacity`/`Capacity UoM` (attribute set `Electrical` lists both). See `sdi_process.rules.md`.
 
 ## Photo Column Rules (Listing Tables)
 
@@ -225,7 +286,7 @@ When the reviewed EL asset is present in the active SLD data (`electrical_buildi
 
 ### Sheet layout
 
-- **EL:** Description -> Identity (UBC Asset Tag / Asset Group / Attribute / Main Asset / Installation Date) / Technical Details (Amperage, Voltage, Power Rating, Supply From, Fed From, Equipment ID, Equipment Type, Power Type) -> Capture Notes -> Single Line Diagram -> Asset Photos (hero = Full Interior Panel `-2`; thumbnails `-0` / `-1` / `-3`; grey "Missing" placeholder when absent) -> User Activity Log (captured-by, date, hour, GPS) -> footer (generated-on + user).
+- **EL:** Description -> Identity (UBC Asset Tag / Asset Group / Attribute / Main Asset / Installation Date) / second column by form variant (2026-08-07): Distribution = Technical Details (Amperage, Voltage, Power Rating, Supply From, Fed From, Equipment ID, Equipment Type, Power Type); General = Nameplate (Manufacturer, Model, Serial Number, Year, Capacity value+UoM joined) -> Capture Notes -> Single Line Diagram (General assets typically show the "No Single Line Diagram" note) -> Asset Photos (hero = Full Interior Panel `-2`; thumbnails `-0` / `-1` / `-3`; grey "Missing" placeholder when absent) -> User Activity Log (captured-by, date, hour, GPS) -> footer (generated-on + user).
 - **ME:** Description -> Identity (Manufacturer / Model / Serial # / Year / Installation Date) + Classification (UBC Asset Tag / Technical Safety BC / Asset Group / Attribute / Main Asset) -> Capture Notes -> User Activity Log -> Asset Photos (hero = Main Picture `-2`; thumbnails `-0` / `-1` / `-3` / `-4`). No SLD section.
 - **BF:** Description -> Identity (Manufacturer / Model / Serial # / Diameter) + Classification (UBC Tag / Year / Installation Date / Application / Asset Group / Attribute) -> Capture Notes -> User Activity Log -> Asset Photos (hero = Main Asset `-2`; thumbnails `-0` / `-1` / `-3`). No SLD section. Building Name via `_get_buildings_name_map()`; permission `reviewer_backflow`.
 - All three sheets put **Description first**, above Identity.
