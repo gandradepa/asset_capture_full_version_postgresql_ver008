@@ -1779,3 +1779,9 @@ The redundant **Missing field** filter was removed from the Incomplete tab in th
 Mechanical extraction now preserves explicitly labeled, short digit-leading model codes in the bounded `2-5 digits + hyphen + 2-4 letters` form. This fixes QR `0000188207`, whose Honeywell Analytics Model `301-EM` was read correctly by OCR but rejected by the legacy letter-leading short-model gate, leaving the JSON and `sdi_dataset` Model fields blank.
 
 The change is intentionally narrow: the printed hyphen and multi-letter suffix are required, sequence `-0` remains the sole owner of Model, and rating-like or numeric values such as `208V`, `1200 VAC`, and `118668` remain invalid model candidates. Regression coverage verifies both direct validation and parsing of the explicit `Model: 301-EM` label while retaining the existing long-model and Model/Serial collision tests.
+
+## 2026-08-11: ME label-authoritative Model values
+
+Mechanical extraction now treats a bounded value directly attached to a supported Model-field label on sequence `-0` as authoritative regardless of whether it is alphabetic-only, numeric-only, mixed, spaced, or punctuated. The explicit-label contract is capped at 64 characters, rejects controls and Model/Serial collisions, stops at neighboring fields, and preserves printable punctuation. Generic unlabeled candidates retain the former strict shape gates.
+
+The provenance is carried through label parsing, targeted nameplate reread, label-bounded OCR, model-evidence checks, UI-parity merge, and confidence assignment. This fixes production QR `0000188234`, whose clear `Model: QCC-M` value was previously erased because the generic validator required at least one digit.

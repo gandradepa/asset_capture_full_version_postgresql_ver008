@@ -1468,7 +1468,11 @@ class AssetProcessor:
                 self._canonicalize_manufacturer_candidate(merged_struct.get("Manufacturer", ""))
             )
             model_corroborated = bool(
-                self._is_model_code_candidate(merged_struct.get("Model", ""), merged_struct.get("Manufacturer", ""))
+                self._is_model_code_candidate(
+                    merged_struct.get("Model", ""),
+                    merged_struct.get("Manufacturer", ""),
+                    explicitly_labeled=True,
+                )
                 and self._has_model_label_evidence(
                     str(merged_struct.get("Model", "")),
                     info.get("images", {}),
@@ -1578,11 +1582,15 @@ class AssetProcessor:
             try:
                 ocr_results = self._ocr_extract_model_serial(info["images"])
                 ocr_serial_supported = self._is_serial_candidate(ocr_results.get("Serial Number", ""))
-                ocr_model_supported = self._is_model_code_candidate(ocr_results.get("Model", ""))
+                ocr_model_supported = self._is_model_code_candidate(
+                    ocr_results.get("Model", ""), explicitly_labeled=True
+                )
                 ocr_has_strong_bundle = bool(ocr_model_supported and ocr_serial_supported)
 
                 # Fallback-only OCR fill: do not overwrite existing AI-populated values.
-                if not cleaned.get("Model") and self._is_model_code_candidate(ocr_results.get("Model", "")):
+                if not cleaned.get("Model") and self._is_model_code_candidate(
+                    ocr_results.get("Model", ""), explicitly_labeled=True
+                ):
                     cleaned["Model"] = self._normalize_model_candidate(
                         ocr_results.get("Model", ""),
                         cleaned.get("Manufacturer", ""),
@@ -1850,7 +1858,11 @@ class AssetProcessor:
             self._canonicalize_manufacturer_candidate(merged_struct.get("Manufacturer", ""))
         )
         model_corroborated = bool(
-            self._is_model_code_candidate(merged_struct.get("Model", ""), merged_struct.get("Manufacturer", ""))
+            self._is_model_code_candidate(
+                merged_struct.get("Model", ""),
+                merged_struct.get("Manufacturer", ""),
+                explicitly_labeled=True,
+            )
             and self._has_model_label_evidence(
                 str(merged_struct.get("Model", "")),
                 info.get("images", {}),
@@ -1969,6 +1981,7 @@ class AssetProcessor:
                 qr, images
             )
         evidence_texts: Optional[List[str]] = None
+        model_label_authoritative = False
         if has_nameplate_source:
             evidence_texts = self._collect_nameplate_evidence_texts(images)
 
@@ -2021,12 +2034,19 @@ class AssetProcessor:
                         return f"19{yy:02d}"
                 return ""
 
-            def _model_acceptable(value: str) -> bool:
+            def _model_acceptable(
+                value: str,
+                explicitly_labeled: bool = False,
+            ) -> bool:
                 model_value = self._normalize_model_candidate(value, merged.get("Manufacturer", ""))
                 if not model_value:
                     return False
                 model_compact = re.sub(r"[^A-Z0-9]", "", model_value.upper())
-                generic_ok = self._is_model_code_candidate(model_value, merged.get("Manufacturer", "")) or bool(
+                generic_ok = self._is_model_code_candidate(
+                    model_value,
+                    merged.get("Manufacturer", ""),
+                    explicitly_labeled=explicitly_labeled,
+                ) or bool(
                     re.fullmatch(r"[A-Z]{1,4}\d{1,4}[A-Z]?", model_compact)
                 )
                 if not generic_ok:
@@ -2063,6 +2083,7 @@ class AssetProcessor:
                     evidence_texts=evidence_texts,
                 )
             )
+            model_label_authoritative = model_supported
             serial_supported = bool(
                 merged.get("Serial Number")
                 and self._has_serial_label_evidence(
@@ -2095,7 +2116,10 @@ class AssetProcessor:
             model_weak = (
                 initial_model_serial_collision
                 or long_model_needs_corroboration
-                or not _model_acceptable(merged.get("Model", ""))
+                or not _model_acceptable(
+                    merged.get("Model", ""),
+                    explicitly_labeled=model_label_authoritative,
+                )
             ) or (
                 strict_seq0_reread_family and merged.get("Model") and not model_supported
             )
@@ -2116,7 +2140,7 @@ class AssetProcessor:
                         merged.get("Manufacturer", ""),
                     ):
                         if (
-                            _model_acceptable(candidate)
+                            _model_acceptable(candidate, explicitly_labeled=True)
                             and not self._model_serial_values_collide(
                                 candidate,
                                 merged.get("Serial Number", ""),
@@ -2167,6 +2191,7 @@ class AssetProcessor:
                     )
                     merged["Model"] = rescued_model
                     model_supported = True
+                    model_label_authoritative = True
                     model_weak = False
 
             if model_weak or serial_weak:
@@ -2182,8 +2207,12 @@ class AssetProcessor:
                         merged.get("Manufacturer", ""),
                     )
                     family_reread_model = reread_model
-                    if reread_model and _model_acceptable(reread_model):
+                    if reread_model and _model_acceptable(
+                        reread_model,
+                        explicitly_labeled=True,
+                    ):
                         merged["Model"] = reread_model
+                        model_label_authoritative = True
                         if strict_seq0_reread_family:
                             model_weak = False
                 if serial_weak:
@@ -2205,6 +2234,7 @@ class AssetProcessor:
                         evidence_texts=evidence_texts,
                     )
                 )
+                model_label_authoritative = model_label_authoritative or model_supported
                 serial_supported = bool(
                     merged.get("Serial Number")
                     and self._has_serial_label_evidence(
@@ -2216,7 +2246,7 @@ class AssetProcessor:
                 )
                 family_model_trusted = bool(
                     family_reread_model
-                    and _model_acceptable(family_reread_model)
+                    and _model_acceptable(family_reread_model, explicitly_labeled=True)
                     and not require_direct_model_serial_evidence
                 )
                 family_serial_trusted = bool(
@@ -2227,7 +2257,10 @@ class AssetProcessor:
                         or self._matches_rheem_ruud_serial_shape(family_reread_serial)
                     )
                 )
-                model_weak = initial_model_serial_collision or not _model_acceptable(merged.get("Model", "")) or (
+                model_weak = initial_model_serial_collision or not _model_acceptable(
+                    merged.get("Model", ""),
+                    explicitly_labeled=model_label_authoritative,
+                ) or (
                     strict_seq0_reread_family
                     and merged.get("Model")
                     and not model_supported
@@ -2252,17 +2285,27 @@ class AssetProcessor:
                         ocr_ms.get("Model", ""),
                         merged.get("Manufacturer", ""),
                     )
-                    if not (model_candidate and _model_acceptable(model_candidate)) and evidence_texts:
+                    if not (
+                        model_candidate
+                        and _model_acceptable(model_candidate, explicitly_labeled=True)
+                    ) and evidence_texts:
                         for txt in evidence_texts:
                             parsed_model = self._normalize_model_candidate(
                                 self._parse_nameplate_model_serial(txt).get("Model", ""),
                                 merged.get("Manufacturer", ""),
                             )
-                            if parsed_model and _model_acceptable(parsed_model):
+                            if parsed_model and _model_acceptable(
+                                parsed_model,
+                                explicitly_labeled=True,
+                            ):
                                 model_candidate = parsed_model
                                 break
-                    if model_candidate and _model_acceptable(model_candidate):
+                    if model_candidate and _model_acceptable(
+                        model_candidate,
+                        explicitly_labeled=True,
+                    ):
                         merged["Model"] = model_candidate
+                        model_label_authoritative = True
 
                 if serial_weak:
                     # Never let OCR-derived candidates overwrite a serial that was
@@ -2292,7 +2335,7 @@ class AssetProcessor:
                     if (
                         not require_direct_model_serial_evidence
                         and family_reread_model
-                        and _model_acceptable(family_reread_model)
+                        and _model_acceptable(family_reread_model, explicitly_labeled=True)
                     ):
                         merged["Model"] = family_reread_model
                     else:
@@ -2374,7 +2417,7 @@ class AssetProcessor:
                 )
                 if (
                     ocr_model_refine
-                    and _model_acceptable(ocr_model_refine)
+                    and _model_acceptable(ocr_model_refine, explicitly_labeled=True)
                     and ocr_serial_refine
                     and _serial_acceptable(ocr_serial_refine)
                     and merged_serial_norm
@@ -2389,7 +2432,10 @@ class AssetProcessor:
                     if len(ocr_model_compact) > len(cur_model_compact):
                         merged["Model"] = ocr_model_refine
 
-            if not _model_acceptable(merged.get("Model", "")):
+            if not _model_acceptable(
+                merged.get("Model", ""),
+                explicitly_labeled=model_label_authoritative,
+            ):
                 merged["Model"] = ""
             if not _serial_acceptable(merged.get("Serial Number", "")):
                 merged["Serial Number"] = ""
@@ -2776,6 +2822,7 @@ class AssetProcessor:
         text = str(value or "").strip().upper()
         if not text:
             return ""
+        text = "".join(ch for ch in text if ch.isprintable())
         text = text.replace("|", "I")
         text = text.replace("’", "'").replace("`", "'")
         text = re.sub(r"\s+", " ", text).strip()
@@ -2787,8 +2834,7 @@ class AssetProcessor:
         text = re.sub(r"\bECMI\b", "FCMI", text)
         text = re.sub(r"\b(\d+)\s*ECMI\b", r"\1 FCMI", text)
         text = re.sub(r"\s*([\/\.-])\s*", r"\1", text)
-        text = re.sub(r"[^A-Z0-9\/\.\-\(\)\s]", "", text)
-        text = re.sub(r"\s{2,}", " ", text).strip(" -./")
+        text = re.sub(r"\s{2,}", " ", text).strip()
         return text[:80]
 
     def _normalize_model_candidate(self, value: str, manufacturer_hint: str = "") -> str:
@@ -3376,7 +3422,11 @@ Set "Pressure Vessel Context" to true only when the plate visibly contains CRN/C
                 )
                 model_value = self._normalize_model_candidate(payload.get("Model", ""))
                 serial_value = self._normalize_serial_candidate(payload.get("Serial Number", ""))
-                if not self._is_model_code_candidate(model_value, manufacturer_hint):
+                if not self._is_model_code_candidate(
+                    model_value,
+                    manufacturer_hint,
+                    explicitly_labeled=True,
+                ):
                     model_value = ""
                 if not self._is_serial_candidate(serial_value):
                     serial_value = ""
@@ -3728,7 +3778,7 @@ Output must be strict JSON with exactly one key: "Technical Safety BC".
         for p in ordered_paths:
             for text in self._ocr_text_variants(p):
                 parsed = self._parse_nameplate_model_serial(text).get("Model", "")
-                if parsed and self._is_model_code_candidate(parsed):
+                if parsed and self._is_model_code_candidate(parsed, explicitly_labeled=True):
                     compact_parsed = re.sub(r"[^A-Z0-9]", "", parsed)
                     compact_best = re.sub(r"[^A-Z0-9]", "", best)
                     if len(compact_parsed) >= len(compact_best):
@@ -4245,7 +4295,29 @@ Output must be strict JSON with exactly one key: "Technical Safety BC".
         canonical = self._canonicalize_manufacturer_candidate(manufacturer_hint) or str(manufacturer_hint)
         return _compact_lookup_key(canonical) in ME_NUMERIC_MODEL_MANUFACTURER_KEYS
 
-    def _is_model_code_candidate(self, value: str, manufacturer_hint: str = "") -> bool:
+    def _is_labeled_model_value_candidate(
+        self,
+        value: str,
+        serial_value: str = "",
+    ) -> bool:
+        """Accept a bounded value whose Model-field label supplies provenance."""
+        raw = str(value or "").strip()
+        if not raw or len(raw) > ME_MAX_MODEL_CODE_LENGTH:
+            return False
+        if any(ord(ch) < 32 or ord(ch) == 127 for ch in raw):
+            return False
+        if not any(ch.isalnum() for ch in raw):
+            return False
+        if serial_value and self._model_serial_values_collide(raw, serial_value):
+            return False
+        return True
+
+    def _is_model_code_candidate(
+        self,
+        value: str,
+        manufacturer_hint: str = "",
+        explicitly_labeled: bool = False,
+    ) -> bool:
         """
         Detect likely equipment model code from nameplate.
 
@@ -4255,6 +4327,8 @@ Output must be strict JSON with exactly one key: "Technical Safety BC".
         manufacturer_hint so those survive instead of being discarded.
         """
         v = (value or "").strip().upper()
+        if explicitly_labeled:
+            return self._is_labeled_model_value_candidate(v)
         if not v:
             return False
         if self._is_tag_like_model_candidate(v):
@@ -4306,7 +4380,7 @@ Output must be strict JSON with exactly one key: "Technical Safety BC".
         text: str,
         manufacturer_hint: str = "",
     ) -> List[str]:
-        """Return only model-shaped values immediately following a model label."""
+        """Return bounded values immediately following an explicit Model label."""
         upper = re.sub(r"[|]", "I", str(text or "").upper())
         if not upper:
             return []
@@ -4326,26 +4400,26 @@ Output must be strict JSON with exactly one key: "Technical Safety BC".
         boundary_re = re.compile(
             r"\b(?:SALES\s+ORDER|SERIAL|SER|S/?N|ORDER|VOLTS|AMPS|HZ|HERTZ|"
             r"PHASE|HP|KW|QUANTITY|QTY|MAX|MIN|DESIGN|PRESS|PRESSURE|DATE|"
-            r"MFG|PROD|CAPACITY|GPM|RPM|HEAD|MOTOR|VACUUM|INLET)\b",
+            r"MFG|PROD(?:UCT)?|RATING|CAPACITY|GPM|RPM|HEAD|MOTOR|VACUUM|INLET)\b",
             re.IGNORECASE,
         )
-        value_re = re.compile(
-            rf"^\s*([A-Z0-9][A-Z0-9\/\.\-\(\)\s]{{3,{ME_MAX_MODEL_CODE_LENGTH - 1}}})",
-            re.IGNORECASE,
-        )
-
         candidates: List[str] = []
         for cue in cue_re.finditer(upper):
             tail = upper[cue.end(): cue.end() + ME_MAX_MODEL_CODE_LENGTH + 80]
+            tail = re.split(r"[\r\n]", tail, maxsplit=1)[0]
             tail = boundary_re.split(tail, maxsplit=1)[0]
-            match = value_re.match(tail)
-            if not match:
+            raw_candidate = tail.strip(" \t:-")
+            if not raw_candidate:
                 continue
             candidate = self._normalize_model_candidate(
-                match.group(1),
+                raw_candidate,
                 manufacturer_hint,
             )
-            if candidate and self._is_model_code_candidate(candidate, manufacturer_hint):
+            if candidate and self._is_model_code_candidate(
+                candidate,
+                manufacturer_hint,
+                explicitly_labeled=True,
+            ):
                 candidates.append(candidate)
         return list(dict.fromkeys(candidates))
 
@@ -4519,7 +4593,7 @@ Output must be strict JSON with exactly one key: "Technical Safety BC".
         """
         model_norm = self._normalize_model_candidate(model_value or "")
         model_compact = re.sub(r"[^A-Z0-9]", "", model_norm.upper())
-        if len(model_compact) < 5:
+        if not model_compact or not self._is_labeled_model_value_candidate(model_norm):
             return False
 
         texts = evidence_texts if evidence_texts is not None else self._collect_nameplate_evidence_texts(images)
@@ -5156,12 +5230,12 @@ Output must be strict JSON with exactly one key: "Technical Safety BC".
         for _, variant in self._hybrid_ocr_variants(img):
             for text in self._extract_labeled_value_candidates(variant, model_patterns):
                 parsed = self._parse_nameplate_model_serial(text).get("Model", "")
-                if parsed and self._is_model_code_candidate(parsed):
+                if parsed and self._is_model_code_candidate(parsed, explicitly_labeled=True):
                     model_candidates.append(parsed)
                     continue
                 for token in re.findall(r"\b[A-Z0-9][A-Z0-9\-\/\.\(\)]{4,31}\b", text.upper()):
                     cand = self._normalize_model_candidate(token)
-                    if self._is_model_code_candidate(cand):
+                    if self._is_model_code_candidate(cand, explicitly_labeled=True):
                         model_candidates.append(cand)
 
             for text in self._extract_labeled_value_candidates(variant, serial_patterns):
@@ -5338,10 +5412,15 @@ Output must be strict JSON with exactly one key: "Technical Safety BC".
         out = {"Model": "", "Serial Number": ""}
         if not text:
             return out
-        t = re.sub(r"[|]", "I", text.upper())
-        t = re.sub(r"(\d)\s*-\s*(\d)", r"\1-\2", t)
-        t = re.sub(r"(\d)\s*/\s*(\d)", r"\1/\2", t)
-        t = re.sub(r"\s+", " ", t).strip()
+        raw_t = re.sub(r"[|]", "I", text.upper())
+        raw_t = re.sub(r"(\d)\s*-\s*(\d)", r"\1-\2", raw_t)
+        raw_t = re.sub(r"(\d)\s*/\s*(\d)", r"\1/\2", raw_t)
+
+        labeled_models = self._model_candidates_near_label(raw_t)
+        if labeled_models:
+            out["Model"] = labeled_models[0]
+
+        t = re.sub(r"\s+", " ", raw_t).strip()
 
         # Allow spaces in model patterns to catch 'HH 012...' but use split to prevent runaway captures
         model_patterns = [
@@ -5353,7 +5432,7 @@ Output must be strict JSON with exactly one key: "Technical Safety BC".
             rf"\b(?:DOE\s+)?BASIC\s+MODEL\s*(?:NO\.?|NUMBER|#)?\s*[:\-]?\s*([A-Z0-9][A-Z0-9\- \.\/\(\)]{{3,{ME_MAX_MODEL_CODE_LENGTH - 1}}})",
             rf"\bMOD(?:EL)?\s*(?:NO\.?|NUMBER|#)?\s*[:\-]?\s*([A-Z0-9][A-Z0-9\- \.\/\(\)]{{3,{ME_MAX_MODEL_CODE_LENGTH - 1}}})",
         ]
-        for pat in model_patterns:
+        for pat in model_patterns if not out["Model"] else []:
             for m in re.finditer(pat, t):
                 val = m.group(1).strip()
                 # Expanded boundary split to stop at words like QUANTITY, QTY, MAX, MIN
@@ -5362,7 +5441,7 @@ Output must be strict JSON with exactly one key: "Technical Safety BC".
                     val,
                 )[0].strip()
                 candidate = self._normalize_model_candidate(val)
-                if self._is_model_code_candidate(candidate):
+                if self._is_model_code_candidate(candidate, explicitly_labeled=True):
                     out["Model"] = candidate
                     break
             if out["Model"]:
@@ -5392,6 +5471,9 @@ Output must be strict JSON with exactly one key: "Technical Safety BC".
                     break
             if out["Serial Number"]:
                 break
+
+        if self._model_serial_values_collide(out["Model"], out["Serial Number"]):
+            out["Model"] = ""
 
         return out
 
@@ -6269,7 +6351,10 @@ Output must be strict JSON with exactly one key: "Technical Safety BC".
                 if "MAKITA" in text and re.fullmatch(r"HS\d{3,5}[A-Z]?", model_candidate):
                     # Common OCR confusion on Makita labels: leading 'L' read as 'H'.
                     model_candidate = f"L{model_candidate[1:]}"
-                if model_candidate and self._is_model_code_candidate(model_candidate):
+                if model_candidate and self._is_model_code_candidate(
+                    model_candidate,
+                    explicitly_labeled=True,
+                ):
                     best_model = _pick_better_model(best_model, model_candidate)
 
                 serial_candidate = parsed.get("Serial Number", "")
@@ -6280,7 +6365,7 @@ Output must be strict JSON with exactly one key: "Technical Safety BC".
                     for cand in self._model_candidates_near_label(text):
                         if "MAKITA" in text and re.fullmatch(r"HS\d{3,5}[A-Z]?", cand):
                             cand = f"L{cand[1:]}"
-                        if self._is_model_code_candidate(cand):
+                        if self._is_model_code_candidate(cand, explicitly_labeled=True):
                             best_model = _pick_better_model(best_model, cand)
 
                 if not best_serial:
@@ -6355,7 +6440,10 @@ Output must be strict JSON with exactly one key: "Technical Safety BC".
             roi_out = self._extract_model_serial_from_rois(p)
             model_candidate = roi_out.get("Model", "")
             serial_candidate = roi_out.get("Serial Number", "")
-            if model_candidate and self._is_model_code_candidate(model_candidate):
+            if model_candidate and self._is_model_code_candidate(
+                model_candidate,
+                explicitly_labeled=True,
+            ):
                 model_compact = re.sub(r"[^A-Z0-9]", "", model_candidate)
                 best_model_compact = re.sub(r"[^A-Z0-9]", "", best_model)
                 if len(model_compact) >= len(best_model_compact):
@@ -6378,7 +6466,10 @@ Output must be strict JSON with exactly one key: "Technical Safety BC".
                 parsed = self._parse_nameplate_model_serial(text)
 
                 model_candidate = parsed.get("Model", "")
-                if model_candidate and self._is_model_code_candidate(model_candidate):
+                if model_candidate and self._is_model_code_candidate(
+                    model_candidate,
+                    explicitly_labeled=True,
+                ):
                     model_compact = re.sub(r"[^A-Z0-9]", "", model_candidate)
                     best_model_compact = re.sub(r"[^A-Z0-9]", "", best_model)
                     if len(model_compact) >= len(best_model_compact):
