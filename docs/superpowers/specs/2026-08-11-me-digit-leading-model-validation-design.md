@@ -30,9 +30,11 @@ UI-parity guard, so every rescue path converges on a blank Model field.
 ## Approved design
 
 - Add the minimal digit-leading short-code shape to
-  `AssetProcessor._is_model_code_candidate()`. The accepted compact value must
-  begin with 2-5 digits and end with 1-4 letters; the full value remains subject
-  to the existing length, tag-like, prose, and digit/letter gates.
+  `AssetProcessor._is_model_code_candidate()`. The accepted value must retain a
+  printed hyphen, begin with 2-5 digits, and end with 2-4 letters; the full value
+  remains subject to the existing length, tag-like, prose, and digit/letter
+  gates. Requiring both the separator and multi-letter suffix keeps ratings such
+  as `208V` and `1200 VAC` outside the relaxed shape.
 - Keep source ownership unchanged: Model remains seq `-0` only. OCR-derived
   values still require an explicit model-like label through the existing
   label-aware parser/evidence paths.
