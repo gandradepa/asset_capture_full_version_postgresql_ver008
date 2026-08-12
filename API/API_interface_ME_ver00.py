@@ -466,6 +466,8 @@ class Config:
     AI_STATUS_TABLE = "QR_codes"
     AI_STATUS_QR_COLUMN = "QR_code_ID"
     AI_STATUS_COLUMN = "ai_status"
+    # Assets withdrawn by the Dashboard's Disposed tool are never extracted.
+    DISPOSED_TABLE = "disposed_assets"
 
     # --- File Matching ---
     VALID_SUFFIXES = {"0", "1", "3"}
@@ -918,6 +920,32 @@ class AssetProcessor:
         logging.info(f"Loaded {len(self.qrs_to_ignore)} QR codes to ignore (approved).")
         logging.info(f"Loaded {len(self.ai_processed_qrs)} QR codes already processed by AI (ai_status=1).")
 
+    def _load_disposed_qrs(self) -> Set[str]:
+        """QR codes withdrawn from the pipeline by the Dashboard's Disposed tool.
+
+        Guarded by has_table so extraction still runs on a database where the
+        disposed_assets migration has not been applied yet.
+        """
+        disposed: Set[str] = set()
+        if not (qrdb.is_postgres() or os.path.exists(Config.DB_PATH)):
+            return disposed
+        try:
+            with closing(qrdb.get_connection(sqlite_path=Config.DB_PATH)) as conn:
+                if not qrdb.has_table(conn, Config.DISPOSED_TABLE):
+                    return disposed
+                with closing(conn.cursor()) as cur:
+                    cur.execute(
+                        f'SELECT "qr_code" FROM "{Config.DISPOSED_TABLE}"'
+                        f' WHERE "status" = \'disposed\''
+                    )
+                    for row in cur.fetchall():
+                        value = row["qr_code"] if hasattr(row, "keys") else row[0]
+                        if value and (qrid := str(value).strip()):
+                            disposed.add(qrid)
+        except qrdb.DatabaseError as e:
+            logging.error(f"Error reading disposed assets: {e}.")
+        return disposed
+
     def _load_qrs_to_ignore(self) -> Set[str]:
         """Loads QR codes that are already approved or have been flagged."""
         to_ignore = set()
@@ -939,6 +967,13 @@ class AssetProcessor:
                         logging.warning("Could not filter by Approved status (columns might be missing).")
         except qrdb.DatabaseError as e:
             logging.error(f"Error reading DB to filter assets: {e}.")
+        # Disposed assets are never extracted. This set is applied even under
+        # FORCE_REPROCESS, which only bypasses the ai_status "already processed"
+        # check below.
+        disposed = self._load_disposed_qrs()
+        if disposed:
+            logging.info("Ignoring %d disposed asset(s).", len(disposed))
+            to_ignore |= disposed
         return to_ignore
 
     def _load_ai_processed_qrs(self) -> Set[str]:
@@ -951,6 +986,10 @@ class AssetProcessor:
 
         stale_processed: List[str] = []
         me_qrs_with_images = self._qrs_with_me_images()
+        # Disposal sets ai_status=1 without writing JSON, which looks exactly
+        # like a stale row. Without this, every run would reset disposed assets
+        # back to 0 and re-extract them.
+        disposed_qrs = self._load_disposed_qrs()
         if not os.path.exists(Config.DB_PATH):
             return processed
         try:
@@ -970,6 +1009,10 @@ class AssetProcessor:
                             if qr_val:
                                 # Safety rule: only treat ai_status=1 as processed when ME JSON exists on disk.
                                 if self._find_existing_json_for_qr(qr_val, "ME"):
+                                    processed.add(qr_val)
+                                elif qr_val in disposed_qrs:
+                                    # Disposed: leave ai_status alone so the
+                                    # asset stays out of the pending queue.
                                     processed.add(qr_val)
                                 elif qr_val in me_qrs_with_images:
                                     # Reset only rows that correspond to ME assets in current image set.

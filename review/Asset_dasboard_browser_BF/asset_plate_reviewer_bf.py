@@ -307,6 +307,10 @@ QR_LOCATION_COL = "Location"
 # SDI package tables
 SDI_PRINT_OUT_TABLE = "sdi_print_out"
 SDI_ARCHIVE_TABLE = "sdi_print_out_arch"
+# Assets withdrawn from the pipeline by the Dashboard's Disposed tool. Listings
+# are built from the JSON files on disk, so a disposed QR only disappears from
+# this app if its membership here is subtracted explicitly.
+DISPOSED_TABLE = "disposed_assets"
 
 # Curated-write outcomes. Callers that gate follow-up state (the JSON sync marking
 # a file processed) must distinguish these three: only OK means a row exists now,
@@ -996,6 +1000,61 @@ def _qr_prefix_expr() -> str:
 
 def _connectable():
     return qrdb.is_postgres() or os.path.exists(DB_PATH)
+
+
+def _load_disposed_qr_set() -> set:
+    """QR codes currently disposed via the Dashboard's Disposed tool.
+
+    Guarded by has_table so this app keeps working on a database where the
+    disposed_assets migration has not been applied yet.
+    """
+    disposed = set()
+    if not _connectable():
+        return disposed
+    try:
+        with qrdb.get_connection(sqlite_path=DB_PATH) as conn:
+            if not qrdb.has_table(conn, DISPOSED_TABLE):
+                return disposed
+            cur = conn.cursor()
+            cur.execute(
+                f'SELECT "qr_code" FROM "{DISPOSED_TABLE}" WHERE "status" = \'disposed\''
+            )
+            for row in cur.fetchall():
+                value = row["qr_code"] if hasattr(row, "keys") else row[0]
+                if value:
+                    disposed.add(str(value).strip())
+    except Exception as exc:
+        # Never fail a listing because the disposal archive is unreachable;
+        # showing an extra asset is safer than showing none.
+        print(f"[disposed] could not load disposed QR set: {exc}")
+    return disposed
+
+
+def _qr_is_disposed(qr_code: str) -> bool:
+    """True when this QR has an open disposal, so writes must be refused."""
+    qr = str(qr_code or "").strip()
+    if not qr or not _connectable():
+        return False
+    try:
+        with qrdb.get_connection(sqlite_path=DB_PATH) as conn:
+            if not qrdb.has_table(conn, DISPOSED_TABLE):
+                return False
+            cur = conn.cursor()
+            cur.execute(
+                f'SELECT 1 FROM "{DISPOSED_TABLE}" WHERE TRIM("qr_code") = TRIM(?)'
+                f' AND "status" = \'disposed\' LIMIT 1',
+                (qr,),
+            )
+            return cur.fetchone() is not None
+    except Exception as exc:
+        print(f"[disposed] could not check disposal for {qr}: {exc}")
+        return False
+
+
+DISPOSED_WRITE_MESSAGE = (
+    "This asset has been disposed and can no longer be changed. "
+    "An administrator can restore it from the Dashboard's Disposed tool."
+)
 
 
 def _fetch_column_values(table: str, col: str):
@@ -2055,6 +2114,13 @@ def get_filtered_data_and_counts(query_args, process_target: str = "0", apply_cl
     # 1. Load all data (scoped to process target)
     all_data = load_json_items(process_target)
 
+    # Disposed assets leave the pipeline entirely. Unlike the archive filter
+    # below there is no query-string escape hatch: a disposed asset must not
+    # appear on any tab or in any KPI count until it is restored.
+    disposed_qrs = _load_disposed_qr_set()
+    if disposed_qrs:
+        all_data = [item for item in all_data if item.get("qr_code") not in disposed_qrs]
+
     # 2. Apply Archive Filter FIRST (BASE for counts)
     if hide_archived:
         archived_qrs = get_archived_qrs()
@@ -2927,6 +2993,10 @@ def toggle_approved(doc_id):
         return _package_lock_check_failed_response(exc)
     if package_lock.get("locked"):
         return _package_lock_response(package_lock)
+    # Approving re-creates the curated SDI row, so a tab opened before the
+    # asset was disposed could otherwise resurrect it.
+    if _qr_is_disposed(qr):
+        return jsonify({"success": False, "error": DISPOSED_WRITE_MESSAGE, "disposed": True}), 409
 
     try:
         with open(json_path, "r", encoding="utf-8") as f:

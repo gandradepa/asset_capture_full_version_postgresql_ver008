@@ -98,6 +98,8 @@ class Config:
     # --- Database ---
     DB_TABLE = "sdi_dataset"
     AI_STATUS_TABLE = "QR_codes"
+    # Assets withdrawn by the Dashboard's Disposed tool are never extracted.
+    DISPOSED_TABLE = "disposed_assets"
     
     # --- File Matching ---
     # RESTRICTION: Only 0 and 1 sequences for BF
@@ -398,6 +400,32 @@ class AssetProcessor:
         )
         logging.info(f"BF Processor initialized. Filtered QRs: {len(self.qrs_to_ignore)} (DB), {len(self.ai_processed_qrs)} (AI Status).")
 
+    def _load_disposed_qrs(self) -> Set[str]:
+        """QR codes withdrawn from the pipeline by the Dashboard's Disposed tool.
+
+        Guarded by has_table so extraction still runs on a database where the
+        disposed_assets migration has not been applied yet.
+        """
+        disposed: Set[str] = set()
+        if not (qrdb.is_postgres() or os.path.exists(self.db_path)):
+            return disposed
+        try:
+            with closing(qrdb.get_connection(sqlite_path=self.db_path)) as conn:
+                if not qrdb.has_table(conn, Config.DISPOSED_TABLE):
+                    return disposed
+                with closing(conn.cursor()) as cur:
+                    cur.execute(
+                        f'SELECT "qr_code" FROM "{Config.DISPOSED_TABLE}"'
+                        f' WHERE "status" = \'disposed\''
+                    )
+                    for row in cur.fetchall():
+                        value = row["qr_code"] if hasattr(row, "keys") else row[0]
+                        if value and (qrid := str(value).strip()):
+                            disposed.add(qrid)
+        except Exception as e:
+            logging.error(f"DB Error loading disposed assets: {e}")
+        return disposed
+
     def _load_qrs_to_ignore(self) -> Set[str]:
         """Loads SKIPPED QRs (Approved=1)."""
         to_ignore = set()
@@ -418,6 +446,13 @@ class AssetProcessor:
                         pass
         except Exception as e:
             logging.error(f"DB Error loading ignore list: {e}")
+        # Disposed assets are never extracted. This set is applied even under
+        # FORCE_REPROCESS, which only bypasses the ai_status "already processed"
+        # check below.
+        disposed = self._load_disposed_qrs()
+        if disposed:
+            logging.info("Ignoring %d disposed asset(s).", len(disposed))
+            to_ignore |= disposed
         return to_ignore
 
     def _load_ai_processed_qrs(self) -> Set[str]:
@@ -425,6 +460,10 @@ class AssetProcessor:
         processed = set()
         stale_processed: List[str] = []
         bf_qrs_with_images = self._qrs_with_bf_images()
+        # Disposal sets ai_status=1 without writing JSON, which looks exactly
+        # like a stale row. Without this, every run would reset disposed assets
+        # back to 0 and re-extract them.
+        disposed_qrs = self._load_disposed_qrs()
         if not os.path.exists(self.db_path):
             return processed
         try:
@@ -446,6 +485,10 @@ class AssetProcessor:
                                 continue
                             # Safety rule: only treat ai_status=1 as processed when BF JSON exists on disk.
                             if self._find_existing_json_for_qr(qrid, "BF"):
+                                processed.add(qrid)
+                            elif qrid in disposed_qrs:
+                                # Disposed: leave ai_status alone so the asset
+                                # stays out of the pending queue.
                                 processed.add(qrid)
                             elif qrid in bf_qrs_with_images:
                                 # Reset only rows that correspond to BF assets in current image set.
