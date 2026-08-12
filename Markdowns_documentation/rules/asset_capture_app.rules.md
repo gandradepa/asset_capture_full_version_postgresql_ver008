@@ -1,6 +1,6 @@
 # Capture App Rules
 
-Current documentation refresh: 2026-05-25.
+Current documentation refresh: 2026-08-11.
 
 ## Purpose
 
@@ -19,6 +19,13 @@ The capture app owns QR intake, image upload, initial metadata capture, and para
 - Permanent QR codes and temporary QR codes are both used in the platform.
 - Temporary codes are retrieved through `/api/get-temp-code`.
 - Temporary QR replacement is allowed later in the review stage, but capture must still store files and DB rows under the temporary code consistently.
+
+## Disposed QR Rules (2026-08-11)
+
+- A QR withdrawn by the Dashboard's **Disposed** tool cannot be captured again. `qr_is_disposed(conn, qr)` (`_has_table`-guarded, so it is inert before the `disposed_assets` migration) is the single check.
+- `GET /api/check-qr` returns `"disposed": true` plus a `disposed_message` for such a QR. `"exists"` keeps its existing meaning — a disposed QR still exists — so the flag is additive and the capture form can warn before the operator photographs an asset the save will reject.
+- `/submit` refuses a disposed QR with a flash and a redirect to start, placed **after** `_capture_validation_errors` but **before** any file is written or the overwrite cleanup runs, so a rejected submit leaves no photos and no DB rows behind. A failure of the check itself is logged and ignored: it must never block ordinary captures.
+- Restoring the asset from the Dashboard re-enables capture; there is no capture-side override.
 
 ## File Rules
 

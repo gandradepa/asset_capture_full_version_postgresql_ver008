@@ -123,6 +123,7 @@ For DELETE: snapshot before delete, emit one row per non-null field with
 | Reviewer EL Reconcile (Supply From divergence resolved) | one `human` row per changed side; `description="reconcile:<choice>"` |
 | BF `toggle_ai_status` (operator metadata flag) | `system` |
 | API extraction pipeline writes | `ai:gpt-5.5` (modified_by `ai-pipeline`) |
+| Dashboard Disposed tool (dispose / restore) | `human` (app_name `dashboard_disposed`) |
 | Image-sync placeholder upserts (no payload yet) | `system` |
 | JSON-sync upserts after AI extraction | `ai:gpt-5.5` |
 

@@ -78,6 +78,7 @@
         #qr-pending-view,
         #operational-cost-view,
         #fls-assets-view,
+        #disposed-view,
         #user-activity-view,
         #user-admin-view,
         #review-el-view,
@@ -1632,6 +1633,19 @@
                                 </div>
 
                                 <div class="monitoring-item">
+                                    <a id="show-disposed-btn" role="button" title="Disposed Assets"
+                                        class="text-decoration-none cursor-pointer">
+                                        <div class="monitoring-card">
+                                            <div class="d-flex flex-column align-items-center">
+                                                <i data-lucide="archive-x"
+                                                    style="color: var(--primary-accent); width: 36px; height: 36px;"></i>
+                                            </div>
+                                        </div>
+                                        <div class="text-center mt-2 small fw-bold text-dark">Disposed</div>
+                                    </a>
+                                </div>
+
+                                <div class="monitoring-item">
                                     <a id="show-user-activity-btn" role="button" title="User Activity"
                                         class="text-decoration-none cursor-pointer">
                                         <div class="monitoring-card">
@@ -2704,6 +2718,308 @@
         </script>
 
 
+
+<style>
+    /* Disposed Assets tool. The eligibility checklist is the centrepiece: it
+       shows the server's disposal gate check by check, so an operator can see
+       why an asset can or cannot be withdrawn before committing. */
+    .disp-check-list { list-style: none; margin: 0; padding: 0; }
+    .disp-check {
+        display: flex; gap: .6rem; align-items: flex-start;
+        padding: .55rem .25rem; border-bottom: 1px dashed var(--border-subtle);
+    }
+    .disp-check:last-child { border-bottom: 0; }
+    .disp-check__icon {
+        flex: 0 0 22px; height: 22px; width: 22px; border-radius: 50%;
+        display: inline-flex; align-items: center; justify-content: center; margin-top: 1px;
+    }
+    .disp-check--ok .disp-check__icon { background: var(--success-bg); color: var(--success-text); }
+    .disp-check--bad .disp-check__icon { background: var(--danger-bg); color: var(--danger-text); }
+    .disp-check--idle .disp-check__icon { background: var(--secondary-bg); color: var(--text-muted); }
+    .disp-check__label { font-weight: 600; font-size: .9rem; color: var(--text-main); }
+    .disp-check--idle .disp-check__label { color: var(--text-muted); font-weight: 500; }
+    .disp-check__detail { font-size: .82rem; color: var(--text-muted); margin-top: .1rem; }
+    .disp-check--bad .disp-check__detail { color: var(--danger-text); }
+
+    .disp-photo-strip { display: flex; flex-wrap: wrap; gap: .5rem; }
+    .disp-photo {
+        width: 84px; height: 84px; border-radius: 8px; object-fit: cover;
+        border: 1px solid var(--border-subtle); cursor: zoom-in; background: var(--secondary-bg);
+    }
+    .disp-photo-missing {
+        width: 84px; height: 84px; border-radius: 8px; border: 1px dashed var(--border-subtle);
+        display: flex; align-items: center; justify-content: center; text-align: center;
+        font-size: .68rem; color: var(--text-muted); padding: .25rem;
+    }
+    .disp-field-grid {
+        display: grid; grid-template-columns: minmax(120px, auto) 1fr;
+        gap: .35rem .9rem; font-size: .875rem;
+    }
+    .disp-field-grid dt { color: var(--text-muted); font-weight: 500; }
+    .disp-field-grid dd { margin: 0; color: var(--text-main); word-break: break-word; }
+    .disp-empty { padding: 2.5rem 1rem; text-align: center; color: var(--text-muted); }
+    .disp-danger-zone {
+        border: 1px solid #fecaca; background: var(--danger-bg);
+        border-radius: var(--card-radius); padding: 1rem 1.25rem;
+    }
+    #disposed-preview-image { max-width: 100%; max-height: 78vh; object-fit: contain; }
+</style>
+
+<div id="disposed-view">
+    <div class="d-flex justify-content-between align-items-center mb-4 border-bottom pb-3">
+        <h1 class="h2 page-title m-0">Disposed Assets</h1>
+        <button id="back-to-main-btn-disposed" class="btn ubc-btn-secondary"><i data-lucide="arrow-left"
+                class="me-2 w-4 h-4"></i> Dashboard</button>
+    </div>
+
+    <div id="disposed-alerts" class="mb-3" aria-live="polite"></div>
+
+    <ul class="nav nav-tabs mb-4" id="disposed-tabs" role="tablist">
+        <li class="nav-item" role="presentation">
+            <button class="nav-link active" id="disposed-dispose-tab" data-bs-toggle="tab"
+                    data-bs-target="#disposed-dispose-pane" type="button" role="tab"
+                    aria-controls="disposed-dispose-pane" aria-selected="true">Dispose Asset</button>
+        </li>
+        <li class="nav-item" role="presentation">
+            <button class="nav-link" id="disposed-register-tab" data-bs-toggle="tab"
+                    data-bs-target="#disposed-register-pane" type="button" role="tab"
+                    aria-controls="disposed-register-pane" aria-selected="false">Disposed Register</button>
+        </li>
+    </ul>
+
+    <div class="tab-content">
+        <!-- ---------------------------- Dispose Asset ---------------------------- -->
+        <div class="tab-pane fade show active" id="disposed-dispose-pane" role="tabpanel"
+             aria-labelledby="disposed-dispose-tab" tabindex="0">
+            <div class="card tile mb-4">
+                <div class="card-body">
+                    <form id="disposed-search-form" class="row g-2 align-items-end" autocomplete="off">
+                        <div class="col-12 col-md-auto">
+                            <label for="disposed-qr-input" class="form-label small fw-semibold mb-1">QR code</label>
+                            <div class="input-group" style="width: 260px;">
+                                <span class="input-group-text bg-light" aria-hidden="true">
+                                    <i data-lucide="qr-code" width="16" height="16"></i>
+                                </span>
+                                <input type="text" id="disposed-qr-input" class="form-control"
+                                       placeholder="0000000000" maxlength="30" spellcheck="false">
+                            </div>
+                        </div>
+                        <div class="col-12 col-md-auto">
+                            <button type="submit" class="btn ubc-btn-primary" id="disposed-search-btn">
+                                <i data-lucide="search" width="16" height="16" class="me-1"></i> Search
+                            </button>
+                        </div>
+                        <div class="col-12 col-md-auto">
+                            <button type="button" class="btn ubc-btn-secondary" id="disposed-clear-btn">Clear</button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+
+            <div id="disposed-search-empty" class="card tile">
+                <div class="disp-empty">
+                    <i data-lucide="search" width="28" height="28" class="mb-2"></i>
+                    <div class="fw-semibold">Search a QR code to begin</div>
+                    <div class="small">Only assets that have not been approved can be disposed.</div>
+                </div>
+            </div>
+
+            <div id="disposed-result" style="display: none;">
+                <div class="row g-4">
+                    <div class="col-12 col-xl-7">
+                        <div class="card tile h-100">
+                            <div class="card-header bg-white border-bottom py-3 d-flex justify-content-between align-items-center">
+                                <h2 class="h6 m-0">Asset</h2>
+                                <span id="disposed-asset-badges"></span>
+                            </div>
+                            <div class="card-body">
+                                <div class="disp-photo-strip mb-3" id="disposed-asset-photos"></div>
+                                <dl class="disp-field-grid mb-0" id="disposed-asset-fields"></dl>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-12 col-xl-5">
+                        <div class="card tile h-100">
+                            <div class="card-header bg-white border-bottom py-3">
+                                <h2 class="h6 m-0">Eligibility</h2>
+                            </div>
+                            <div class="card-body">
+                                <ul class="disp-check-list" id="disposed-eligibility"></ul>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="disp-danger-zone mt-4">
+                    <div class="row g-3 align-items-end">
+                        <div class="col-12 col-md-4">
+                            <label for="disposed-reason" class="form-label small fw-semibold mb-1">
+                                Reason <span class="text-danger">*</span>
+                            </label>
+                            <select id="disposed-reason" class="form-select">
+                                <option value="">Select a reason…</option>
+                            </select>
+                        </div>
+                        <div class="col-12 col-md-5">
+                            <label for="disposed-notes" class="form-label small fw-semibold mb-1">Notes</label>
+                            <input type="text" id="disposed-notes" class="form-control" maxlength="500"
+                                   placeholder="Optional context for the record">
+                        </div>
+                        <div class="col-12 col-md-3 d-grid">
+                            <button type="button" class="btn btn-danger" id="disposed-dispose-btn" disabled>
+                                <i data-lucide="archive-x" width="16" height="16" class="me-1"></i> Dispose asset
+                            </button>
+                        </div>
+                    </div>
+                    <div class="small text-muted mt-2" id="disposed-gate-hint"></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- --------------------------- Disposed Register -------------------------- -->
+        <div class="tab-pane fade" id="disposed-register-pane" role="tabpanel"
+             aria-labelledby="disposed-register-tab" tabindex="0">
+            <div class="card tile mb-4">
+                <div class="card-body">
+                    <div class="row g-3 align-items-end">
+                        <div class="col-12 col-md-3">
+                            <label for="disposed-filter-q" class="form-label small fw-semibold mb-1">Search</label>
+                            <input type="text" id="disposed-filter-q" class="form-control"
+                                   placeholder="QR, building, notes, user">
+                        </div>
+                        <div class="col-6 col-md-2">
+                            <label for="disposed-filter-reason" class="form-label small fw-semibold mb-1">Reason</label>
+                            <select id="disposed-filter-reason" class="form-select">
+                                <option value="">All reasons</option>
+                            </select>
+                        </div>
+                        <div class="col-6 col-md-2">
+                            <label for="disposed-filter-type" class="form-label small fw-semibold mb-1">Discipline</label>
+                            <select id="disposed-filter-type" class="form-select">
+                                <option value="">All</option>
+                                <option value="ME">Mechanical</option>
+                                <option value="BF">Backflow</option>
+                                <option value="EL">Electrical</option>
+                            </select>
+                        </div>
+                        <div class="col-6 col-md-2">
+                            <label for="disposed-filter-status" class="form-label small fw-semibold mb-1">Status</label>
+                            <select id="disposed-filter-status" class="form-select">
+                                <option value="disposed">Disposed</option>
+                                <option value="">All</option>
+                                <option value="restored">Restored</option>
+                            </select>
+                        </div>
+                        <div class="col-6 col-md-3">
+                            <label class="form-label small fw-semibold mb-1">Disposed between</label>
+                            <div class="input-group">
+                                <input type="date" id="disposed-filter-from" class="form-control">
+                                <input type="date" id="disposed-filter-to" class="form-control">
+                            </div>
+                        </div>
+                    </div>
+                    <div class="d-flex justify-content-between align-items-center mt-3">
+                        <span class="small text-muted" id="disposed-register-count"></span>
+                        <button type="button" class="btn ubc-btn-secondary btn-sm" id="disposed-reset-filters">
+                            <i data-lucide="rotate-ccw" width="14" height="14" class="me-1"></i> Reset filters
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <div class="table-container">
+                <table class="table table-hover mb-0" id="disposed-table">
+                    <thead>
+                        <tr>
+                            <th>Disposed</th>
+                            <th>QR Code</th>
+                            <th>Building</th>
+                            <th>Discipline</th>
+                            <th>Reason</th>
+                            <th>By</th>
+                            <th>Status</th>
+                            <th class="text-end">Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody id="disposed-table-body"></tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Confirm disposal: a single OK press posts the disposal. The summary names
+     the QR being disposed so the reader confirms against it. -->
+<div class="modal fade" id="disposed-confirm-modal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content">
+            <div class="modal-header bg-danger text-white">
+                <h5 class="modal-title">Dispose asset</h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <p class="fw-semibold mb-3">Dispose asset <span id="disposed-confirm-qr"></span>?</p>
+                <dl class="disp-field-grid mb-3" id="disposed-confirm-summary"></dl>
+                <p class="mb-0">This removes the asset from the review dashboards and the SDI dataset.
+                    Its photos and files are kept, and an administrator can restore it later.</p>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn ubc-btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" class="btn btn-danger" id="disposed-confirm-btn">OK</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Confirm restore -->
+<div class="modal fade" id="disposed-restore-modal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Restore asset</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <p class="mb-0" id="disposed-restore-message"></p>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn ubc-btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" class="btn ubc-btn-primary" id="disposed-restore-btn">Restore asset</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Disposal record -->
+<div class="modal fade" id="disposed-detail-modal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-xl modal-dialog-centered modal-dialog-scrollable">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="disposed-detail-title">Disposal record</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body" id="disposed-detail-body"></div>
+            <div class="modal-footer">
+                <button type="button" class="btn ubc-btn-secondary" data-bs-dismiss="modal">Close</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Photo preview -->
+<div class="modal fade" id="disposed-preview-modal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-lg modal-dialog-centered">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="disposed-preview-title">Photo</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body text-center">
+                <img id="disposed-preview-image" alt="">
+            </div>
+        </div>
+    </div>
+</div>
 
 <div id="user-activity-view">
     <div class="d-flex justify-content-between align-items-center mb-4 border-bottom pb-3">
@@ -4228,7 +4544,7 @@
     {% endif %}
 
     // View Toggling logic
-    const views = ['main-view', 'analytics-view', 'qr-pending-view', 'operational-cost-view', 'fls-assets-view', 'user-activity-view', {% if is_dashboard_admin %}'user-admin-view', {% endif %}'review-el-view', 'review-me-view', 'review-bf-view', 'sdi-view'];
+    const views = ['main-view', 'analytics-view', 'qr-pending-view', 'operational-cost-view', 'fls-assets-view', 'disposed-view', 'user-activity-view', {% if is_dashboard_admin %}'user-admin-view', {% endif %}'review-el-view', 'review-me-view', 'review-bf-view', 'sdi-view'];
 
     // Predefined zoom levels per view (1 = 100%, 0.9 = 90%, etc.)
     const viewZoom = {
@@ -4237,6 +4553,7 @@
         'qr-pending-view': 1,
         'operational-cost-view': 1,
         'fls-assets-view': 1,
+        'disposed-view': 1,
         'user-activity-view': 1,
         {% if is_dashboard_admin %}'user-admin-view': 1,{% endif %}
         'review-el-view': 1,
@@ -4262,6 +4579,7 @@
         // Load view data when switching to data-backed views
         if (target === 'user-activity-view') loadUserActivityData();
         if (target === 'user-admin-view' && typeof loadAdminUsers === 'function') loadAdminUsers(false);
+        if (target === 'disposed-view' && typeof loadDisposedRegister === 'function') loadDisposedRegister();
 
         // Apply predefined zoom level
         document.body.style.zoom = viewZoom[target] || 1;
@@ -4337,7 +4655,7 @@
         });
     });
 
-    ['show-analytics-btn', 'show-qr-pending-btn', 'show-operational-cost-btn', 'show-fls-assets-btn', 'show-user-activity-btn', 'show-user-admin-btn'].forEach(id => {
+    ['show-analytics-btn', 'show-qr-pending-btn', 'show-operational-cost-btn', 'show-fls-assets-btn', 'show-disposed-btn', 'show-user-activity-btn', 'show-user-admin-btn'].forEach(id => {
         const btn = document.getElementById(id);
         if (btn) btn.addEventListener('click', (e) => {
             e.preventDefault();
@@ -4346,10 +4664,450 @@
         });
     });
 
-    ['back-to-main-btn', 'back-to-main-btn-qr', 'back-to-main-btn-op', 'back-to-main-btn-fls', 'back-to-main-btn-ua', 'back-to-main-btn-admin'].forEach(id => {
+    ['back-to-main-btn', 'back-to-main-btn-qr', 'back-to-main-btn-op', 'back-to-main-btn-fls', 'back-to-main-btn-disposed', 'back-to-main-btn-ua', 'back-to-main-btn-admin'].forEach(id => {
         const btn = document.getElementById(id);
         if (btn) btn.addEventListener('click', () => { window.location.hash = ''; });
     });
+
+    // ---------------------------------------------------------------- Disposed Assets
+    // Disposal withdraws a QR from the capture/review/SDI pipeline. The server
+    // owns the gate; this view renders its checks verbatim so an operator can
+    // see why an asset can or cannot be disposed before committing.
+    (function initDisposedAssets() {
+        const view = document.getElementById('disposed-view');
+        if (!view) return;
+
+        const DISCIPLINE_LABELS = { ME: 'Mechanical', BF: 'Backflow', EL: 'Electrical' };
+        const qrInput = document.getElementById('disposed-qr-input');
+        const resultBox = document.getElementById('disposed-result');
+        const emptyBox = document.getElementById('disposed-search-empty');
+        const reasonSelect = document.getElementById('disposed-reason');
+        const notesInput = document.getElementById('disposed-notes');
+        const disposeBtn = document.getElementById('disposed-dispose-btn');
+        const gateHint = document.getElementById('disposed-gate-hint');
+        const tableBody = document.getElementById('disposed-table-body');
+        const registerCount = document.getElementById('disposed-register-count');
+        const confirmBtn = document.getElementById('disposed-confirm-btn');
+        const restoreBtn = document.getElementById('disposed-restore-btn');
+
+        let currentAsset = null;      // the asset shown in the Dispose tab
+        let currentEligible = false;
+        let pendingRestoreId = null;
+        let canDispose = false;
+        let reasonsLoaded = false;
+
+        const confirmModal = new bootstrap.Modal(document.getElementById('disposed-confirm-modal'));
+        const restoreModal = new bootstrap.Modal(document.getElementById('disposed-restore-modal'));
+        const detailModal = new bootstrap.Modal(document.getElementById('disposed-detail-modal'));
+        const previewModal = new bootstrap.Modal(document.getElementById('disposed-preview-modal'));
+
+        function esc(value) {
+            return String(value ?? '').replace(/[&<>"']/g, (ch) => ({
+                '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+            })[ch]);
+        }
+
+        // Local rather than the shared fetchAdminJson: that helper is rendered
+        // only for DASHBOARD_ADMIN_USERS, while this tool is gated by the
+        // operations/disposed_assets grant, so reusing it would break the page
+        // for exactly the users who are meant to have it.
+        async function apiJson(url, options) {
+            const opts = Object.assign({
+                headers: { 'Accept': 'application/json', 'Content-Type': 'application/json' }
+            }, options || {});
+            const resp = await fetch(url, opts);
+            const data = await resp.json().catch(() => ({}));
+            if (!resp.ok) {
+                if (resp.status === 403 && typeof window.showAccessDenied === 'function') {
+                    window.showAccessDenied();
+                    throw new Error('access_denied');
+                }
+                const err = new Error(data.error || data.message || `Request failed (${resp.status})`);
+                err.payload = data;
+                throw err;
+            }
+            return data;
+        }
+
+        function notify(message, variant) {
+            const box = document.getElementById('disposed-alerts');
+            if (!box) return;
+            const kind = variant || 'success';
+            box.innerHTML = `
+                <div class="alert alert-${kind} alert-dismissible fade show shadow-sm border-0 rounded-3" role="alert">
+                    <div class="d-flex align-items-center">
+                        <i data-lucide="${kind === 'success' ? 'check-circle' : 'alert-triangle'}" class="me-2"></i>
+                        <div>${esc(message)}</div>
+                    </div>
+                    <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+                </div>`;
+            if (window.lucide) lucide.createIcons();
+        }
+
+        function disciplineLabel(code) {
+            return DISCIPLINE_LABELS[code] || code || '—';
+        }
+
+        function renderChecks(checks) {
+            const list = document.getElementById('disposed-eligibility');
+            list.innerHTML = (checks || []).map(check => {
+                const state = check.passed ? 'ok' : (check.detail ? 'bad' : 'idle');
+                const icon = check.passed ? 'check' : (check.detail ? 'x' : 'minus');
+                return `
+                    <li class="disp-check disp-check--${state}">
+                        <span class="disp-check__icon"><i data-lucide="${icon}" width="14" height="14"></i></span>
+                        <span>
+                            <span class="disp-check__label">${esc(check.label)}</span>
+                            ${check.detail ? `<div class="disp-check__detail">${esc(check.detail)}</div>` : ''}
+                        </span>
+                    </li>`;
+            }).join('');
+            if (window.lucide) lucide.createIcons();
+        }
+
+        function renderPhotos(container, photos, emptyText) {
+            if (!photos || !photos.length) {
+                container.innerHTML = `<div class="text-muted small">${esc(emptyText)}</div>`;
+                return;
+            }
+            container.innerHTML = photos.map(photo => photo.available
+                ? `<img class="disp-photo" src="${esc(photo.url)}" alt="${esc(photo.filename)}"
+                        data-preview="${esc(photo.url)}" data-name="${esc(photo.filename)}" loading="lazy">`
+                : `<div class="disp-photo-missing" title="${esc(photo.filename)}">Photo no longer on disk</div>`
+            ).join('');
+        }
+
+        function fieldRows(pairs) {
+            return pairs
+                .filter(([, value]) => String(value ?? '').trim() !== '')
+                .map(([label, value]) => `<dt>${esc(label)}</dt><dd>${esc(value)}</dd>`)
+                .join('');
+        }
+
+        function renderAsset(asset) {
+            const data = asset.structured_data || {};
+            document.getElementById('disposed-asset-badges').innerHTML = `
+                <span class="badge bg-light text-dark border me-1">${esc(disciplineLabel(asset.asset_type))}</span>
+                <span class="badge bg-light text-dark border">${esc(asset.qr_code)}</span>`;
+            document.getElementById('disposed-asset-fields').innerHTML = fieldRows([
+                ['Building', asset.building_code],
+                ['Location', asset.location],
+                ['Asset Group', data['Asset Group']],
+                ['Description', data['Description']],
+                ['Manufacturer', data['Manufacturer']],
+                ['Model', data['Model']],
+                ['Serial', data['Serial Number'] || data['Serial']],
+                ['Year', data['Year']],
+                ['UBC Tag', data['UBC Tag'] || data['UBC Asset Tag']],
+                ['In SDI dataset', asset.has_sdi_row ? 'Yes' : 'No'],
+            ]) || '<dt>Details</dt><dd class="text-muted">No extraction data on file.</dd>';
+            renderPhotos(document.getElementById('disposed-asset-photos'), asset.photos,
+                         'No photos found for this QR.');
+        }
+
+        function setDisposeEnabled() {
+            const ready = currentEligible && canDispose && !!reasonSelect.value;
+            disposeBtn.disabled = !ready;
+            if (!currentEligible) {
+                gateHint.textContent = 'This asset does not meet the disposal conditions above.';
+            } else if (!canDispose) {
+                gateHint.textContent = 'You do not have permission to dispose assets. '
+                    + 'Ask a Dashboard administrator for Operations → Disposed Assets access.';
+            } else if (!reasonSelect.value) {
+                gateHint.textContent = 'Select a reason to continue.';
+            } else {
+                gateHint.textContent = '';
+            }
+        }
+
+        async function loadReasons() {
+            if (reasonsLoaded) return;
+            try {
+                const data = await apiJson('/api/disposed-assets?limit=1');
+                canDispose = !!data.can_dispose;
+                const options = (data.reasons || []).map(r => `<option value="${esc(r)}">${esc(r)}</option>`).join('');
+                reasonSelect.insertAdjacentHTML('beforeend', options);
+                document.getElementById('disposed-filter-reason').insertAdjacentHTML('beforeend', options);
+                reasonsLoaded = true;
+            } catch (err) {
+                if (err.message !== 'access_denied') notify(err.message, 'danger');
+            }
+        }
+
+        async function searchQr() {
+            const qr = qrInput.value.trim();
+            if (!qr) return;
+            try {
+                const data = await apiJson(`/api/disposed-assets/lookup/${encodeURIComponent(qr)}`);
+                currentEligible = !!data.eligible;
+                currentAsset = data.asset;
+                renderChecks(data.checks);
+                if (data.found) {
+                    renderAsset(data.asset);
+                    resultBox.style.display = 'block';
+                    emptyBox.style.display = 'none';
+                } else {
+                    resultBox.style.display = 'none';
+                    emptyBox.style.display = 'block';
+                    emptyBox.querySelector('.fw-semibold').textContent = `No asset found for QR ${qr}`;
+                    emptyBox.querySelector('.small').textContent = 'Check the code and try again.';
+                }
+                setDisposeEnabled();
+            } catch (err) {
+                if (err.message !== 'access_denied') notify(err.message, 'danger');
+            }
+        }
+
+        function openConfirm() {
+            if (!currentAsset) return;
+            document.getElementById('disposed-confirm-qr').textContent = currentAsset.qr_code;
+            document.getElementById('disposed-confirm-summary').innerHTML = fieldRows([
+                ['QR code', currentAsset.qr_code],
+                ['Discipline', disciplineLabel(currentAsset.asset_type)],
+                ['Building', currentAsset.building_code],
+                ['Reason', reasonSelect.value],
+            ]);
+            confirmBtn.disabled = false;
+            confirmModal.show();
+        }
+
+        async function submitDisposal() {
+            confirmBtn.disabled = true;
+            try {
+                const data = await apiJson('/api/disposed-assets', {
+                    method: 'POST',
+                    body: JSON.stringify({
+                        qr_code: currentAsset.qr_code,
+                        reason: reasonSelect.value,
+                        notes: notesInput.value.trim(),
+                    }),
+                });
+                confirmModal.hide();
+                notify(data.message, 'success');
+                resetSearch();
+                await loadDisposedRegister();
+                bootstrap.Tab.getOrCreateInstance(document.getElementById('disposed-register-tab')).show();
+            } catch (err) {
+                confirmModal.hide();
+                if (err.message !== 'access_denied') notify(err.message, 'danger');
+                searchQr();
+            }
+        }
+
+        function resetSearch() {
+            currentAsset = null;
+            currentEligible = false;
+            qrInput.value = '';
+            notesInput.value = '';
+            reasonSelect.value = '';
+            resultBox.style.display = 'none';
+            emptyBox.style.display = 'block';
+            emptyBox.querySelector('.fw-semibold').textContent = 'Search a QR code to begin';
+            emptyBox.querySelector('.small').textContent =
+                'Only assets that have not been approved can be disposed.';
+            setDisposeEnabled();
+        }
+
+        function registerFilters() {
+            const params = new URLSearchParams();
+            const q = document.getElementById('disposed-filter-q').value.trim();
+            const reason = document.getElementById('disposed-filter-reason').value;
+            const type = document.getElementById('disposed-filter-type').value;
+            const status = document.getElementById('disposed-filter-status').value;
+            const from = document.getElementById('disposed-filter-from').value;
+            const to = document.getElementById('disposed-filter-to').value;
+            if (q) params.set('q', q);
+            if (reason) params.set('reason', reason);
+            if (type) params.set('asset_type', type);
+            if (status) params.set('status', status);
+            if (from) params.set('date_from', from);
+            if (to) params.set('date_to', to);
+            return params.toString();
+        }
+
+        async function loadDisposedRegister() {
+            await loadReasons();
+            try {
+                const query = registerFilters();
+                const data = await apiJson(`/api/disposed-assets${query ? '?' + query : ''}`);
+                canDispose = !!data.can_dispose;
+                const rows = data.rows || [];
+                registerCount.textContent = rows.length
+                    ? `${rows.length} record${rows.length === 1 ? '' : 's'}`
+                    : '';
+                if (!rows.length) {
+                    tableBody.innerHTML = `
+                        <tr><td colspan="8">
+                            <div class="disp-empty">
+                                <div class="fw-semibold">No disposal records</div>
+                                <div class="small">Disposed assets appear here with their photos and full history.</div>
+                            </div>
+                        </td></tr>`;
+                    return;
+                }
+                tableBody.innerHTML = rows.map(row => {
+                    const restored = row.status === 'restored';
+                    const statusBadge = restored
+                        ? '<span class="badge bg-secondary rounded-pill">Restored</span>'
+                        : '<span class="badge bg-danger rounded-pill">Disposed</span>';
+                    const restoreAction = (!restored && canDispose)
+                        ? `<button class="btn btn-sm ubc-btn-secondary" data-restore="${esc(row.id)}"
+                                   data-qr="${esc(row.qr_code)}" data-type="${esc(row.asset_type)}">Restore</button>`
+                        : '';
+                    return `
+                        <tr${restored ? ' class="text-muted"' : ''}>
+                            <td class="text-nowrap">${esc(row.disposed_at)}</td>
+                            <td class="fw-semibold">${esc(row.qr_code)}</td>
+                            <td>${esc(row.building_code || '—')}</td>
+                            <td>${esc(disciplineLabel(row.asset_type))}</td>
+                            <td>${esc(row.reason)}</td>
+                            <td>${esc(row.disposed_by)}</td>
+                            <td>${statusBadge}</td>
+                            <td class="text-end text-nowrap">
+                                <button class="btn btn-sm ubc-btn-secondary me-1" data-detail="${esc(row.id)}">View</button>
+                                ${restoreAction}
+                            </td>
+                        </tr>`;
+                }).join('');
+            } catch (err) {
+                if (err.message !== 'access_denied') notify(err.message, 'danger');
+            }
+        }
+        window.loadDisposedRegister = loadDisposedRegister;
+
+        async function openDetail(disposalId) {
+            try {
+                const data = await apiJson(`/api/disposed-assets/${disposalId}`);
+                const d = data.disposal;
+                const sd = d.structured_data || {};
+                const sdi = d.sdi_row || {};
+                const qrRow = d.qr_codes_row || {};
+                document.getElementById('disposed-detail-title').textContent =
+                    `Disposal record — ${d.qr_code}`;
+
+                const sdiRows = Object.keys(sdi).length
+                    ? fieldRows(Object.entries(sdi).map(([k, v]) => [k, v]))
+                    : '<dt>Curated row</dt><dd class="text-muted">This asset was never approved, so it had no SDI row.</dd>';
+
+                document.getElementById('disposed-detail-body').innerHTML = `
+                    <div class="row g-4">
+                        <div class="col-12">
+                            <h6 class="text-uppercase small text-muted mb-2">Photos at disposal</h6>
+                            <div class="disp-photo-strip" id="disposed-detail-photos"></div>
+                        </div>
+                        <div class="col-12 col-lg-6">
+                            <h6 class="text-uppercase small text-muted mb-2">Disposal</h6>
+                            <dl class="disp-field-grid">${fieldRows([
+                                ['QR code', d.qr_code],
+                                ['Discipline', disciplineLabel(d.asset_type)],
+                                ['Building', d.building_code],
+                                ['Reason', d.reason],
+                                ['Notes', d.notes],
+                                ['Disposed by', d.disposed_by],
+                                ['Disposed at', d.disposed_at],
+                                ['Status', d.status === 'restored' ? 'Restored' : 'Disposed'],
+                                ['Restored by', d.restored_by],
+                                ['Restored at', d.restored_at],
+                                ['Curated table', d.sdi_table],
+                            ])}</dl>
+                        </div>
+                        <div class="col-12 col-lg-6">
+                            <h6 class="text-uppercase small text-muted mb-2">Extraction data</h6>
+                            <dl class="disp-field-grid">${
+                                Object.keys(sd).length
+                                    ? fieldRows(Object.entries(sd).map(([k, v]) => [k, v]))
+                                    : '<dt>Review file</dt><dd class="text-muted">No review JSON was on file.</dd>'
+                            }</dl>
+                        </div>
+                        <div class="col-12 col-lg-6">
+                            <h6 class="text-uppercase small text-muted mb-2">Curated row at disposal</h6>
+                            <dl class="disp-field-grid">${sdiRows}</dl>
+                        </div>
+                        <div class="col-12 col-lg-6">
+                            <h6 class="text-uppercase small text-muted mb-2">QR record at disposal</h6>
+                            <dl class="disp-field-grid">${fieldRows(Object.entries(qrRow).map(([k, v]) => [k, v]))}</dl>
+                        </div>
+                    </div>`;
+                renderPhotos(document.getElementById('disposed-detail-photos'), d.photos,
+                             'No photos were on file for this asset.');
+                detailModal.show();
+            } catch (err) {
+                if (err.message !== 'access_denied') notify(err.message, 'danger');
+            }
+        }
+
+        async function submitRestore() {
+            if (!pendingRestoreId) return;
+            restoreBtn.disabled = true;
+            try {
+                const data = await apiJson(`/api/disposed-assets/${pendingRestoreId}/restore`,
+                                                  { method: 'POST' });
+                restoreModal.hide();
+                notify(data.message, data.restore && data.restore.review_json_present ? 'success' : 'warning');
+                await loadDisposedRegister();
+            } catch (err) {
+                restoreModal.hide();
+                if (err.message !== 'access_denied') notify(err.message, 'danger');
+            } finally {
+                restoreBtn.disabled = false;
+                pendingRestoreId = null;
+            }
+        }
+
+        // --- events ---
+        document.getElementById('disposed-search-form').addEventListener('submit', (e) => {
+            e.preventDefault();
+            searchQr();
+        });
+        document.getElementById('disposed-clear-btn').addEventListener('click', resetSearch);
+        reasonSelect.addEventListener('change', setDisposeEnabled);
+        disposeBtn.addEventListener('click', openConfirm);
+
+        confirmBtn.addEventListener('click', submitDisposal);
+        restoreBtn.addEventListener('click', submitRestore);
+
+        ['disposed-filter-reason', 'disposed-filter-type', 'disposed-filter-status',
+         'disposed-filter-from', 'disposed-filter-to'].forEach(id => {
+            document.getElementById(id).addEventListener('change', loadDisposedRegister);
+        });
+        let searchTimer = null;
+        document.getElementById('disposed-filter-q').addEventListener('input', () => {
+            clearTimeout(searchTimer);
+            searchTimer = setTimeout(loadDisposedRegister, 300);
+        });
+        document.getElementById('disposed-reset-filters').addEventListener('click', () => {
+            document.getElementById('disposed-filter-q').value = '';
+            document.getElementById('disposed-filter-reason').value = '';
+            document.getElementById('disposed-filter-type').value = '';
+            document.getElementById('disposed-filter-status').value = 'disposed';
+            document.getElementById('disposed-filter-from').value = '';
+            document.getElementById('disposed-filter-to').value = '';
+            loadDisposedRegister();
+        });
+
+        tableBody.addEventListener('click', (e) => {
+            const detailBtn = e.target.closest('[data-detail]');
+            if (detailBtn) { openDetail(detailBtn.dataset.detail); return; }
+            const restoreTrigger = e.target.closest('[data-restore]');
+            if (restoreTrigger) {
+                pendingRestoreId = restoreTrigger.dataset.restore;
+                document.getElementById('disposed-restore-message').textContent =
+                    `Restore asset ${restoreTrigger.dataset.qr}? It will reappear in the ` +
+                    `${disciplineLabel(restoreTrigger.dataset.type)} review dashboard.`;
+                restoreModal.show();
+            }
+        });
+
+        // Delegated on document: photo thumbnails appear both in the view and
+        // inside the detail modal, which Bootstrap renders outside it.
+        document.addEventListener('click', (e) => {
+            const photo = e.target.closest('.disp-photo[data-preview]');
+            if (!photo) return;
+            document.getElementById('disposed-preview-image').src = photo.dataset.preview;
+            document.getElementById('disposed-preview-title').textContent = photo.dataset.name;
+            previewModal.show();
+        });
+    })();
 
     window.addEventListener('pageshow', handleViewSwitch);
     window.addEventListener('hashchange', handleViewSwitch);
@@ -6449,7 +7207,10 @@
                     }]
                 },
                 options: {
-                    responsive: true, maintainAspectRatio: false, cutout: '68%',
+                    /* cutout 61% => ring band 0.39R, ~22% thicker than the former
+                       68%/0.32R, while the 61% inner disc still clears the centre
+                       total + caption and the SVG fallback's 0.4 wedge width. */
+                    responsive: true, maintainAspectRatio: false, cutout: '61%',
                     animation: ANIM,
                     plugins: {
                         legend: {

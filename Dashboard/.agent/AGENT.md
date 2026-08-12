@@ -82,6 +82,7 @@ The main `dashboard.html` is a single-page application. Views are toggled via Ja
 | `qr-pending-view` | **QR Pending / AI Status** | Table of assets pending AI processing, building-grouped summary, status tracking |
 | `operational-cost-view` | **Operational Cost** | Daily operation combo chart, KPI cards (avg duration, AI cost efficiency), year/month/metric filters |
 | `fls-assets-view` | **FLS Assets** | Full CRUD table for `new_device` records, inline editing, bulk update, Planon checklist columns, add/edit/delete modals; Planon-coded rows remain editable but are locked from delete/bulk selection |
+| `disposed-view` | **Disposed Assets** | Two tabs: *Dispose Asset* (QR search, asset card, server-computed eligibility checklist, mandatory reason, OK/Cancel confirmation dialog) and *Disposed Register* (filterable history with detail modal, photo gallery and admin Restore) |
 | `user-activity-view` | **User Activity** | QR code scan activity by user, date range filtering, reviewer statistics |
 
 ---

@@ -1,39 +1,55 @@
-# --- Secrets & credentials (never commit) ---
+third_party/
+
+# ---------------------------------------------------------------------------
+# Local and operational state. None of this belongs in git.
+#
+# Added 2026-08-12 after two "Sync between Local and VM" commits swept an
+# entire VM home directory into history -- ~54,000 files including six
+# credential files, a live PostgreSQL data directory and seven blobs over
+# GitHub's 100 MB per-file limit, which made the branch unpushable. Those
+# commits were dropped; these rules stop it recurring.
+# ---------------------------------------------------------------------------
+
+# Secrets -- never commit. Real values live in /home/developer/*.env on the VM.
 .env
 *.env
-*.env.bak*
 .smbcredentials
-.ssh/
-auth_service/users.db
+*.pem
+*.key
+id_rsa*
 
-# --- Server home-directory artifacts (copied from /home/developer) ---
-.vscode-server/
-.cache/
-.local/
-.dotnet/
-.claude/
-.claude.json
-.bash_history
-.bash_logout
-.bashrc
-.profile
-.lesshst
-.psql_history
-.python_history
-.selected_editor
-.sudo_as_admin_successful
-.wget-hsts
-
-# --- Python ---
+# Python environments and bytecode (each module keeps its own venv, per CLAUDE.md)
 venv/
+.venv/
 __pycache__/
 *.pyc
+*.pyo
 
-# --- Logs ---
+# Databases and dumps. The operational DB is PostgreSQL on the VM; the frozen
+# SQLite QR_codes.db is a rollback reference, not a source artifact.
+*.db
+*.dump
+*.sqlite
+*.sqlite3
+QR_database/pgdata/
+QR_database/backups/
+QR_database/source_snapshot.db
+
+# Captured images and extraction payloads -- operational data stores
+Capture_photos_upload/
+Output_jason_api/
+SDI_process/sdi_json_output/
+
+# Logs
 logs/
 *.log
 
-# --- Backups & deploy artifacts ---
+# Backup and staging trees (the *.bak_YYYYMMDD_HHMMSS convention plus the
+# deploy snapshot directories -- all are copies of files already tracked)
+*.bak
+*.bak.*
+*.bak_*
+*.preflip_bak_*
 backups/
 backup_app/
 db_backups/
@@ -41,24 +57,21 @@ deploy_backups/
 .deploy_backups/
 deploy_staging/
 deploy_review_status_*/
-*.bak
-*.bak.*
-*.bak_*
-*.tar.gz
-backup_qr_code.sql
+_retired_nested_git_*/
 
-# --- Operational data stores (not source code) ---
-Capture_photos_upload/
-Output_jason_api/
-QR_database/
-sld_extract_feedback/
-SDI_process/sdi_json_output/
-*.db
-*.sqlite
-
-# --- Vendored / third party ---
-third_party/
-
-# --- OS junk ---
+# Tooling and editor state that leaked in from the VM home directory.
+# Scoped to the session/cache subtrees so .claude/settings.json and friends
+# stay committable -- the 250-276 MB blobs were all under .claude/remote/.
+.claude/remote/
+.claude/projects/
+.claude/todos/
+.claude/shell-snapshots/
+.claude/statsig/
+.claude.json
+.cache/
+.vscode-server/
+.local/
+.npm/
+.dotnet/
+.config/
 Thumbs.db
-.DS_Store

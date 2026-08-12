@@ -219,9 +219,37 @@ def _base_qr(value) -> str:
     return text.split(None, 1)[0]
 
 
+def _disposed_qrs(conn) -> set:
+    """QRs with an active disposal (``disposed_assets.status = 'disposed'``).
+
+    Disposal already deletes the curated sdi_dataset / sdi_dataset_EL row, so
+    the approval numbers drop it on their own; this set is what removes it from
+    the capture-side readers as well. Guarded and silent: a database without
+    the 2026-08-11 migration must still render every chart.
+
+    Mirrored by flow_quantity_chart._disposed_qrs — the pipeline and the KPI
+    bars must subtract the SAME set or the reconciliation identity in
+    integrity_snapshot() breaks.
+    """
+    try:
+        if not _table_exists(conn, "disposed_assets"):
+            return set()
+        rows = conn.execute(
+            'SELECT "qr_code" FROM "disposed_assets" WHERE "status" = ?', ("disposed",)
+        ).fetchall()
+    except Exception:
+        return set()
+    return {_base_qr(r[0]) for r in rows if _base_qr(r[0])}
+
+
 def _scan_capture_universe(conn) -> dict:
     """One pass over QR_code_assets, shared by the Manual Entry and integrity
     readers so both agree on the capture universe.
+
+    Disposed QRs are dropped here, at the single source both readers use, so a
+    retired asset leaves the KPI bars, the donut's Manual Entry slice and the
+    integrity/unsynced warning together (2026-08-12). Without it a disposal
+    reads as an orphan: captured, active, no curated row.
 
     code_assets is "<QR> <building> <type> - <seq>". Returns:
       max_proc    {qr: 0|1|2}  highest valid Col_process per QR
@@ -235,6 +263,7 @@ def _scan_capture_universe(conn) -> dict:
     building: dict = {}
     qr_type: dict = {}
     unclassified: set = set()
+    disposed = _disposed_qrs(conn)
     for code_assets, proc in conn.execute(
         'SELECT "code_assets", "Col_process" FROM "QR_code_assets"'
     ).fetchall():
@@ -242,6 +271,8 @@ def _scan_capture_universe(conn) -> dict:
         if not parts:
             continue
         qr = parts[0]
+        if qr in disposed:
+            continue
         try:
             p = int(str(proc).strip())
         except (TypeError, ValueError):

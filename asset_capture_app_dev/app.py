@@ -755,6 +755,30 @@ def qr_exists(conn: sqlite3.Connection, qr_code: str) -> bool:
     cur = conn.execute('SELECT 1 FROM "QR_codes" WHERE "QR_code_ID"=? LIMIT 1', (qr_code,))
     return cur.fetchone() is not None
 
+DISPOSED_TABLE = "disposed_assets"
+
+def qr_is_disposed(conn: sqlite3.Connection, qr_code: str) -> bool:
+    """True when the QR was withdrawn by the Dashboard's Disposed tool.
+
+    Re-capturing a disposed QR would write photos for an asset the platform has
+    deliberately taken out of the pipeline. Guarded by _has_table so the capture
+    app keeps working before the disposed_assets migration is applied.
+    """
+    qr = str(qr_code or "").strip()
+    if not qr or not _has_table(conn, DISPOSED_TABLE):
+        return False
+    cur = conn.execute(
+        f'SELECT 1 FROM "{DISPOSED_TABLE}" WHERE TRIM("qr_code") = TRIM(?)'
+        f' AND "status" = \'disposed\' LIMIT 1',
+        (qr,),
+    )
+    return cur.fetchone() is not None
+
+DISPOSED_CAPTURE_MESSAGE = (
+    "QR {qr} was disposed and cannot be captured again. "
+    "Ask an administrator to restore it from the Dashboard's Disposed tool."
+)
+
 ALLOWED_EXTS = (".jpg", ".jpeg", ".png", ".webp", ".bmp", ".gif", ".tif", ".tiff")
 
 def list_existing_uploads(qr_code: str, building_code: str, asset_type: str) -> List[Dict[str, str]]:
@@ -877,11 +901,18 @@ def api_check_qr():
             current_params = get_current_params(conn, qr, UPLOAD_DIR)
             current_asset_type = get_current_asset_type(UPLOAD_DIR, qr) or (current_params or {}).get("asset_type")
         
+        disposed = qr_is_disposed(conn, qr)
+
         response = {
             "exists": bool(exists),
-            "qr": qr
+            "qr": qr,
+            # Disposed QRs still "exist"; the flag lets the capture form warn
+            # before the operator photographs an asset /submit will reject.
+            "disposed": bool(disposed),
         }
-        
+        if disposed:
+            response["disposed_message"] = DISPOSED_CAPTURE_MESSAGE.format(qr=qr)
+
         if current_params:
             response["current_building"] = current_params.get("building_code", "")
             response["current_location"] = current_params.get("location", "")
@@ -1091,6 +1122,20 @@ def submit():
         for error in errors:
             flash(error, "warning")
         return redirect(url_for("start"))
+
+    # Refuse a disposed QR before any file is written, so a rejected submit
+    # leaves nothing behind on disk.
+    try:
+        conn = _open_db()
+        try:
+            if qr_is_disposed(conn, sanitize_component(qr_code, prefer_digits=True)):
+                flash(DISPOSED_CAPTURE_MESSAGE.format(qr=qr_code), "warning")
+                return redirect(url_for("start"))
+        finally:
+            conn.close()
+    except Exception as exc:
+        # A disposal-check failure must not block ordinary captures.
+        app.logger.warning("Could not check disposal state for QR %s: %s", qr_code, exc)
 
     if not _has_primary_capture_photo(request.files):
         flash("Take at least one of the first two photos before saving.", "warning")

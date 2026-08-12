@@ -130,6 +130,14 @@ ME model codes are not universally short. Trane fan-coil nameplates can carry de
 - Fast OCR preserves the first upright long-model read instead of treating a longer rotated/noisy read as automatically better. A complete upright alphanumeric serial is likewise not replaced solely by a longer noisy token.
 - A candidate with identical compact `Model` and `Serial Number` values is invalid and forces model reread/OCR rescue. Any collision that survives merge is resolved using label evidence, receives `manual_review.reason_codes = model_serial_collision`, and a final save guard prevents duplicate Model/Serial values from being written.
 
+## Disposed Asset Rules (2026-08-11)
+
+- Assets withdrawn by the Dashboard's **Disposed** tool are never extracted. Each interpreter defines `Config.DISPOSED_TABLE = "disposed_assets"` and `_load_disposed_qrs()` (`has_table`-guarded, so extraction still runs before the migration is applied).
+- **Hook A — skip processing:** `_load_qrs_to_ignore()` unions the disposed set into the ignore list. This deliberately sits in the *ignore* set rather than the *processed* set, because `FORCE_REPROCESS` bypasses only the latter — a forced re-extraction must still skip disposed assets.
+- **Hook B — do not undo the disposal:** disposal sets `ai_status = '1'` without writing JSON, which is indistinguishable from a stale row. In `_load_ai_processed_qrs()`, ME and BF route disposed QRs into `processed` (the "keep untouched" branch) **before** the `stale_processed` branch that resets `ai_status` to `0`; EL gets this free from its existing `q in self.qrs_to_ignore` short-circuit, since `qrs_to_ignore` is populated first. Without Hook B every cron run would reset disposed assets and re-extract them.
+- `ai_check.sh` needs no change: its pending gate counts `QR_codes.ai_status = '0'`, and the disposal's `ai_status` normalization is what keeps that count from firing forever.
+- `updating_process_database.py` needs no change either — it rebuilds `json_files` and `date_set`, neither of which resurrects a disposed asset.
+
 ## DB Sync Rules
 
 - JSON-to-DB sync helpers must upsert curated rows rather than append duplicates.

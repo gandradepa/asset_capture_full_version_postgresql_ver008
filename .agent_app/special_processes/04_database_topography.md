@@ -1,6 +1,6 @@
 # Database Topography and Relationships
 
-Current documentation refresh: 2026-07-27.
+Current documentation refresh: 2026-08-11.
 
 > **🐘 DATABASE BACKEND — PostgreSQL (C4 cutover COMPLETE, 2026-06-08).** Operational workflow state now lives in **`qr_code_db` on PostgreSQL** (VM `127.0.0.1:5433`), reached through a backend-agnostic `db.py` layer switched by `DB_BACKEND=postgres` in `/home/developer/db_backend.env`. The SQLite `QR_codes.db` named below is now the **frozen rollback** (flip the env back to `sqlite` + restart to revert). The table/column model is identical on both engines. Details: `C4_CUTOVER_RUNBOOK.md` + memory `pg-cutover-complete`.
 
@@ -77,6 +77,28 @@ Active SDI package staging.
 ### `sdi_print_out_arch`
 
 Archived SDI packages.
+
+### `disposed_assets`
+
+Disposal archive for the Dashboard's **Disposed** tool (2026-08-11, owner-run migration `scripts/migrations/2026-08-11_disposed_assets.sql`). One row per disposal event, so `dispose → restore → dispose` keeps its full history.
+
+An asset counts as disposed when it has a row here with `status = 'disposed'`; that membership — not a flag on `QR_codes` — is what the review apps, the capture app and the AI interpreters subtract, the same way the review dashboards already hide `sdi_print_out_arch` members. `ux_disposed_assets_active` is a **partial unique index on `qr_code` WHERE `status = 'disposed'`**, so a QR can have at most one open disposal while its restored history rows persist.
+
+Columns (all `TEXT` except the identity PK):
+
+- `id` (`bigint GENERATED ALWAYS AS IDENTITY`, PRIMARY KEY)
+- `qr_code`, `building_code`, `asset_type` (normalized `ME` / `BF` / `EL`)
+- `reason` — `CHECK IN ('Decommissioned','Duplicated','Wrong Asset','User Request')` (`Wrong Asset` added 2026-08-12 by `scripts/migrations/2026-08-12_disposed_reason_wrong_asset.sql`; mirrors `DISPOSAL_REASONS`); `notes`
+- `disposed_by`, `disposed_at`, `restored_by`, `restored_at` (local server time, matching the `audit_trail` convention)
+- `sdi_table` — `CHECK IN ('sdi_dataset','sdi_dataset_EL','')`; blank when the QR was never approved and therefore had no curated row
+- `status` — `CHECK IN ('disposed','restored')`
+- Snapshot payloads as JSON text: `sdi_row_json` (the deleted curated row), `qr_codes_row_json` (including the pre-disposal `ai_status` that Restore writes back), `qr_code_assets_json`, `structured_json` + `et_json` (the `Output_jason_api` payloads), `photos_json` (filename array)
+
+**There is deliberately no foreign key to `QR_codes`.** The C3 model cascades `QR_codes` deletes to every child table, and the disposal archive must survive `scripts/purge_qr_from_db.py`. Restore therefore checks that the QR still exists and refuses cleanly when it does not.
+
+The application role is granted `SELECT, INSERT, UPDATE` and is explicitly **`REVOKE DELETE`**'d: `c4_grants.sql` sets `ALTER DEFAULT PRIVILEGES` granting DELETE on new tables, and the archive is append-only for the app. Restore marks rows `restored`; it never deletes them.
+
+Disposal deletes the curated `sdi_dataset` / `sdi_dataset_EL` row after snapshotting it and never touches a file on disk, so the whole operation is a single transaction. Behaviour rules: `rules/dashboard.rules.md` → "Disposed Assets Rules".
 
 ### `SpaceUID`
 
@@ -180,6 +202,7 @@ unavailable (e.g. the frozen local SQLite copy).
 - valid QR IDs should be unique after normalization
 - placeholder QR IDs must not be treated as real assets
 - `Col_process = 2` and `sdi = 1` should stay aligned for manual / excluded assets
+- a QR may have at most one open disposal (`disposed_assets.status = 'disposed'`); disposed QRs must be absent from `sdi_dataset` / `sdi_dataset_EL` and must never be re-approved, re-captured or re-extracted while disposed
 
 ## Architectural Caution
 
