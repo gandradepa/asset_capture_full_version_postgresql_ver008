@@ -1,0 +1,4 @@
+LOAD DATABASE
+     FROM sqlite:///home/developer/QR_database/source_snapshot.db
+     INTO postgresql://developer@127.0.0.1:5433/qr_code_db
+ WITH include drop, create tables, create indexes, reset sequences, quote identifiers;
