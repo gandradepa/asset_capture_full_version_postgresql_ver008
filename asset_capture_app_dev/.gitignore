@@ -1,0 +1,7 @@
+# Python virtual environment (local per-module venv, never committed)
+venv/
+.venv/
+
+# Python bytecode
+__pycache__/
+*.py[cod]
