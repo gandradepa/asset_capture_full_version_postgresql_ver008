@@ -72,6 +72,17 @@ except ImportError:
     def get_registry(): return []
     def is_valid_item(s, i): return True
 
+# Asset disposal service. Optional at import time like the chart modules: a box
+# without the disposed_assets migration still boots, with the tool degrading to
+# a clear "not available" response.
+try:
+    import disposed_assets_service as disposal_svc
+    DISPOSAL_AVAILABLE = True
+except Exception as _disposal_import_exc:  # pragma: no cover - environment dependent
+    disposal_svc = None
+    DISPOSAL_AVAILABLE = False
+    print(f"WARNING: disposal service unavailable, the Disposed tool is disabled: {_disposal_import_exc}")
+
 
 FLS_DEFAULT_ATTRIBUTE_CODE = "FireAlarmDevice"
 FLS_DEFAULT_ATTRIBUTE_LABEL = "Electrical/FLS - Fire Alarm Device"
@@ -2535,6 +2546,249 @@ def get_asset_photo_file(filename):
         return send_from_directory(PHOTO_UPLOAD_DIR, filename)
     except FileNotFoundError:
         abort(404)
+
+
+# ------------------ Disposed Assets ------------------
+# Disposal withdraws a QR from the capture/review/SDI pipeline: it archives a
+# full snapshot to disposed_assets, deletes the curated SDI row, and leaves
+# every file on disk so the whole operation is one database transaction.
+# Only unapproved assets can be disposed; the reason is always required.
+# Reads are open to any signed-in user, mutations require the editor grant.
+#
+# The level is "editor", not "admin": the User Admin permission matrix only
+# offers none/viewer/editor and api_admin_permissions_put rejects any other
+# level, so an "admin" requirement is ungrantable through the platform's own UI
+# and would lock everyone out of disposal (2026-08-12 fix). Editor is the house
+# mutate level - same as dictionary and FLS Devices - and the grant is handed
+# out only to administrators.
+
+DISPOSAL_PERM = ("operations", "disposed_assets", "editor")
+
+
+def _disposal_unavailable():
+    return jsonify({
+        "success": False,
+        "error": "The Disposed tool is not available on this server.",
+    }), 503
+
+
+def _photo_payload(filenames):
+    """Turn photo filenames into renderable URLs for the register."""
+    payload = []
+    for entry in filenames or []:
+        name = entry.get("filename") if isinstance(entry, dict) else entry
+        available = entry.get("available", True) if isinstance(entry, dict) else True
+        if not name:
+            continue
+        payload.append({
+            "filename": name,
+            "available": bool(available),
+            "url": url_for('main.get_asset_photo_file', filename=name) if available else None,
+        })
+    return payload
+
+
+@main_bp.get("/api/disposed-assets/lookup/<path:qr_code>")
+@login_required
+def disposed_assets_lookup(qr_code):
+    """Preview an asset and show whether it can be disposed."""
+    if not DISPOSAL_AVAILABLE:
+        return _disposal_unavailable()
+
+    conn = None
+    try:
+        conn = qrdb.get_connection(sqlite_path=DB_PATH)
+        qr_row = disposal_svc.lookup_qr_row(conn, qr_code)
+        structured_name, structured = ("", {})
+        sdi_row = None
+        resolved_qr = ""
+        asset_type = ""
+
+        if qr_row is not None:
+            resolved_qr = str(qr_row.get("QR_code_ID") or "").strip()
+            structured_name, structured = disposal_svc.find_structured_json(resolved_qr)
+            asset_type = disposal_svc.normalize_asset_type(str(qr_row.get("asset_type") or ""))
+            if not asset_type and structured_name:
+                match = re.match(r"^[^_]+_([A-Za-z]+)_", structured_name)
+                if match:
+                    asset_type = disposal_svc.normalize_asset_type(match.group(1))
+            sdi_table = disposal_svc.sdi_table_for(asset_type)
+            if sdi_table:
+                sdi_row = disposal_svc.fetch_sdi_row(conn, sdi_table, resolved_qr)
+
+        checks = disposal_svc.evaluate_eligibility(conn, qr_code, qr_row, structured, sdi_row)
+        existing = disposal_svc.active_disposal(conn, resolved_qr) if resolved_qr else None
+
+        if qr_row is None:
+            return jsonify({
+                "success": True, "found": False, "eligible": False,
+                "checks": checks, "asset": None,
+            })
+
+        structured_data = (structured or {}).get("structured_data") or {}
+        return jsonify({
+            "success": True,
+            "found": True,
+            "eligible": disposal_svc.eligibility_passed(checks),
+            "checks": checks,
+            "already_disposed_id": existing.get("id") if existing else None,
+            "asset": {
+                "qr_code": resolved_qr,
+                "asset_type": asset_type,
+                "building_code": str(qr_row.get("Building Code") or "").strip(),
+                "location": str(qr_row.get("Location") or "").strip(),
+                "approved": str(qr_row.get("Approved") or "").strip(),
+                "ai_status": str(qr_row.get("ai_status") or "").strip(),
+                "has_sdi_row": sdi_row is not None,
+                "structured_data": structured_data,
+                "photos": _photo_payload(disposal_svc.find_photos_for_qr(resolved_qr)),
+            },
+        })
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({"success": False, "error": str(e)}), 500
+    finally:
+        if conn is not None:
+            conn.close()
+
+
+@main_bp.post("/api/disposed-assets")
+@login_required
+@require_permission(*DISPOSAL_PERM)
+def disposed_assets_create():
+    """Post a disposal. The whole operation is one transaction."""
+    if not DISPOSAL_AVAILABLE:
+        return _disposal_unavailable()
+
+    payload = request.get_json(silent=True) or {}
+    qr_code = str(payload.get("qr_code") or "").strip()
+    reason = str(payload.get("reason") or "").strip()
+    notes = str(payload.get("notes") or "").strip()
+
+    if not qr_code:
+        return jsonify({"success": False, "error": "Enter a QR code."}), 400
+
+    conn = None
+    try:
+        conn = qrdb.get_connection(sqlite_path=DB_PATH)
+        result = disposal_svc.dispose_asset(
+            conn, qr_code, reason, notes,
+            modified_by=getattr(current_user, "username", None) or "system",
+        )
+        conn.commit()
+        return jsonify({
+            "success": True,
+            "message": f"Asset {result['qr_code']} disposed.",
+            "disposal": result,
+        })
+    except disposal_svc.DisposalError as e:
+        if conn is not None:
+            conn.rollback()
+        return jsonify({"success": False, "error": e.message, "checks": e.checks}), e.status
+    except Exception as e:
+        if conn is not None:
+            conn.rollback()
+        traceback.print_exc()
+        return jsonify({"success": False, "error": str(e)}), 500
+    finally:
+        if conn is not None:
+            conn.close()
+
+
+@main_bp.get("/api/disposed-assets")
+@login_required
+def disposed_assets_list():
+    """The disposal register."""
+    if not DISPOSAL_AVAILABLE:
+        return _disposal_unavailable()
+
+    conn = None
+    try:
+        conn = qrdb.get_connection(sqlite_path=DB_PATH)
+        rows = disposal_svc.list_disposals(
+            conn,
+            search=request.args.get("q", ""),
+            reason=request.args.get("reason", ""),
+            asset_type=request.args.get("asset_type", ""),
+            status=request.args.get("status", ""),
+            date_from=request.args.get("date_from", ""),
+            date_to=request.args.get("date_to", ""),
+            limit=int(request.args.get("limit", 500) or 500),
+        )
+        return jsonify({
+            "success": True,
+            "rows": rows,
+            "reasons": list(disposal_svc.DISPOSAL_REASONS),
+            "can_dispose": bool(has_permission(current_user, *DISPOSAL_PERM)),
+        })
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({"success": False, "error": str(e)}), 500
+    finally:
+        if conn is not None:
+            conn.close()
+
+
+@main_bp.get("/api/disposed-assets/<int:disposal_id>")
+@login_required
+def disposed_assets_detail(disposal_id):
+    """One archived disposal, snapshots expanded and photos re-probed."""
+    if not DISPOSAL_AVAILABLE:
+        return _disposal_unavailable()
+
+    conn = None
+    try:
+        conn = qrdb.get_connection(sqlite_path=DB_PATH)
+        detail = disposal_svc.get_disposal_detail(conn, disposal_id)
+        if detail is None:
+            return jsonify({"success": False, "error": "Disposal not found."}), 404
+        detail["photos"] = _photo_payload(detail.get("photos"))
+        return jsonify({
+            "success": True,
+            "disposal": detail,
+            "can_dispose": bool(has_permission(current_user, *DISPOSAL_PERM)),
+        })
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({"success": False, "error": str(e)}), 500
+    finally:
+        if conn is not None:
+            conn.close()
+
+
+@main_bp.post("/api/disposed-assets/<int:disposal_id>/restore")
+@login_required
+@require_permission(*DISPOSAL_PERM)
+def disposed_assets_restore(disposal_id):
+    """Reverse a disposal, rebuilding the curated row from its snapshot."""
+    if not DISPOSAL_AVAILABLE:
+        return _disposal_unavailable()
+
+    conn = None
+    try:
+        conn = qrdb.get_connection(sqlite_path=DB_PATH)
+        result = disposal_svc.restore_asset(
+            conn, disposal_id,
+            modified_by=getattr(current_user, "username", None) or "system",
+        )
+        conn.commit()
+        message = f"Asset {result['qr_code']} restored."
+        if not result.get("review_json_present"):
+            message += (" Its review file is no longer on disk, so it will not"
+                        " reappear in the review dashboard until the file is regenerated.")
+        return jsonify({"success": True, "message": message, "restore": result})
+    except disposal_svc.DisposalError as e:
+        if conn is not None:
+            conn.rollback()
+        return jsonify({"success": False, "error": e.message}), e.status
+    except Exception as e:
+        if conn is not None:
+            conn.rollback()
+        traceback.print_exc()
+        return jsonify({"success": False, "error": str(e)}), 500
+    finally:
+        if conn is not None:
+            conn.close()
 
 
 @main_bp.get("/api/fls-assets")

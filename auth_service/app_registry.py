@@ -31,6 +31,7 @@ APP_REGISTRY = [
             {"key": "asset_map",      "label": "Asset Map"},
             {"key": "fls_devices",    "label": "FLS Devices"},
             {"key": "lifecycle_assessment", "label": "Life Cycle Assessment"},
+            {"key": "disposed_assets", "label": "Disposed Assets"},
             {"key": "user_activity",  "label": "User Activity"},
             {"key": "user_admin",     "label": "User Admin"},
         ],
