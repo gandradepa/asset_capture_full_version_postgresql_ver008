@@ -29,6 +29,18 @@ Current documentation refresh: 2026-04-28.
 - Log errors with `print(f"WARNING: ...")` or `print(f"CRITICAL: ...")`
 - Return empty bytes (`b''`) or empty lists (`[]`) on failure â€” never crash the app
 
+### Disposed Assets (`disposed_assets_service`)
+- **Permission gate**: reads (`lookup`, register list, detail) require only `@login_required`; **both mutations** (dispose, restore) require `@require_permission(*DISPOSAL_PERM)` = `("operations", "disposed_assets", "editor")`. The RBAC key lives in `auth_service/app_registry.py`
+- **Use `editor`, never `admin`, as a required level** (2026-08-12 fix): the User Admin matrix and `api_admin_permissions_put` accept only `viewer`/`editor`, so an `admin` requirement cannot be granted through the UI and locks everyone out — the `is_admin` flag is a role for an item, never a wildcard
+- **Reason codes** live in `DISPOSAL_REASONS` and are mirrored by `chk_disposed_reason`; widen both together or the transaction aborts at COMMIT
+- **Service layer**: transaction logic lives in `Dashboard/disposed_assets_service.py`, deliberately free of Flask imports so it can be exercised directly. Routes pass `modified_by` and own the `commit()`
+- **Graceful degradation**: the import is wrapped in `try/except` (`DISPOSAL_AVAILABLE`) like the chart modules, and every query is `qrdb.has_table`-guarded, so a server without the migration returns a clear 503 instead of failing
+- **One transaction, no file writes**: snapshot -> `INSERT disposed_assets` -> `DELETE` the curated row (rowcount asserted) -> normalize `ai_status` -> audit -> commit. Photos and `Output_jason_api` payloads are never moved or deleted; that is what keeps disposal atomic and Restore possible
+- **Audit in-transaction**: use `audit.logger.log_change` directly with `app_name="dashboard_disposed"`, NOT `_log_dictionary_audit()` (which opens its own connection and swallows errors)
+- **Never write `ID_check`** when restoring an EL row - it is a generated column. Restore intersects snapshot keys with the live `table_columns` and drops it
+- **Frontend must not use `fetchAdminJson`**: that helper is rendered only inside `{% if is_dashboard_admin %}`, so an RBAC-granted non-allowlist user would hit "fetchAdminJson is not defined". The tool ships its own `apiJson`
+- **New SPA views must be added to the default-hidden CSS rule** at the top of `dashboard.html` (`#main-view, #analytics-view, ... { display: none; }`), or the view renders over the dashboard until the view-switch JS runs
+
 ### Life Cycle Assessment (`life_cycle` blueprint)
 - **Permission gate**: routes enforce the RBAC key section `operations`, item `lifecycle_assessment` (added to `auth_service/app_registry.py`) via `has_permission` / `require_permission` (same model as FLS Devices - enforced server-side; the sidebar link itself is not visibility-gated). Granted per-user (viewer/editor) through the Dashboard User Admin screen. `/life-cycle/health` is the only open route (no auth)
 - **Env-driven DB DSN**: the connection is derived from a single source - env var `LIFE_CYCLE_DSN` (libpq DSN) if set, else the portal's `QR_PG_DSN`, else the dev sandbox default. The SQLAlchemy URL `LIFE_CYCLE_SA_DSN` (used by `track_assets.py` and `load_life_cycle.py`) is derived from that libpq DSN at blueprint import - never hardcode `DB_URL`

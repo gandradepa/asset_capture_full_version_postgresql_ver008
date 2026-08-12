@@ -54,6 +54,13 @@ Current documentation refresh: 2026-05-25.
 - Use `PRAGMA table_info()` to dynamically resolve column names when schema may vary
 - Implement `_resolve_column()` pattern to match column names across schema versions
 
+### Disposed Assets
+- Assets with an open row in `disposed_assets` (`status='disposed'`) are **never extracted**
+- `_load_disposed_qrs()` is `qrdb.has_table`-guarded so extraction still runs before the migration is applied
+- **Hook A**: union the disposed set into `_load_qrs_to_ignore()` — the *ignore* set, not the *processed* set, because `FORCE_REPROCESS` bypasses only the latter
+- **Hook B**: disposal sets `ai_status='1'` without writing JSON, which looks identical to a stale row. In `_load_ai_processed_qrs()` route disposed QRs to the "keep untouched" branch **before** the `stale_processed` branch, or every run resets and re-extracts them. EL gets this free from its existing `q in self.qrs_to_ignore` short-circuit
+- Never "fix" a disposed asset's `ai_status` back to `0` — that is what keeps `ai_check.sh`'s pending gate quiet
+
 ### Status Management
 - `ai_status=1` means "AI has processed this QR" â€” prevents reprocessing
 - `Approved=1` or `Flagged=1` in `sdi_dataset` means "human reviewed" â€” always skip these

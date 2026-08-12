@@ -1,6 +1,6 @@
 ﻿# Review App Rules
 
-Current documentation refresh: 2026-07-25.
+Current documentation refresh: 2026-08-11.
 
 ## Purpose
 
@@ -93,6 +93,15 @@ The EL listing pipeline was profiled on the VM and rebuilt around three rules. M
 - SDI Retrieve and Exclude actions also preserve package-source approval; Exclude returns approved, non-manual package rows to Unpackaged Assets after deleting the active package row.
 - Do not add `Approved` to `sdi_print_out` or `sdi_print_out_arch`; package tables provide package state and `id_print_out`, while approval remains sourced from review JSON plus `sdi_dataset` / `sdi_dataset_EL`.
 - All three review tabs (New / Update / Manual) default the `Review Status` filter to **All Statuses**.
+
+## Disposed Asset Rules (2026-08-11)
+
+- An asset disposed through the Dashboard's **Disposed** tool must not appear in any ME/BF/EL listing, on any tab, or in any KPI count. Because listings are built from the JSON files in `Output_jason_api/` (not from the curated tables), deleting the `sdi_dataset` / `sdi_dataset_EL` row is **not** enough on its own — each reviewer subtracts the disposed set explicitly.
+- Each app defines `DISPOSED_TABLE = "disposed_assets"`, `_load_disposed_qr_set()` and `_qr_is_disposed(qr)`. Both helpers are `has_table`-guarded and swallow errors: a disposal archive that cannot be read must never take a listing down. The filter is applied to `all_data` at the top of `get_filtered_data_and_counts` (EL: after the `preloaded_items` branch, so shared batches are filtered too), immediately before the archive filter.
+- Unlike the `sdi_print_out_arch` archive filter there is **no query-string escape hatch** (`?archive=false` has no disposed equivalent). A disposed asset stays hidden until it is restored.
+- `toggle_approved` in all three apps refuses a disposed QR with `409 {"success": false, "disposed": true}`, immediately after the existing package-lock check and **before** the JSON is written. Approving is what re-creates the curated row, so without this guard a tab opened before the disposal could resurrect a disposed asset.
+- Never delete `QR_code_assets` rows to hide an asset: `_auto_register_qr_code` recreates them from the JSON on the next listing load, and the QR reappears in the New tab.
+- Full behaviour and the disposal gate: `dashboard.rules.md` → "Disposed Assets Rules".
 
 ## Dictionary Auto-Fill and Manual-Override Rules
 

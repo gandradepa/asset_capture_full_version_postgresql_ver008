@@ -69,6 +69,28 @@ def _base_qr(value):
     return text.split(None, 1)[0]
 
 
+def _disposed_qrs(conn):
+    """QRs with an active disposal (``disposed_assets.status = 'disposed'``).
+
+    Subtracted from every pipeline count so a retired asset leaves the review
+    cards, the Total QR pill and the SDI flow steps. Guarded and silent: a
+    database without the 2026-08-11 migration must still render the chart.
+
+    Mirrored by approval._disposed_qrs — the pipeline and the KPI bars must
+    subtract the SAME set or approval.integrity_snapshot()'s reconciliation
+    identity breaks.
+    """
+    try:
+        if not _table_exists(conn, "disposed_assets"):
+            return set()
+        rows = conn.execute(
+            'SELECT "qr_code" FROM "disposed_assets" WHERE "status" = ?', ("disposed",)
+        ).fetchall()
+    except Exception:
+        return set()
+    return {_base_qr(row[0]) for row in rows if _base_qr(row[0])}
+
+
 def _distinct_qrs(conn, table_name):
     query = QR_SELECT_SQL.get(table_name)
     if query is None or not _table_exists(conn, table_name):
@@ -97,11 +119,12 @@ def _review_state_counts(conn):
 
     qr_process = {}
     unclassified_qrs = set()
+    disposed = _disposed_qrs(conn)
     rows = conn.execute('SELECT "code_assets", "Col_process" FROM "QR_code_assets"').fetchall()
 
     for code_assets, process_value in rows:
         qr = _base_qr(code_assets)
-        if not qr:
+        if not qr or qr in disposed:
             continue
         try:
             process = int(str(process_value).strip())
@@ -126,12 +149,17 @@ def _review_state_counts(conn):
 
 def _flow_counts(conn):
     sdi_qrs = _sdi_qr_filter(conn)
-    requested_qrs = _apply_sdi_filter(_distinct_qrs(conn, "sdi_print_out"), sdi_qrs)
-    archived_qrs = _apply_sdi_filter(_distinct_qrs(conn, "sdi_print_out_arch"), sdi_qrs)
+    # Disposal deletes the curated row and is refused for packaged QRs, so
+    # today this subtraction only ever removes rows the queue no longer has.
+    # It is kept explicit so the flow steps stay correct if a disposal ever
+    # coexists with a package row.
+    disposed = _disposed_qrs(conn)
+    requested_qrs = _apply_sdi_filter(_distinct_qrs(conn, "sdi_print_out"), sdi_qrs) - disposed
+    archived_qrs = _apply_sdi_filter(_distinct_qrs(conn, "sdi_print_out_arch"), sdi_qrs) - disposed
     curated_qrs = _apply_sdi_filter(
         _distinct_qrs(conn, "sdi_dataset") | _distinct_qrs(conn, "sdi_dataset_EL"),
         sdi_qrs,
-    )
+    ) - disposed
     queue_qrs = curated_qrs - requested_qrs - archived_qrs
 
     return {

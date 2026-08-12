@@ -75,6 +75,8 @@ graph TD
   Active SDI packages.
 - `sdi_print_out_arch`
   Archived SDI packages.
+- `disposed_assets`
+  Disposal archive for the Dashboard's Disposed tool. One row per disposal event; `status='disposed'` membership is what the review apps, capture app and AI interpreters subtract to hide an asset. Holds JSON snapshots of the deleted curated row, the QR record, the review payloads and the photo filenames. No FK to `QR_codes` (survives purge); app role has no DELETE.
 - `json_files`
   JSON-level sync / maintenance support.
 - `new_device`
@@ -128,6 +130,7 @@ The Dashboard now hosts the four process apps (ME, BF, EL, SDI) inside iframe pa
 
 - Dictionary management UI allows AST-safe editing of the mechanical dictionary directly from the Dashboard.
 - FLS asset CRUD supports add, delete, edit, and bulk update of FLS asset records. New FLS Device Flow defaults `Attribute Set` to `FireAlarmDevice` and derives Control Panel Code/Description from `"UBC - Asset Data Master Info"` by building property code and flags multi-match properties while showing the first Code. Rows with a populated `Planon Code` remain editable, but delete and bulk selection are disabled.
+- Disposed Assets tool (`#disposed`) retires a QR from the pipeline: eligibility checklist, mandatory reason (`Decommissioned` / `Duplicated` / `Wrong Asset` / `User Request`), an OK/Cancel confirmation dialog, snapshot into `disposed_assets`, deletion of the curated SDI row, and an audited Restore. Only unapproved assets can be disposed. Reads need login; mutations need the `operations` / `disposed_assets` **editor** grant (the highest level the User Admin matrix can hand out — the `Admin` flag alone is not a wildcard). Reachable from the Operations & Monitoring tile and from `Operations → Disposed Assets` in the shared shell sidebar. Service layer: `Dashboard/disposed_assets_service.py` (2026-08-11, corrected 2026-08-12).
 - Photo viewing API (`/api/asset-photo/<qr_code>`) serves captured asset photos.
 - Enhanced log summarizer parses completeness and confidence from AI processing logs.
 - AI Process Queue now surfaces every SLD extraction run as a structured row in `System Logs → SLD Extraction Runs`. The Dashboard reads `/home/developer/sld_extract_feedback/sld_*.jsonl` directly (no DB table for runs). Routes:

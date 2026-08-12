@@ -56,6 +56,7 @@ Read these first:
 
 ## Current High-Impact Behaviors
 
+- Assets can be **disposed** from the Dashboard (`Operations & Monitoring -> Disposed`): a snapshot is archived to `disposed_assets`, the curated `sdi_dataset` / `sdi_dataset_EL` row is deleted, and the QR disappears from the ME/BF/EL reviewers, the capture app and the AI queue. Only **not-approved** assets qualify and a reason is always required (`Decommissioned` / `Duplicated` / `Wrong Asset` / `User Request`); disposal and Restore need the `operations` / `disposed_assets` **editor** grant and are fully audited. No photo or JSON file is ever touched (2026-08-11, reason list and grant level corrected 2026-08-12).
 - Operational database migrated from SQLite to PostgreSQL (`qr_code_db`, `127.0.0.1:5433`) in the C4 cutover; apps reach it through the backend-agnostic `db.py` layer (`DB_BACKEND=postgres` in `/home/developer/db_backend.env`). The table/column model is unchanged; the old SQLite `QR_codes.db` is the frozen rollback (flip `DB_BACKEND` back to `sqlite`). Auth (`User_control.db`) stays SQLite (2026-06-08).
 - Discipline-specific completeness and confidence scoring are active.
 - EL extraction and review use stricter source rules for amperage, voltage, power rating, location, and upstream equipment identifiers.

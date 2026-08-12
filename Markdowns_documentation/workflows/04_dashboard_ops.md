@@ -91,6 +91,34 @@ The Dashboard now hosts ME, BF, EL, and SDI as in-page iframe tabs rather than l
 - confirm the `Dashboard` button in the process-view-header returns to the central main view without a full page reload.
 - confirm the sub-app standalone URL (without `?embedded=true`) still renders its own navbar and chrome unchanged.
 
+## Disposed Assets
+
+The Dashboard hosts a `Disposed` tool that withdraws a QR-coded asset from the capture -> review -> SDI pipeline and keeps a full record of why. It is an ERP-style retirement: a posted transaction with a reason code, an actor and an immutable snapshot, reversed only by a documented counter-transaction. Reading the register requires only login; disposing and restoring require the `operations` / `disposed_assets` **editor** grant, given per user through the User Admin screen (`Perms` → Operations → Disposed Assets → Editor → Save). The platform `Admin` flag alone does not grant it: `has_permission()` resolves an exact section/item grant and never treats admin as a wildcard.
+
+### Steps
+
+1. Open `Operations & Monitoring -> Disposed` (tile `Disposed`, hash `#disposed`).
+2. On the **Dispose Asset** tab, enter a QR code and press `Search`. The asset card shows its photos and extraction data; the **Eligibility** card shows the server's disposal gate check by check.
+3. All four checks must pass: the QR exists, it is not already disposed, it is **not approved**, and it is not in an SDI package. A failed check explains why and the `Dispose asset` button stays disabled.
+4. Choose a **Reason** (`Decommissioned`, `Duplicated`, `Wrong Asset`, `User Request`) - it is always required - and optionally add notes.
+5. Press `Dispose asset`. The confirmation dialog asks `Dispose asset <QR>?` and restates the QR, discipline, building and reason; press `OK` to post it or `Cancel` to back out (the type-the-QR step was removed 2026-08-12). On success the view switches to the register.
+6. The **Disposed Register** tab lists every disposal event with filters (search, reason, discipline, status, date range). `View` opens the full record: the disposal details, the extraction data, the curated row as it was at disposal, the QR record, and the photos. `Restore` (admin only) reinstates the asset.
+
+### What disposal does
+
+- Archives a full snapshot into `disposed_assets` and deletes the curated `sdi_dataset` / `sdi_dataset_EL` row, in one transaction.
+- Hides the asset from the ME/BF/EL review dashboards (tabs and KPI counts), blocks approving it, blocks re-capturing it in the mobile app, and takes it out of the AI extraction queue.
+- Touches **no files**: photos and `Output_jason_api` payloads stay on disk, which is what lets Restore rebuild the curated row later.
+- Writes `audit_trail` rows (`app_name="dashboard_disposed"`, `source="human"`) inside the same transaction, so disposals appear in User Activity.
+
+### Verification
+
+- The disposed QR is gone from the relevant review dashboard, on every tab, and its KPI counts drop by one.
+- `SELECT * FROM "disposed_assets" WHERE "qr_code" = '<QR>'` shows one row with `status = 'disposed'`.
+- The curated row is gone: `SELECT * FROM "sdi_dataset" WHERE "QR Code" = '<QR>'` (or `sdi_dataset_EL`) returns nothing.
+- The photos and JSON are still on disk.
+- After `Restore`, the curated row is back and the asset reappears in the reviewer; the disposal row stays as `status = 'restored'`.
+
 ## Life Cycle Assessment
 
 The Dashboard hosts a `Life Cycle Assessment` feature that surfaces asset age and life-cycle data. It runs as an in-process Flask Blueprint (`life_cycle`) mounted inside the Dashboard app at the `/life-cycle` prefix; it is not a separate service or port, and missing dependencies degrade to "feature absent" without crashing the portal. Access requires login plus the `lifecycle_assessment` viewer permission, granted per-user through the User Admin screen.
