@@ -7207,7 +7207,10 @@
                     }]
                 },
                 options: {
-                    responsive: true, maintainAspectRatio: false, cutout: '68%',
+                    /* cutout 61% => ring band 0.39R, ~22% thicker than the former
+                       68%/0.32R, while the 61% inner disc still clears the centre
+                       total + caption and the SVG fallback's 0.4 wedge width. */
+                    responsive: true, maintainAspectRatio: false, cutout: '61%',
                     animation: ANIM,
                     plugins: {
                         legend: {
